@@ -900,11 +900,25 @@ class RunIdentity(unittest.TestCase):
         passed = parse.parse_job(standard_job(self.tmp, "passed", [1.0, 0.0, None]))
         self.assertEqual((passed.mean_score, passed.mean_score_planned), (None, None))
         self.assertEqual((passed.raw_solve_rate, passed.adjusted_solve_rate), (1 / 3, 0.5))
-        # a score over parts: a trial with none says no part count, so there is no mean over the planned
+        # Each trial contributes its own score to the planned mean.
         job = parse.Job(job_id="j", dir="/tmp", model_name="", dataset="", n_tasks=2, started_at=None, finished_at=None)
         job.trials = [_trial(trial_name="a", outcome=classify.SCORED, score=0.5, n_parts=3),
                       _trial(trial_name="b", outcome=classify.API_ERROR)]
-        self.assertEqual((job.mean_score, job.mean_score_planned), (0.5, None))
+        self.assertEqual((job.mean_score, job.mean_score_planned), (0.5, 0.25))
+
+    def test_the_planned_mean_uses_trial_scores_with_equal_or_unequal_part_counts(self):
+        for counts in ((1, 1, 1), (1, 2, 3)):
+            with self.subTest(counts=counts):
+                path = standard_job(self.tmp, "parts-" + "".join(map(str, counts)), [1, 0.5, 0, None], bench=SCORED)
+                for trial, count in zip(parse.parse_job(path).trials, counts):
+                    result = os.path.join(trial.dir, "result.json")
+                    with open(result) as f:
+                        doc = json.load(f)
+                    doc["verifier_result"]["parts"] = {"n": count}
+                    _write_json(result, doc)
+                job = parse.parse_job(path)
+                self.assertEqual(job.mean_score, (counts[0] + 0.5 * counts[1]) / sum(counts))
+                self.assertEqual(job.mean_score_planned, 0.375)
 
 
 if __name__ == "__main__":

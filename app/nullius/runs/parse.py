@@ -451,10 +451,10 @@ class Job:
     def mean_score_planned(self):
         """The mean score over every trial the run planned (``n_planned``), a
         trial with no score - one that ended on an error, one never run -
-        counting 0; ``mean_score`` is over the trials scored. None when no
-        trial was scored, and for a score over parts: how many parts a trial
-        with no score would have weighed is not recorded."""
-        if self.mean_score is None or self.n_scored_parts is not None:
+        counting 0; each trial contributes its own score regardless of part
+        counts. ``mean_score`` keeps its part weighting. None when no trial
+        was scored."""
+        if self.mean_score is None:
             return None
         return sum(t.score for t in self.trials if t.score is not None) / max(self.n_planned, len(self.trials))
 
