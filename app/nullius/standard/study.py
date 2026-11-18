@@ -196,6 +196,7 @@ def _check_out(out: str, targets: List[Target]) -> str:
     for job in {os.path.realpath(t.job_dir) for t in targets}:
         if os.path.commonpath((real, job)) == job:
             raise Refused(f"{out} is inside the job {job}: a study writes nothing in a run's tree")
+    rp._check_tree(out)
     return out
 
 
@@ -482,7 +483,9 @@ def _write(out: str, doc: dict) -> None:
 # -- counted again -------------------------------------------------------------------------------------------
 def _reply(out: str, relay_dir: str, route: str) -> Optional[dict]:
     """A send's reply as the study's or replay's relay kept it whole: status, streamed, body."""
-    lines = exchanges.lines(os.path.join(out, relay_dir, exchanges.FOLDER), route)
+    folder = rp._inside(out, relay_dir, exchanges.FOLDER)
+    rp._inside(folder, route + ".jsonl")
+    lines = exchanges.lines(folder, route)
     return lines[0].get("reply") if lines and isinstance(lines[0].get("reply"), dict) else None
 
 
@@ -493,6 +496,7 @@ def recount(folder: str, rule: Optional[rp.Rule] = None, yes: Optional[str] = No
     are written to ``recounts/<time>.json`` in the folder, beside the earlier ones (``earlier``), which stay as
     they were. Returns that document, with ``file``."""
     folder = os.path.abspath(folder)
+    rp._check_tree(folder)
     rule = rule or rp.first_tool_call
     if yes is not None:
         _pattern(yes, "yes")

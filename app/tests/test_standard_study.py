@@ -80,6 +80,37 @@ class SignTest(unittest.TestCase):
 
 
 class Studies(StudyCase):
+    def test_linked_artifacts_are_refused_before_resume_or_recount(self):
+        self.run_study(stop_after=1)
+        before = tree(self.job)
+        for name in ("answers.jsonl", "study.json", "targets.jsonl", "relay", "ledger", "recounts", "study.json.part"):
+            path = Path(self.out, name)
+            backup = path.with_name(name + ".saved")
+            existed = path.exists()
+            if existed:
+                path.rename(backup)
+            path.symlink_to(self.job, target_is_directory=True)
+            try:
+                for action in (self.run_study, lambda: study.recount(self.out)):
+                    with self.subTest(name=name), self.assertRaisesRegex(study.Refused, "outside its folder"):
+                        action()
+            finally:
+                path.unlink()
+                if existed:
+                    backup.rename(path)
+        self.assertEqual(tree(self.job), before)
+        self.assertEqual(len(Upstream.seen), 1)
+
+    def test_recount_refuses_paths_that_climb_out_of_the_study(self):
+        self.run_study(stop_after=1)
+        answers = Path(self.out, "answers.jsonl")
+        row = json.loads(answers.read_text())
+        for fields in ({"relay": "../outside"}, {"route": "../../outside"}, {"relay": self.job}):
+            answers.write_text(json.dumps(dict(row, **fields)) + "\n")
+            with self.subTest(fields=fields), self.assertRaisesRegex(study.Refused, "outside its folder"):
+                study.recount(self.out)
+        self.assertFalse(Path(self.out, "recounts").exists())
+
     def test_echoed_credentials_are_removed_before_files_and_progress(self):
         secret = "active-credential-without-a-provider-prefix"
         self.env["OPENROUTER_API_KEY"] = secret

@@ -88,6 +88,27 @@ def _jsonl(path: str) -> List[dict]:
     return out
 
 
+def _inside(root: str, *parts: str) -> str:
+    root = os.path.realpath(root)
+    path = os.path.realpath(os.path.join(root, *parts))
+    if any(".." in p.split(os.sep) for p in parts) or os.path.commonpath((root, path)) != root:
+        raise Refused("an artifact path resolves outside its folder")
+    return path
+
+
+def _check_tree(root: str) -> None:
+    """Check existing artifacts before a reader or writer follows their paths."""
+    seen = set()
+    for folder, dirs, files in os.walk(root, followlinks=True):
+        real = _inside(root, os.path.relpath(folder, root))
+        if real in seen:
+            dirs[:] = []
+            continue
+        seen.add(real)
+        for name in dirs + files:
+            _inside(root, os.path.relpath(os.path.join(folder, name), root))
+
+
 # -- the source: one recorded call ---------------------------------------------------------------------------
 @dataclass
 class Source:
@@ -119,13 +140,15 @@ def trial_dir(job_dir: str, trial: str) -> str:
     if not os.path.isdir(job_dir):
         raise NotFound(f"no such directory: {job_dir}")
     where = os.path.join(job_dir, "retried", trial) if _TRY.search(trial) else os.path.join(job_dir, trial)
+    where = _inside(job_dir, os.path.relpath(where, job_dir))
     if not os.path.isdir(where):
         raise NotFound(f"no trial named {trial!r} in {job_dir}")
     return where
 
 
 def _store(tdir: str) -> tuple:
-    folder = by_call.store_folder(tdir)
+    folder = _inside(tdir, os.path.relpath(by_call.store_folder(tdir), tdir))
+    _check_tree(folder)
     routes = exchanges.tags(folder)
     tag = by_call.route_tag(tdir, routes)
     if tag not in routes:
@@ -135,13 +158,13 @@ def _store(tdir: str) -> tuple:
 
 
 def _record_rows(tdir: str, tag: str) -> List[dict]:
-    rows = _jsonl(os.path.join(tdir, by_call.CALLS))
-    return rows or _jsonl(os.path.join(tdir, by_call.RELAY, tag + ".jsonl"))
+    rows = _jsonl(_inside(tdir, by_call.CALLS))
+    return rows or _jsonl(_inside(tdir, by_call.RELAY, tag + ".jsonl"))
 
 
 def _config(job_dir: str) -> dict:
     try:
-        with open(os.path.join(job_dir, "config.json"), encoding="utf-8") as f:
+        with open(_inside(job_dir, "config.json"), encoding="utf-8") as f:
             got = json.load(f)
     except (OSError, ValueError):
         return {}

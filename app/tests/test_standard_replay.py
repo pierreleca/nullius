@@ -140,6 +140,24 @@ class ReplayCase(unittest.TestCase):
 
 
 class Rebuilt(ReplayCase):
+    def test_source_links_cannot_escape_the_job_or_trial(self):
+        trial = Path(self.job, "task-a__u0001")
+        outside = Path(self.tmp, "outside")
+        (trial / "unused-link").symlink_to(outside)
+        self.assertEqual(replay.source(self.job, trial.name, 1).model, "m")
+        (trial / "unused-link").unlink()
+        trial.rename(outside)
+        trial.symlink_to(outside, target_is_directory=True)
+        with self.assertRaisesRegex(replay.Refused, "outside its folder"):
+            replay.source(self.job, trial.name, 1)
+        trial.unlink()
+        outside.rename(trial)
+        store = trial / ".work" / "relay" / "exchanges"
+        store.rename(outside)
+        store.symlink_to(outside, target_is_directory=True)
+        with self.assertRaisesRegex(replay.Refused, "outside its folder"):
+            replay.calls(self.job, trial.name)
+
     def test_a_request_rebuilt_and_sent_unchanged_is_the_recorded_one_byte_for_byte(self):
         """A request rebuilt and sent equals the recorded one, byte for byte, when nothing is changed."""
         src = replay.source(self.job, "task-a__u0001", 2)
