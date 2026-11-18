@@ -264,3 +264,7 @@
 @media (max-width: 650px) { #nullius-builder .std-served-list { grid-column: 1; } #nullius-builder label.std-served:has(.std-served-list:not(:empty)) > .ui-field-copy { grid-row: auto; margin-top: 0; } }
 /* a limit the benchmark or the agent declares: its placeholder reads as a value; Nullius's default stays grey */
 #nullius-builder .nb-field input.nb-declared::placeholder { color: var(--nb-text); opacity: 1; }
+
+/* A chosen dataset's tasks: all of them, or one of its task sets. */
+#nullius-builder .nb-pick-grid + .std-sethead, #nullius-builder .nb-field + .std-sethead { margin-top: 26px; }
+#nullius-builder .std-sethead a.nb-inlinebutton { font-size: 13px; white-space: nowrap; }

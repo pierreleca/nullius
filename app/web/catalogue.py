@@ -7,13 +7,14 @@ import html
 import json
 import os
 import re
+import threading
 import time
 
 from flask import abort, flash, jsonify, redirect, render_template, request, url_for
 from nullius import execution, paths, providers, secrets, settings
 from nullius.catalogue import catalog, citation, harbor_entry, sources, storage
 from nullius.standard import definitions as standard_definitions
-from nullius.standard import howto, prove
+from nullius.standard import howto, prove, sets, units
 from nullius.standard import recipe as standard_recipe
 
 from .core import app
@@ -45,12 +46,184 @@ def benchmark_page(key):
     ds = cat.datasets_of(b)
     data = {d.key: sources.of(d, b.harness, std_def, only=len(ds) == 1) for d in ds}
     jobs = {j.job_id for j in shared._jobs_for_request()} if std else set()
+    task_sets = sets.rows(b.key) if std else []
     return render_template("catalogue/benchmark.html", cat=cat, b=b, csrf=shared._csrf_token(), papers=citation.parse(b.citation), data=data,
+                           task_sets=task_sets,
                            editable=entry is not None and not harbor_entry.not_editable(entry), std=std, std_jobs=jobs,
                            deletable=os.path.isfile(os.path.join(paths.catalogue_dir(), catalog.BENCHMARKS, key, catalog.ENTRY)),
                            restore_bundle=storage.can_restore("benchmarks", key, catalog.ROOT),
                            local=settings_web._local_client(),
                            providers=[(p, providers.label(p)) for p in providers.available(os.environ)])
+
+
+# --- a dataset's tasks: browsed, chosen and kept as a task set ---------------------------------
+
+# the listings being made out of a request: {(benchmark, dataset): {"thread", "error"}}
+_PREPARING: dict = {}
+_PREPARING_LOCK = threading.Lock()
+
+
+def _std_dataset(key: str, dataset: str):
+    """(the standard's definition of ``key``, its dataset) or a 404. The definition goes to the listing as the
+    command line gives it, so both read the same cached listing."""
+    bench = standard_definitions.get("benchmark", key)
+    ds = next((d for d in (bench or {}).get("datasets") or [] if d["id"] == dataset), None)
+    if bench is None or ds is None:
+        abort(404)
+    return bench, ds
+
+
+def _listing_state(bench: dict, dataset: str) -> dict:
+    """The state function's answer; whether a listing is being made here now, and why the last one failed; and
+    ``say``, the line the page shows while the listing is not there."""
+    got = units.state(bench, dataset)
+    with _PREPARING_LOCK:
+        job = _PREPARING.get((bench["key"], dataset)) or {}
+    alive = bool(job.get("thread") and job["thread"].is_alive())
+    got = dict(got, preparing=alive and got["state"] != "cached", error="" if alive else job.get("error", ""))
+    nouns = (bench.get("units") or {}).get("nouns", "tasks")
+    fetched = ", then ".join(f["text"] for f in got["fetch"])
+    if got["state"] == "cached":
+        say = ""
+    elif got["error"]:
+        say = f"The list of {nouns} could not be made: {got['error']}. Ids can still be pasted."
+    elif got["state"] == "refused":
+        say = f"The list of {nouns} cannot be made here: {got['reason']}. Ids can still be pasted."
+    elif got["state"] == "full":
+        say = (f"The list of {nouns} needs the benchmark's own environment on this machine"
+               + (f" ({', '.join(f['text'] for f in got['fetch'])})" if got["fetch"] else "")
+               + ": run the dataset once, or list it with the units command, then reload. Ids can still be pasted.")
+    else:
+        say = f"Preparing the list of {nouns}" + (f": fetching {fetched}." if fetched else ".") + " Ids can be pasted meanwhile."
+    return dict(got, say=say)
+
+
+@app.route("/benchmarks/<key>/tasks/<dataset>")
+def benchmark_tasks(key, dataset):
+    """A dataset's tasks: searched, counted by category, ticked and kept as a task set; opened from a set, its
+    members ticked and a new revision offered, an earlier revision read only. The page asks for the listing
+    once loaded; this request reads no listing."""
+    bench, ds = _std_dataset(key, dataset)
+    entry, rev, problem = None, None, ""
+    if request.args.get("set"):
+        try:
+            entry = sets.load(key, request.args["set"])
+            rev = sets.revision(entry, int(request.args["rev"]) if request.args.get("rev", "").isdigit() else None)
+        except sets.Refused as e:
+            problem, entry = str(e), None
+        if entry is not None and entry["dataset"] != dataset:
+            return redirect(url_for("benchmark_tasks", key=key, dataset=entry["dataset"], **request.args))
+    latest = sets.revision(entry)["revision"] if entry else None
+    return render_template("catalogue/tasks.html", bench=bench, title=standard_definitions.title(bench), ds=ds, entry=entry, rev=rev, latest=latest, problem=problem,
+                           nouns=(bench.get("units") or {}).get("nouns", "units"), csrf=shared._csrf_token(),
+                           writable=settings_web._local_client(),
+                           others=[s for s in sets.rows(key) if s["dataset"] == dataset])
+
+
+@app.route("/benchmarks/<key>/tasks/<dataset>/listing")
+def benchmark_tasks_listing(key, dataset):
+    """One page of the dataset's tasks for a search and category values, once the listing is in the cache; before
+    that, the state function's answer alone: this request never makes a listing."""
+    bench, _ = _std_dataset(key, dataset)
+    st = _listing_state(bench, dataset)
+    if st["state"] != "cached":
+        return jsonify(ok=True, ready=False, **st)
+    cats: dict = {}
+    for word in request.args.getlist("cat"):
+        field_, eq, value = word.partition("=")
+        if eq and field_ and value:
+            cats.setdefault(field_, []).append(value)
+    page = request.args.get("page", "1")
+    try:
+        if request.args.get("ids"):           # every match's id, for "select the N that match"
+            got = units.find(bench, dataset, search=request.args.get("q", ""), categories=cats, size=None)
+            return jsonify(ok=True, ready=True, total=got["total"], ids=[t["id"] for t in got["tasks"]])
+        got = units.find(bench, dataset, search=request.args.get("q", ""), categories=cats,
+                         page=int(page) if page.isdigit() and int(page) >= 1 else 1)
+    except units.Refused as e:
+        return jsonify(ok=False, error=str(e)), 400
+    return jsonify(ok=True, ready=True, **got)
+
+
+@app.route("/benchmarks/<key>/tasks/<dataset>/prepare", methods=["POST"])
+def benchmark_tasks_prepare(key, dataset):
+    """Make a listing the state function calls light, out of this request: it fetches what the state named and
+    starts the light listing command. A listing that needs the driver's full environment is never started here."""
+    shared._require_csrf()
+    if not settings_web._local_client():
+        abort(403, description="Listings are prepared from a browser on the application host only.")
+    bench, _ = _std_dataset(key, dataset)
+    st = units.state(bench, dataset)
+    if st["state"] != "light":
+        return jsonify(ok=st["state"] == "cached", **_listing_state(bench, dataset))
+
+    def make():
+        try:
+            units.listing(bench, dataset)
+        except (units.Refused, OSError) as e:
+            _PREPARING[(key, dataset)]["error"] = str(e)
+    with _PREPARING_LOCK:
+        job = _PREPARING.get((key, dataset))
+        if not (job and job["thread"].is_alive()):
+            job = _PREPARING[(key, dataset)] = {"thread": threading.Thread(target=make, daemon=True), "error": ""}
+            job["thread"].start()
+    return jsonify(ok=True, **_listing_state(bench, dataset))
+
+
+@app.route("/benchmarks/<key>/tasks/<dataset>/rows", methods=["POST"])
+def benchmark_tasks_rows(key, dataset):
+    """The chosen ids as rows (show selected, ids pasted): each with its title and categories when the listing is in
+    the cache, and ``unknown``, the ids it does not list; without the listing, the ids alone."""
+    bench, _ = _std_dataset(key, dataset)
+    ids = [str(u) for u in (request.get_json(silent=True) or {}).get("units") or [] if isinstance(u, str)]
+    if units.state(bench, dataset)["state"] != "cached":
+        return jsonify(ok=True, ready=False, tasks=[{"id": u, "title": "", "text": "", "categories": {}} for u in ids], unknown=[])
+    have = {t["id"]: t for t in units.listing(bench, dataset)["tasks"]}
+    return jsonify(ok=True, ready=True, tasks=[have[u] for u in ids if u in have], unknown=[u for u in ids if u not in have])
+
+
+def _set_problem(key: str, name: str) -> str:
+    """Why ``name`` cannot name a new task set of ``key``, in a line for the page, or ""."""
+    if not name:
+        return "Give the task set a name."
+    if "/" in name or "\\" in name:
+        return "A task set's name holds no slash: letters, digits, '.', '_' and '-'."
+    try:
+        sets.check_name(name)
+    except sets.Refused:
+        return "A task set's name is letters, digits, '.', '_' and '-', starting with a letter or a digit, at most 64."
+    if os.path.exists(sets.path_of(key, name)):
+        return f"A task set named {name} exists already: choose another name."
+    return ""
+
+
+@app.route("/benchmarks/<key>/tasks/<dataset>/save", methods=["POST"])
+def benchmark_tasks_save(key, dataset):
+    """Keep the ticked ids: a new task set ({name, description, units}), or a new revision of the set the page was
+    opened from ({set, note, units}), added only when its membership changed."""
+    shared._require_csrf()
+    if not settings_web._local_client():
+        abort(403, description="Task sets are saved from a browser on the application host only.")
+    bench, _ = _std_dataset(key, dataset)
+    body = request.get_json(silent=True) or {}
+    ids = [u for u in body.get("units") or [] if isinstance(u, str)]
+    if not ids:
+        return jsonify(ok=False, error="Tick at least one task."), 400
+    try:
+        if body.get("set"):
+            entry, added = sets.update(key, str(body["set"]), units=ids, note=str(body.get("note") or ""))
+            last = sets.revision(entry)
+            return jsonify(ok=True, added=added, revision=last["revision"],
+                           open=url_for("benchmark_tasks", key=key, dataset=dataset, set=entry["name"], rev=last["revision"]))
+        name = str(body.get("name") or "").strip()
+        problem = _set_problem(key, name)
+        if problem:
+            return jsonify(ok=False, error=problem), 400
+        entry = sets.create(bench, name, dataset=dataset, units=ids, description=str(body.get("description") or "").strip(),
+                            note=str(body.get("note") or ""))
+    except sets.Refused as e:
+        return jsonify(ok=False, error=str(e)), 400
+    return jsonify(ok=True, added=True, revision=1, open=url_for("benchmark_tasks", key=key, dataset=dataset, set=entry["name"], rev=1))
 
 
 @app.route("/catalogue/<group>/<key>/use-bundled", methods=["POST"])

@@ -1,0 +1,150 @@
+// A dataset's tasks (templates/catalogue/tasks.html): the server gives a page of 100 tasks for a search and category
+// values (web/catalogue.py, standard/units.py); this page keeps the chosen ids alone. The listing is asked for once the
+// page has loaded: in the cache, it shows at once; one that can be made lightly is started out of the request and
+// the page asks again until it is ready; one that needs the benchmark's full environment is never started here.
+(() => {
+  const page = document.getElementById('tasks-page');
+  if (!page) return;
+  const $ = id => document.getElementById(id), d = page.dataset, nouns = d.nouns || 'tasks';
+  const writable = d.writable === 'true';
+  const chosen = new Set(JSON.parse(($('tasks-chosen-ids') || {}).textContent || '[]'));
+  const st = {q: '', cats: {}, page: 1, showing: false, ready: false, total: 0, pages: 1};
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+  const post = (url, body) => nulliusFetch(url, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': d.csrf}, body: JSON.stringify(body)});
+  const count = n => `${n.toLocaleString('en-US')} ${n === 1 ? nouns.replace(/s$/, '') : nouns}`;
+
+  function say(text, warn) {
+    const el = $('tasks-state'); el.hidden = !text; el.textContent = text || ''; el.classList.toggle('tasks-warn', !!warn);
+  }
+  function chosenLine() {
+    $('tasks-chosen').textContent = `${chosen.size.toLocaleString('en-US')} chosen`;
+    $('tasks-show').disabled = !chosen.size && !st.showing;
+  }
+  function row(t) {
+    const cats = Object.values(t.categories || {});
+    return `<tr data-id="${esc(t.id)}"><td class="tasks-tick"><input type="checkbox" aria-label="Choose ${esc(t.id)}"${chosen.has(t.id) ? ' checked' : ''}${writable ? '' : ' disabled'}></td>`
+      + `<td><span class="tasks-title">${esc(t.title || t.id)}</span>${t.title ? `<small class="mono faint">${esc(t.id)}</small>` : ''}${t.unknown ? '<small class="warn">not in the listing</small>' : ''}</td>`
+      + `<td>${cats.map(v => `<span class="cat-tag">${esc(v)}</span>`).join(' ')}</td></tr>`;
+  }
+  function draw(tasks) {
+    $('tasks-rows').innerHTML = tasks.map(row).join('');
+    $('tasks-table').hidden = !tasks.length;
+    $('tasks-cat-head').hidden = !tasks.some(t => Object.keys(t.categories || {}).length);
+    document.querySelectorAll('#tasks-rows tr td:last-child').forEach(td => { td.hidden = $('tasks-cat-head').hidden; });
+  }
+  function facets(cats) {
+    $('tasks-cats').innerHTML = Object.entries(cats || {}).map(([field, values]) =>
+      `<div class="bench-cats" role="group" aria-label="${esc(field)}"><span class="tasks-catname">${esc(field)}</span>`
+      + values.map(v => `<button type="button" class="bench-cat${(st.cats[field] || []).includes(v.value) ? ' on' : ''}" data-field="${esc(field)}" data-value="${esc(v.value)}" aria-pressed="${(st.cats[field] || []).includes(v.value)}">${esc(v.value)} <span class="tasks-n">${v.count}</span></button>`).join('')
+      + '</div>').join('');
+  }
+  function pager() {
+    const nav = $('tasks-pages');
+    nav.hidden = st.showing || st.pages <= 1;
+    $('tasks-page-of').textContent = `Page ${st.page} of ${st.pages}`;
+    nav.querySelector('[data-page=prev]').disabled = st.page <= 1;
+    nav.querySelector('[data-page=next]').disabled = st.page >= st.pages;
+  }
+  function query(extra) {
+    const u = new URLSearchParams();
+    if (st.q) u.set('q', st.q);
+    Object.entries(st.cats).forEach(([f, vs]) => vs.forEach(v => u.append('cat', `${f}=${v}`)));
+    Object.entries(extra || {}).forEach(([k, v]) => u.set(k, v));
+    return d.listing + '?' + u;
+  }
+  let polling = null, asked = 0;
+  // not in the cache: the server's line for its state; a light listing started once, out of any request, then asked
+  // again every few seconds until it is ready
+  function notReady(got) {
+    if ($('tasks-match')) $('tasks-match').hidden = true;
+    const light = got.state === 'light' && !got.error;
+    say(got.say, !light);
+    if (!light) return;
+    clearTimeout(polling);
+    if (!got.preparing && d.local !== 'true') return say('The list is prepared from a browser on the application host. Ids can still be pasted.', true);
+    if (!got.preparing && !asked++)
+      return post(d.prepare, {}).then(r => r.json()).then(g => { say(g.say || got.say); polling = setTimeout(load, 2500); })
+        .catch(() => say('The list could not be started. Reload the page.', true));
+    polling = setTimeout(load, 2500);
+  }
+  async function load() {
+    if (st.showing) return showSelected();
+    let got;
+    try { got = await (await nulliusFetch(query({page: st.page}))).json(); } catch { return say('The list could not be read. Reload the page.', true); }
+    if (!got.ok) return say(got.error || 'The list could not be read.', true);
+    if (!got.ready) { $('tasks-count').textContent = ''; draw([...chosen].map(id => ({id}))); return notReady(got); }
+    say('');
+    st.ready = true; st.total = got.total; st.pages = got.pages; st.page = got.page;
+    facets(got.categories);
+    draw(got.tasks);
+    $('tasks-count').textContent = `${count(got.total)}` + (got.total !== got.of ? ` of ${got.of.toLocaleString('en-US')}` : '')
+      + (got.described ? '' : ' · its driver gives ids alone');
+    const m = $('tasks-match');
+    if (m) { m.hidden = !writable || !got.total; m.textContent = `Select the ${got.total.toLocaleString('en-US')} that match`; }
+    pager(); chosenLine();
+  }
+  async function showSelected() {
+    const ids = [...chosen];
+    let got = {tasks: ids.map(id => ({id})), unknown: []};
+    try { got = await (await post(d.rows, {units: ids})).json(); } catch { /* the ids alone */ }
+    const unknown = new Set(got.unknown || []);
+    draw([...got.tasks, ...[...unknown].map(id => ({id, unknown: true}))]);
+    $('tasks-count').textContent = `${count(ids.length)} chosen` + (unknown.size ? ` · ${unknown.size} not in the listing` : '');
+    pager(); chosenLine();
+  }
+
+  let typing = null;
+  $('tasks-q').addEventListener('input', e => { clearTimeout(typing); typing = setTimeout(() => { st.q = e.target.value.trim(); st.page = 1; load(); }, 250); });
+  $('tasks-cats').addEventListener('click', e => {
+    const b = e.target.closest('[data-field]'); if (!b) return;
+    const f = b.dataset.field, v = b.dataset.value, vs = st.cats[f] || [];
+    st.cats[f] = vs.includes(v) ? vs.filter(x => x !== v) : [...vs, v];
+    if (!st.cats[f].length) delete st.cats[f];
+    st.page = 1; load();
+  });
+  $('tasks-rows').addEventListener('change', e => {
+    const box = e.target.closest('input[type=checkbox]'); if (!box) return;
+    const id = box.closest('tr').dataset.id;
+    box.checked ? chosen.add(id) : chosen.delete(id); chosenLine();
+  });
+  $('tasks-pages').addEventListener('click', e => {
+    const b = e.target.closest('[data-page]'); if (!b) return;
+    st.page += b.dataset.page === 'next' ? 1 : -1; load();
+  });
+  $('tasks-show').addEventListener('click', () => {
+    st.showing = !st.showing; $('tasks-show').setAttribute('aria-pressed', String(st.showing));
+    $('tasks-show').textContent = st.showing ? 'Show all' : 'Show selected'; load();
+  });
+  $('tasks-match')?.addEventListener('click', async () => {
+    const got = await (await nulliusFetch(query({ids: 1}))).json();
+    if (got.ok && got.ready) { got.ids.forEach(id => chosen.add(id)); load(); }
+  });
+  $('tasks-clear')?.addEventListener('click', () => { chosen.clear(); load(); });
+  $('tasks-paste-add')?.addEventListener('click', async () => {
+    const ids = [...new Set($('tasks-paste').value.split(/[\s,]+/).map(s => s.trim()).filter(s => s && !s.startsWith('#')))];
+    ids.forEach(id => chosen.add(id));
+    $('tasks-paste').value = ''; $('tasks-paste').closest('details').open = false;
+    window.nulliusNotify?.(`${count(ids.length)} added.`);
+    load();
+  });
+
+  const msg = (text, bad) => { const el = $('tasks-msg'); if (el) { el.textContent = text; el.classList.toggle('bad', !!bad); } };
+  async function save(body) {
+    if (!chosen.size) return msg('Tick at least one task.', true);
+    let got;
+    try { got = await (await post(d.save, {...body, units: [...chosen]})).json(); } catch { return msg('Not saved: the server did not answer.', true); }
+    if (!got.ok) return msg(got.error, true);
+    if (body.set && !got.added) return msg(`Nothing changed: revision ${got.revision} holds these ${nouns} already.`);
+    location.href = got.open;
+  }
+  $('tasks-create')?.addEventListener('submit', e => {
+    e.preventDefault(); const f = e.target;
+    save({name: f.elements.namedItem('name').value.trim(), description: f.elements.namedItem('description').value.trim()});
+  });
+  $('tasks-revise')?.addEventListener('submit', e => {
+    e.preventDefault();
+    save({set: d.set, note: e.target.elements.namedItem('note').value.trim()});
+  });
+  chosenLine();
+  load();
+})();

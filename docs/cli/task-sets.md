@@ -68,6 +68,19 @@ Exit codes: 0 listed (no match included), 2 a usage error or a refusal (an optio
 | The units | The set's ids, as a [list of units](run.md#a-list-of-units): ids the driver does not list under the run's options refuse the run before any unit, the message giving how many and the first five; then `--shard`, then `--limit` |
 | The record | `config.json`: `standard.task_set`, the set's id, name, revision, hash and units |
 | Shards | `merge` refuses shards of two sets, two revisions, or a set and none, unless `--force`; the merged job keeps the first shard's set ([Shard and merge](shard-and-merge.md)) |
-| On a host | Not yet: a recipe has no field for a set |
+| On a host | From the app: the runner snapshot sent to the host carries the recipe's sets, and the run there reads them from its copy of the catalogue. By hand: copy the entry, or `set import` a job that ran it |
 
 Exit codes: 0 done, 2 a usage error or a refusal, 3 no such benchmark, set, revision, file or job ([Exit codes and output](exit-codes.md)).
+
+## On the pages
+
+| Page | What it does |
+| --- | --- |
+| A benchmark's page, **Task sets** | Its sets (name, dataset, number of tasks, latest revision, date) and a link to each dataset's tasks |
+| A dataset's tasks | A search over id, title and text, each category's values with their counts, 100 tasks a page, under the benchmark's default options. Tick a task, select every match, show the selected, paste ids. **Save as task set** keeps the ticked ids under a name and a description |
+| A set's page | The same page with its members ticked: **Save as a new revision**, with a note, adds a revision only when the membership changed. An earlier revision is read only |
+| A first listing | Never made inside a request. In the cache: shown at once. One that [`driver.list_command`](../standard.md#driver-ops) makes lightly: started by the page, which says what it fetches. One that needs the driver's own environment: not started, the page says what it needs; ids can still be pasted |
+| The builder | Each chosen dataset: all its tasks or one of its sets; Review names the set and its number of tasks |
+| A job's page | The set and revision it ran, linked when the catalogue here holds them. **Save as task set** keeps the units of the trials its outcome filter shows, by their full ids |
+
+Saving needs a browser on the application host. A name that exists, an empty name or one with a slash is refused on the page.

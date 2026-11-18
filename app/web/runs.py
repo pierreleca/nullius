@@ -24,6 +24,7 @@ from nullius.redact import redact
 from nullius.runs import attempts, classify, feasibility, launches, live, parse
 from nullius import workspace
 from nullius.standard import definitions as standard_definitions
+from nullius.standard import sets as task_sets
 
 from .core import app
 from . import shared
@@ -545,10 +546,69 @@ def job(job_id):
     from . import judge
     board = _live_board_state(j)
     return render_template("runs/job.html", job=j, live_board=board, view=_view_of(board, j),
-                           execution=ex, csrf=shared._csrf_token(),
+                           execution=ex, csrf=shared._csrf_token(), set_link=_set_link(j), set_saving=_set_saving(j),
                            judgement=judge.job_summary(j) if j.trials else None,
                            control=feasibility.summary_of(j), ended=execution.ended_for(job_id), own=own, deletable=_deletable(job_id, ex),
                            trial_rows=attempts.grouped(j), pass_k=attempts.for_job(j))
+
+
+def _set_link(j) -> str:
+    """The page of the task set a job ran, at the revision it ran; "" when the catalogue here has no set of that
+    name and id, or not that revision."""
+    ts = j.task_set
+    if not ts or not ts.get("benchmark"):
+        return ""
+    try:
+        entry = task_sets.load(ts["benchmark"], ts["name"])
+        task_sets.revision(entry, ts.get("revision"))
+    except task_sets.Refused:
+        return ""
+    if entry["id"] != ts.get("id"):
+        return ""
+    return url_for("benchmark_tasks", key=ts["benchmark"], dataset=entry["dataset"], set=ts["name"], rev=ts.get("revision"))
+
+
+def _set_saving(j) -> bool:
+    """Whether the job page offers "Save as task set": a standard job of a benchmark in the catalogue, whose trials
+    record their units, on a browser of this machine."""
+    if not j.standard or not settings_web._local_client():
+        return False
+    try:
+        with open(os.path.join(j.dir, "config.json"), encoding="utf-8") as f:
+            bench = (json.load(f).get("standard") or {}).get("benchmark")
+    except (OSError, ValueError, AttributeError):
+        return False
+    return bool(isinstance(bench, str) and standard_definitions.get("benchmark", bench))
+
+
+@app.route("/job/<job_id>/task-set", methods=["POST"])
+def job_task_set(job_id):
+    """Keep the units of the trials the outcome filter shows (every trial without one) as a new task set: each by
+    the full unit id its trial records (standard/sets.py, ``from_job``); then the set's page."""
+    shared._require_csrf()
+    if not settings_web._local_client():
+        abort(403, description="Task sets are saved from a browser on the application host only.")
+    j = shared._find_job(shared._jobs_for_request(), job_id)
+    if j is None or not _set_saving(j):
+        abort(404)
+    with open(os.path.join(j.dir, "config.json"), encoding="utf-8") as f:
+        bench = standard_definitions.get("benchmark", json.load(f)["standard"]["benchmark"])
+    name, outcome = (request.form.get("name") or "").strip(), (request.form.get("outcome") or "").strip()
+    from . import catalogue
+    problem = catalogue._set_problem(bench["key"], name)
+    back = url_for("job", job_id=job_id, **({"outcome": outcome} if outcome else {}))
+    if problem:
+        flash(problem, "error")
+        return redirect(back)
+    try:
+        got = task_sets.from_job(bench, j.dir, outcomes=[outcome] if outcome else None)
+        entry = task_sets.create(bench, name, dataset=got["dataset"], units=got["units"],
+                                 description=(request.form.get("description") or "").strip(), note=got["note"])
+    except task_sets.Refused as e:
+        flash(str(e), "error")
+        return redirect(back)
+    flash(f"Saved the task set {entry['name']}: {len(got['units'])} {'task' if len(got['units']) == 1 else 'tasks'}.", "ok")
+    return redirect(url_for("benchmark_tasks", key=bench["key"], dataset=entry["dataset"], set=entry["name"], rev=1))
 
 
 def _runs_of(g, owner=execution.for_job) -> list:
