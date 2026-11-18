@@ -403,7 +403,8 @@ class Running(Scratch):
             self.assertEqual(next(e for e in map(json.loads, f) if e["event"] == "job.start")["tasks"], ["wrong"])
 
     def test_the_config_records_the_set_its_revision_and_its_options(self):
-        self.make("dev", "good\nmodel\n", "--bench-option", "mode=hard")
+        self.b["datasets"] = [*self.b["datasets"], {"id": "responding", "units": 3}]
+        self.make("dev", "good\nmodel\n", "--dataset", "responding", "--bench-option", "mode=hard")
         self.cli("set", "update", "fakebench", "dev", "--add", "slow")
         code, out, err = self.run_cli("--set", "dev@1", "--name", "first")
         self.assertEqual(code, 0, out + err)
@@ -414,7 +415,7 @@ class Running(Scratch):
                          {"id": entry["id"], "name": "dev", "revision": 1, "units": ["good", "model"]})
         self.assertEqual(cfg["standard"]["benchmark_options"], {"mode": "hard"})
         self.assertNotIn("units_file", cfg["standard"])
-        self.assertEqual(cfg["datasets"], [{"name": "fakebench/all", "n_tasks": 2}])
+        self.assertEqual(cfg["datasets"], [{"name": "fakebench/responding", "n_tasks": 2}])
 
     def test_a_run_without_a_set_records_none(self):
         code, out, err = self.run_cli("--name", "plain")

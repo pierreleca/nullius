@@ -215,7 +215,8 @@ class Merge(unittest.TestCase):
         def of(name="dev", rev=1, id_="a" * 32):
             return {"id": id_, "name": name, "revision": rev, "hash": f"{rev}" * 64, "units": units}
         a = write_shard(self.tmp, "a", self.split[1], 1, 3, task_set=of())
-        for name, rec in (("b-rev", of(rev=2)), ("b-other", of(name="other", id_="b" * 32)), ("b-none", None)):
+        for name, rec in (("b-rev", of(rev=2)), ("b-other", of(name="other", id_="b" * 32)),
+                          ("b-id", of(id_="b" * 32)), ("b-none", None)):
             with self.subTest(other=name):
                 b = write_shard(self.tmp, name, self.split[2], 2, 3, task_set=rec)
                 with self.assertRaisesRegex(merge.Refused, "task set: a 'dev@1 "):
