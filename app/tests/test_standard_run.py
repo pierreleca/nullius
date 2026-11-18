@@ -1477,6 +1477,51 @@ class TickerTest(unittest.TestCase):
                 self.ticker.tick()
                 self.assertEqual([d for e, t, d in self.feed.lines if t == "y"], [])
 
+    def test_progress_parent_links_are_refused(self):
+        outside = os.path.join(self.tmp, "outside")
+        os.mkdir(outside)
+        self.write({"steps": 93, "steps_limit": 100}, os.path.join(outside, "progress.json"))
+        self.write({"steps": 1, "steps_limit": 5})
+        parent = os.path.join(self.trial, "linked")
+        for target in (os.path.dirname(self.progress), outside):
+            with self.subTest(target=os.path.basename(target)):
+                self.feed.lines.clear()
+                os.symlink(target, parent)
+                try:
+                    self.ticker.watch("x", task="u", agent="a", trial=self.trial, progress="linked/progress.json")
+                    self.ticker.tick()
+                    self.assertEqual(self.told(), [])
+                finally:
+                    os.unlink(parent)
+
+    def test_progress_parent_replaced_after_first_read_cannot_escape(self):
+        self.ticker.watch("x", task="u", agent="a", trial=self.trial, progress=".work/progress.json")
+        self.write({"steps": 1, "steps_limit": 5})
+        self.ticker.tick()
+        self.assertEqual(self.told()[0]["step"], 1)
+        self.write({"steps": 2, "steps_limit": 5})
+        outside = os.path.join(self.tmp, "outside")
+        os.mkdir(outside)
+        self.write({"steps": 93, "steps_limit": 100}, os.path.join(outside, "progress.json"))
+        opened = os.open
+        swapped = []
+
+        def replace_parent(path, flags, *args, **kwargs):
+            if os.path.basename(path) == "progress.json" and not swapped:
+                parent = os.path.dirname(self.progress)
+                os.rename(parent, parent + ".saved")
+                os.symlink(outside, parent)
+                swapped.append(True)
+            return opened(path, flags, *args, **kwargs)
+
+        with mock.patch.object(run.os, "open", side_effect=replace_parent):
+            self.ticker.tick()
+        self.assertEqual(swapped, [True])
+        self.assertTrue(all(d["step"] in (1, 2) and d["step_limit"] == 5 for d in self.told()))
+        said = list(self.told())
+        self.ticker.tick()
+        self.assertEqual(self.told(), said)
+
     def test_a_unit_with_no_progress_file_sends_its_calls_alone(self):
         self.ticker.watch("x", task="u", agent="a", trial=self.trial, record=self.record, calls_limit=50)
         self.call(cost=0.001)

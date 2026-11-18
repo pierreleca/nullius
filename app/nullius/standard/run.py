@@ -68,7 +68,7 @@ import traceback
 import tempfile
 from collections import Counter
 from concurrent.futures import FIRST_EXCEPTION, CancelledError, ThreadPoolExecutor, wait
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from typing import Callable, Dict, List, Optional
 
 from nullius import constraints as limits, paths, prices as price_list, progress, providers
@@ -471,7 +471,7 @@ class Ticker:
         if isinstance(progress, str) and progress and not os.path.isabs(progress):
             norm = os.path.normpath(progress)
             if norm != os.pardir and not norm.startswith(os.pardir + os.sep):
-                path = os.path.join(trial, norm)
+                path = norm
         with self.lock:
             self.units[name] = {"task": task, "agent": agent, "trial": trial, "record": record, "progress": path,
                                 "calls_limit": calls_limit, "at": 0, "counts": None, "steps": None, "sent": None}
@@ -510,14 +510,18 @@ class Ticker:
         if path is None:
             return
         try:
-            if not os.path.realpath(path).startswith(os.path.realpath(u["trial"]) + os.sep):
-                return                           # a link out of the trial is not followed
-            # not a link, and never waited on: a pipe left at the path cannot hold the thread
-            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
-            try:
+            with ExitStack() as opened:
+                flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+                parent = os.open(u["trial"], flags)
+                opened.callback(os.close, parent)
+                parts = path.split(os.sep)
+                # Keep each folder open. A replacement cannot redirect the next open.
+                for part in parts[:-1]:
+                    parent = os.open(part, flags, dir_fd=parent)
+                    opened.callback(os.close, parent)
+                fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+                opened.callback(os.close, fd)
                 raw = os.read(fd, PROGRESS_BYTES + 1) if stat.S_ISREG(os.fstat(fd).st_mode) else b""
-            finally:
-                os.close(fd)
             got = json.loads(raw) if 0 < len(raw) <= PROGRESS_BYTES else None
         except (OSError, ValueError):
             return
