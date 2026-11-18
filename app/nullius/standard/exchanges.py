@@ -371,14 +371,13 @@ def rebuild(folder: str, line: dict, parts: Optional[Dict[str, dict]] = None) ->
     """The bytes a recorded call sent, put back together from its line, its parts and its pictures:
     what ``sent_sha256`` is the hash of when nothing was cut from them. Raises :class:`Missing` when
     the store does not hold the request."""
+    parts = stored_parts(folder) if parts is None else parts
     if line.get("cut"):
         raise Missing(f"call {line.get('n')} was not kept: {line['cut']}")
     if "sent_body" in line:
         return line["sent_body"].encode()
     if not isinstance(line.get("sent"), dict):
         raise Missing(f"call {line.get('n')} has no request in the store" + (f": {line['error']}" if line.get("error") else ""))
-    parts = stored_parts(folder) if parts is None else parts
-
     def part(h):
         _digest(h)
         if h not in parts:

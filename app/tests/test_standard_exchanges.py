@@ -863,6 +863,26 @@ class Version(unittest.TestCase):
             for n in (1, 2):
                 self.assertTrue(exchanges.check(store.dir, "u0001", n)["same"])
 
+    def test_later_parts_are_refused_before_raw_cut_or_missing_requests(self):
+        trial = mock.Mock(dir=str(self.root / "task__u0001"), trial_name="task__u0001")
+        store = self.keep(os.path.join(trial.dir, ".work", "relay"))
+        store.write("u0001", 3, 1.0, "/messages", None, b"raw request", {}, 400, False, b"{}")
+        with open(Path(store.dir) / "u0001.jsonl", "a") as f:
+            f.write(json.dumps({"n": 4, "cut": "the store reached its bound"}) + "\n")
+            f.write(json.dumps({"n": 5, "error": "the request was not kept"}) + "\n")
+        path = Path(store.dir) / exchanges.PARTS
+        path.write_text(json.dumps({"schema": "nullius.exchanges/v2"}) + "\n" + path.read_text().split("\n", 1)[1])
+        for n in (1, 3, 4, 5):
+            with self.subTest(n=n):
+                out, err = io.TextIOWrapper(io.BytesIO(), encoding="utf-8"), io.StringIO()
+                self.addCleanup(out.close)
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    code = runs_cli._request(trial, n)
+                out.flush()
+                self.assertEqual((code, out.buffer.getvalue()), (runs_cli.EXIT_NOT_FOUND, b""))
+                self.assertIn("version 2", err.getvalue())
+                self.assertIn("version 1", err.getvalue())
+
     def test_a_later_version_or_another_format_is_refused_by_each_reader_naming_both(self):
         for name in ("u0001.jsonl", exchanges.PARTS):
             for said, words in (("nullius.exchanges/v2", ("version 2", "version 1")),
