@@ -645,6 +645,14 @@ class Prepared:
                 "fits": None if max_usd is None else per * times <= max_usd}
 
 
+def _relay_fields(req: dict, path: str) -> None:
+    if req.get("stream") and path.split("?")[0].endswith("/chat/completions"):
+        options = req.setdefault("stream_options", {})
+        if not isinstance(options, dict):
+            raise Refused("stream_options must be a JSON object for a streamed chat request")
+        options["include_usage"] = True
+
+
 def prepare(src: Source, changes: List[Change] = (), *, prices: Optional[Dict[str, dict]] = None,
             endpoint: Optional[str] = None, env=None) -> Prepared:
     """``src``'s request with ``changes`` applied in order, each recorded with the request's sha256 before and
@@ -660,6 +668,7 @@ def prepare(src: Source, changes: List[Change] = (), *, prices: Optional[Dict[st
         req = c.apply(copy.deepcopy(req))
         if not isinstance(req, dict):
             raise Refused(f"the change {c.name} gave no request")
+        _relay_fields(req, src.path)
         chosen = c.provider or chosen
         after = _sha(_dumps(req))
         done.append({"name": c.name, "args": c.args, "sha256_before": before, "sha256_after": after})
@@ -695,6 +704,7 @@ def prepare(src: Source, changes: List[Change] = (), *, prices: Optional[Dict[st
     p = req.get("provider")
     serving = ({name: list(p["order"])} if isinstance(p, dict) and set(p) == {"order", "allow_fallbacks"}
                and p.get("allow_fallbacks") is False and isinstance(p.get("order"), list) and p["order"] else {})
+    _relay_fields(req, src.path)
     raw = _dumps(req)
     usage = ((src.record.get("reply") or {}).get("usage") or {}) if isinstance(src.record.get("reply"), dict) else {}
     seen = usage.get("output") if isinstance(usage.get("output"), int) and usage.get("output") > 0 else None

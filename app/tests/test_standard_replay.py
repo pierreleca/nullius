@@ -212,6 +212,20 @@ class Rebuilt(ReplayCase):
 
 
 class Changes(ReplayCase):
+    def test_stream_usage_is_in_the_prepared_bytes_and_change_hash(self):
+        self.record_trial("chat__u0002", 1, path="/chat/completions", req={
+            "model": "m", "messages": [{"role": "user", "content": "Open settings."}]})
+        prep = self.prepared(replay.set_field("stream", True), trial="chat__u0002", call=1)
+        self.assertEqual(prep.request["stream_options"], {"include_usage": True})
+        self.assertChain(prep, ["set_field"])
+        Upstream.seen = []
+        doc = self.send(prep, times=1)
+        self.assertTrue(doc["sent_as_prepared"])
+        self.assertEqual(Upstream.seen[0][2], Path(doc["out"], "request.json").read_bytes())
+        with self.assertRaisesRegex(replay.Refused, "stream_options must be a JSON object"):
+            self.prepared(replay.set_field("stream", True), replay.set_field("stream_options", "invalid"),
+                          trial="chat__u0002", call=1)
+
     def test_endpoints_with_credentials_are_refused_without_showing_them(self):
         src = replay.source(self.job, "task-a__u0001", 2)
         for endpoint in (self.base + "?api_key=" + KEY, "http://user:" + KEY + "@localhost/v1"):
