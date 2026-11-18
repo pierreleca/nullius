@@ -6,6 +6,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -13,7 +15,7 @@ from unittest.mock import patch
 from nullius.harbor import feed
 from nullius.standard import sets
 from ui_tests.test_capped_job import BENCH
-from ui_tests import test_rerun_page as rerun_page
+from ui_tests import test_rerun_page as rerun_page, test_task_set_pages as task_set_pages
 from ui_tests.test_rerun_page import text, trial_name
 
 PLAN = [f"t-{k}" for k in range(6)]
@@ -111,3 +113,37 @@ class PartRunPage(unittest.TestCase):
         self.assertEqual(text(html, r'<a class="fx" data-o="no_result".*?</a>'), "No result 3")
         self.assertNotIn('data-o="not_run"', html)
         self.assertIn(f'data-pick="{trial_name(2)} t-3__u0003 t-4__u0004">Run the rest · 3</button>', html)
+
+
+class TheBuilder(task_set_pages.BuilderCase):
+    """Start with in the builder: Review, compiled by the server, says what is planned and what begins; the core keeps
+    the choice in the recipe, drops it with its dataset and its benchmark, and reads it back from a saved recipe."""
+
+    def test_review_says_planned_and_to_begin(self):
+        recipe = {"version": 1, "harness": "standard", "name": "fake-0101-120000", "title": "t", "benchmark": "fakebench", "dataset": "all",
+                  "other": "fake", "provider": "openai", "model": "gpt-5-mini", "concurrency": 1, "unsandboxed": True, "where": "local",
+                  "start_with": {"all": "set:dev@1"}}
+        out = self.post("/new-run/runner", {"recipe": recipe})
+        self.assertEqual(out["errors"], [])
+        self.assertIn(["Dataset", "all · 4 tasks · 4 planned, 2 to begin (task set dev, revision 1)"], [r[1:] for r in out["review"]])
+        self.assertTrue(out["confirm"].startswith("Plan 4 tasks of Fake bench and begin 2 with "), out["confirm"])
+        out = self.post("/new-run/runner", {"recipe": dict(recipe, start_with={"all": "9"})})
+        self.assertEqual([e["message"] for e in out["errors"]], ["Start with 9 tasks: all plans 4."])
+
+    def test_the_core_keeps_start_with_with_its_dataset(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node is required for the recipe core")
+        html = self.get("/new-run").get_data(as_text=True)
+        schema = json.loads(re.search(r'<script id="nb-schema" type="application/json">(.*?)</script>', html, re.S).group(1))
+        core = Path(__file__).resolve().parents[1] / "static" / "builder" / "command-builder-core.js"
+        program = (f"const C=require({json.dumps(str(core))})({json.dumps(schema)});\n"
+                   "const r=C.fromJSON({version:1,harness:'standard',benchmark:'fakebench',datasets:['all'],others:['fake'],"
+                   "start_with:{all:'set:dev@1',gone:'2',bad:3}});\n"
+                   "const read=JSON.parse(JSON.stringify(r.start_with));\n"
+                   "C.setStartWith(r,'all','');const cleared=r.start_with===undefined;\n"
+                   "C.setStartWith(r,'all','3');const count=r.start_with.all;r.datasets=[];C.keepStartWith(r);const dropped=r.start_with===undefined;\n"
+                   "r.datasets=['all'];C.setStartWith(r,'all','3');C.setStandardBenchmark(r,'fakememo');\n"
+                   "process.stdout.write(JSON.stringify({read,cleared,count,dropped,other:r.start_with===undefined}));")
+        got = json.loads(subprocess.run([node, "-"], input=program, check=True, capture_output=True, text=True).stdout)
+        self.assertEqual(got, {"read": {"all": "set:dev@1"}, "cleared": True, "count": "3", "dropped": True, "other": True})

@@ -366,7 +366,54 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
         if entry["dataset"] != ds_id:
             add("dataset", f"The task set {set_name} is cut from the dataset {entry['dataset']}, not {ds_id}.")
             continue
-        set_of[ds_id] = {"name": set_name, "revision": got["revision"], "units": len(got["units"])}
+        set_of[ds_id] = {"name": set_name, "revision": got["revision"], "units": len(got["units"]), "ids": set(got["units"])}
+    # a chosen dataset's plan begun on a part (``start_with``: {dataset: N or set:NAME@REV}): the rest run later
+    start_of = {}                      # {dataset: {"value": the --start-with word, "units": N, "label": what Review says}}
+    asked = recipe.get("start_with") or {}
+    if not isinstance(asked, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in asked.items()):
+        add("dataset", "Start with is a dataset with a number or a task set each.")
+        asked = {}
+    for ds_id, given in asked.items():
+        if ds_id not in {x["id"] for x in dss}:
+            add("dataset", f"Start with {given} is for {ds_id}, a dataset not chosen.")
+            continue
+        if given.isdigit():
+            if int(given) < 1:
+                add("dataset", "Start with a number of tasks of at least 1.")
+                continue
+            start_of[ds_id] = {"value": given, "units": int(given), "label": f"the first {int(given)}"}
+            continue
+        if not given.startswith("set:"):
+            add("dataset", "Start with all of the tasks, a number of them, or a task set.")
+            continue
+        try:
+            set_name, rev = sets.split_ref(given[4:])
+        except sets.Refused as e:
+            add("dataset", f"Start with {given[4:]}: {e}.")
+            continue
+        try:
+            if not os.path.isfile(sets.path_of(b["key"], set_name)):
+                add("dataset", f"{b['label']} has no task set {set_name} to start with: choose another, or start with all.")
+                continue
+            entry = sets.load(b["key"], set_name)
+        except sets.Refused as e:
+            add("dataset", sets.plain(e, b["key"], set_name))
+            continue
+        try:
+            got = sets.revision(entry, rev)
+        except sets.Refused as e:
+            add("dataset", f"Start with {given[4:]}: {e}.")
+            continue
+        if entry["dataset"] != ds_id:
+            add("dataset", f"Start with: the task set {set_name} is cut from the dataset {entry['dataset']}, not {ds_id}.")
+            continue
+        outside = set(got["units"]) - set_of[ds_id]["ids"] if ds_id in set_of else set()
+        if outside:
+            add("dataset", f"Start with: the task set {set_name} names {len(outside)} of {ds_id}'s tasks outside "
+                           f"the task set {set_of[ds_id]['name']}.")
+            continue
+        start_of[ds_id] = {"value": f"set:{set_name}@{got['revision']}", "units": len(got["units"]),
+                           "label": f"task set {set_name}, revision {got['revision']}"}
     side = "agent" if b["family"] == "agent" else "capability"
     # A control the benchmark declares (nop, oracle) is a choice beside the agents or capabilities: it runs
     # nothing as you and calls no model - a judged benchmark's judge only - so it asks for neither.
@@ -579,6 +626,8 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
     targets, why_not = where_of(recipe.get("where", "local"))
     if why_not:
         add("where", why_not)
+    elif start_of and len(targets) > 1:
+        add("where", "A run begun on a part of its plan runs on one machine: choose one, or start with all.")
     elif backend == "container" and "local" in targets and docker_unusable is not None:
         why = docker_unusable()
         if why:
@@ -667,6 +716,14 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
     total = sum(each) if all(each) else None
     n = sum(min(limit, t) for t in each) if isinstance(limit, int) and total else (limit or total)
     of = len(targets)
+    # a plan begun on a part: what it plans and what it begins, by dataset
+    planned_of = {x["id"]: min(limit, e) if isinstance(limit, int) and e else (limit if isinstance(limit, int) else e)
+                  for x, e in zip(dss, each)}
+    for ds_id, s in start_of.items():
+        if planned_of.get(ds_id) and s["units"] > planned_of[ds_id]:
+            add("dataset", f"Start with {s['units']} {nouns}: {ds_id} plans {planned_of[ds_id]}.")
+    if errors:
+        return out
     many = len(dss) > 1
     # what a run is made of: each dataset with each choice, a job each, in that order
     pairs = [(x, p) for x in dss for p in picks]
@@ -690,7 +747,8 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
         m = p["model"] if p.get("setup") else model
         words = ["nullius", "standard", "run", definitions.ref_of(b), o["_ref"], *(["--model", m] if m else []), "--provider", provider,
                  "--dataset", d["id"], *(["--set", f"{set_of[d['id']]['name']}@{set_of[d['id']]['revision']}"] if d["id"] in set_of else []),
-                 *(["--limit", str(limit)] if isinstance(limit, int) else []), "-j", str(conc),
+                 *(["--limit", str(limit)] if isinstance(limit, int) else []),
+                 *(["--start-with", start_of[d["id"]]["value"]] if d["id"] in start_of else []), "-j", str(conc),
                  *[w for k, v in options_for_pick(d, p).items() for w in ("--bench-option", f"{k}={v}")],
                  *(["--attempts", str(repeat)] if repeat > 1 else []),
                  *(["--retries", str(retries)] if retries else []),
@@ -781,7 +839,9 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
                      [STEP["runner"], "Runner", "Nullius"],
                      [STEP["dataset"], "Datasets" if many else "Dataset",
                       ", ".join(f"{x.get('label') or x['id']}" + (f" · task set {set_of[x['id']]['name']}, revision {set_of[x['id']]['revision']} · {set_of[x['id']]['units']} {nouns}"
-                                                                   if x["id"] in set_of else f" · {x['units']} {nouns}" if x.get("units") else "") for x in dss)],
+                                                                   if x["id"] in set_of else f" · {x['units']} {nouns}" if x.get("units") else "")
+                                + (f" · {planned_of.get(x['id']) or 'all'} planned, {start_of[x['id']]['units']} to begin "
+                                   f"({start_of[x['id']]['label']})" if x["id"] in start_of else "") for x in dss)],
                      *[[STEP["dataset"], (b.get("options") or {})[k].get("label") or k.replace("_", " ").capitalize(),
                         f"{v}" + ("" if k in chosen_opts else " (its default)") + f" · {', '.join(x['id'] for x in dss if per_ds[x['id']].get(k) == v)}"]
                        for k, v in {k: v for vals in per_ds.values() for k, v in vals.items()}.items()],
@@ -828,7 +888,10 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
     if any(p["control"] for p in picks) and any(definitions.own_image(e) for e in (b.get("environments") or {}).values()):
         notes.append(f"Each {(b.get('units') or {}).get('noun', 'unit')} of {b['label']} is its own image: the control "
                      "runs in it, so docker is needed where it runs, whatever the backend.")
-    if not isinstance(limit, int):
+    if start_of:
+        out["confirm"] = (f"Plan {total or 'all the'} {nouns} of {b['label']} and begin {sum(s['units'] for s in start_of.values())} "
+                          f"with {', '.join(p['o']['label'] for p in picks)}?").replace("  ", " ")
+    elif not isinstance(limit, int):
         out["confirm"] = f"Run all {total or ''} {nouns} of {b['label']}{' (' + ', '.join(x.get('label') or x['id'] for x in dss) + ')' if many else ''} with {', '.join(p['o']['label'] for p in picks)}?".replace("  ", " ")
     return out
 

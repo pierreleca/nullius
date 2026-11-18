@@ -200,12 +200,16 @@ def _cached(destination: Path, marker: str, files: dict) -> bool:
 
 
 def recipe_sets(recipe: dict) -> list[tuple[str, str]]:
-    """The task sets a standard recipe runs (``task_sets``), as (benchmark, name): what its snapshot carries."""
+    """The task sets a standard recipe runs (``task_sets``) and those it begins with (``start_with``, set:NAME@REV),
+    as (benchmark, name): what its snapshot carries."""
     asked = (recipe or {}).get("task_sets")
+    begun = (recipe or {}).get("start_with")
     bench = str((recipe or {}).get("benchmark") or "").partition("@")[0]
-    if not isinstance(asked, dict) or not bench:
+    if not bench:
         return []
-    return sorted({(bench, str(ref).partition("@")[0]) for ref in asked.values() if isinstance(ref, str) and ref})
+    refs = [ref for ref in (asked.values() if isinstance(asked, dict) else []) if isinstance(ref, str) and ref]
+    refs += [ref[4:] for ref in (begun.values() if isinstance(begun, dict) else []) if isinstance(ref, str) and ref.startswith("set:")]
+    return sorted({(bench, ref.partition("@")[0]) for ref in refs if ref})
 
 
 def build(cache: str, *, package: Path | None = None, catalogue: str | None = None,

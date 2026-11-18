@@ -148,12 +148,13 @@
     const b = standardBench({benchmark: key});
     if (!b) return r;
     const was = standardBench(r);
-    if (was !== b) { r.model_choice = 'any'; delete r.served_by; delete r.task_sets; }
+    if (was !== b) { r.model_choice = 'any'; delete r.served_by; delete r.task_sets; delete r.start_with; }
     r.benchmark = key;
     const kept = was === b ? datasetsOf(r).filter(id => b.datasets.some(d => d.id === id)) : [];
     r.datasets = kept.length ? kept : [b.datasets[0].id];
     delete r.dataset;
     keepTaskSets(r);
+    keepStartWith(r);
     const fitting = standardOthers(r).filter(o => !o.why.length);
     const keys = fitting.map(o => o.key), first = fitting.find(o => o.setup && o.key === 'original')
       || fitting.find(o => !o.control && !o.setup);
@@ -178,6 +179,18 @@
     if (kept.length) r.task_sets = Object.fromEntries(kept); else delete r.task_sets;
     return r;
   }
+  // A chosen dataset's plan begun on a part (recipe.py: start_with, {dataset: N or set:NAME@REV}): '' for all of it, a
+  // number of its tasks, or a task set of it; the rest run later in the job. A dataset no longer chosen keeps none.
+  function setStartWith(r, dataset, value) {
+    r.start_with = {...(r.start_with || {})};
+    if (value) r.start_with[dataset] = String(value); else delete r.start_with[dataset];
+    return keepStartWith(r);
+  }
+  function keepStartWith(r) {
+    const on = datasetsOf(r), kept = Object.entries(r.start_with || {}).filter(([k, v]) => on.includes(k) && typeof v === 'string' && v);
+    if (kept.length) r.start_with = Object.fromEntries(kept); else delete r.start_with;
+    return r;
+  }
   // A saved standard recipe read back: known fields only, each of its type.
   function standardFromJSON(raw) {
     const r = createStandard(typeof raw.benchmark === 'string' ? raw.benchmark : '');
@@ -185,6 +198,7 @@
     const sets = Array.isArray(raw.datasets) ? raw.datasets.filter(k => typeof k === 'string') : typeof raw.dataset === 'string' && raw.dataset ? [raw.dataset] : null;
     if (sets && sets.length) r.datasets = [...new Set(sets)];
     if (raw.task_sets && typeof raw.task_sets === 'object' && !Array.isArray(raw.task_sets)) { r.task_sets = {...raw.task_sets}; keepTaskSets(r); }
+    if (raw.start_with && typeof raw.start_with === 'object' && !Array.isArray(raw.start_with)) { r.start_with = {...raw.start_with}; keepStartWith(r); }
     const picked = Array.isArray(raw.others) ? raw.others.filter(k => typeof k === 'string') : typeof raw.other === 'string' && raw.other ? [raw.other] : null;
     if (picked) r.others = [...new Set(picked)];
     if (Array.isArray(raw.where) && raw.where.length && raw.where.every(w => typeof w === 'string')) r.where = raw.where.length > 1 ? [...raw.where] : raw.where[0];
@@ -866,5 +880,5 @@
         at: String(d.at || '')};
     } catch (e) { return e && e.message === RUNNER_GONE ? {recipe: null, gone: RUNNER_GONE} : null; }
   }
-  return {setTaskSet,keepTaskSets,STANDARD_PHASES,STEPS,STEP,runners,RUNNER_GONE,isStandard,standard,standardBench,standardOthers,standardKeyless,paperModels,paperListed,paperOffered,leaderboard,setModelChoice,servedRoles,servedList,setServed,addServed,removeServed,setModelOf,servedModelOf,servedKey,servedCompiled,servedRow,stepShown,chosenOf,datasetsOf,whereList,machineLabel,createStandard,setStandardBenchmark,openingStep,runnersOf,runnerFor,benchKey,whereLabel,create,benchmarks,routeBlocker,dataset,sources,setBenchmark,parameters,scopes,validate,compile,runnable,fromJSON,fromJob,prefill,review,copy,packDraft,unpackDraft,adapterPath,taskCount,PROVIDERS,PROVIDER_LABEL,PROVIDER_NEEDS,available,labelOf,needsOf,choiceOf,setChoice,providersOf,recipeProvider,providerBlocker,providerOf,bareModel,settleModel,agentModel,quote:q,path,defaults,needsCredentials,credentialBindings,declaredTimeouts,effectiveTimeouts,setPhaseMinutes,PHASES,harborExecutable,harborPin,harborProblem,harborKey,harborRepoUrl,harborLabel,repoLabel,agents,mergeAgents,setScanned,COMMON,agentById};
+  return {setTaskSet,keepTaskSets,setStartWith,keepStartWith,STANDARD_PHASES,STEPS,STEP,runners,RUNNER_GONE,isStandard,standard,standardBench,standardOthers,standardKeyless,paperModels,paperListed,paperOffered,leaderboard,setModelChoice,servedRoles,servedList,setServed,addServed,removeServed,setModelOf,servedModelOf,servedKey,servedCompiled,servedRow,stepShown,chosenOf,datasetsOf,whereList,machineLabel,createStandard,setStandardBenchmark,openingStep,runnersOf,runnerFor,benchKey,whereLabel,create,benchmarks,routeBlocker,dataset,sources,setBenchmark,parameters,scopes,validate,compile,runnable,fromJSON,fromJob,prefill,review,copy,packDraft,unpackDraft,adapterPath,taskCount,PROVIDERS,PROVIDER_LABEL,PROVIDER_NEEDS,available,labelOf,needsOf,choiceOf,setChoice,providersOf,recipeProvider,providerBlocker,providerOf,bareModel,settleModel,agentModel,quote:q,path,defaults,needsCredentials,credentialBindings,declaredTimeouts,effectiveTimeouts,setPhaseMinutes,PHASES,harborExecutable,harborPin,harborProblem,harborKey,harborRepoUrl,harborLabel,repoLabel,agents,mergeAgents,setScanned,COMMON,agentById};
 });
