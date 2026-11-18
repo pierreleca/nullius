@@ -431,7 +431,8 @@ def view(trial_dir: str, traj=None) -> dict:
 
 def _texts_of(call: dict) -> List[str]:
     out = [call.get("label") or "", call.get("error") or ""]
-    for item in (call.get("sent") or {}).get("items") or []:
+    sent = call.get("sent") or {}
+    for item in (sent.get("items") or []) + (sent.get("rewritten") or []):
         out += [item.get("text") or "", " ".join(item.get("names") or [])]
     a = call.get("answer") or {}
     out += [a.get("text") or "", a.get("reasoning") or ""]

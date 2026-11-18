@@ -124,6 +124,15 @@ class Base(unittest.TestCase):
 
 
 class SentIsWhatIsNew(Base):
+    def test_search_finds_rewritten_text_in_the_folded_section(self):
+        kept = history()
+        kept[3]["req"]["messages"][3]["content"][1]["text"] = "unique-rewritten-marker"
+        v = load(self.trial(kept))
+        page = calls.page(v, query="UNIQUE-REWRITTEN-MARKER", section="folded")
+        self.assertEqual(page["matches"], 1)
+        self.assertEqual(page["selected"]["number"], 4)
+        self.assertIn("unique-rewritten-marker", page["selected"]["content"]["text"])
+
     def test_each_call_sends_only_what_the_call_before_lacked_pictures_by_hash(self):
         v = load(self.trial(history()))
         self.assertEqual(v["record"], "exchanges")
