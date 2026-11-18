@@ -274,7 +274,7 @@ def _answered(out: str) -> Dict[tuple, dict]:
         slot = (a.get("target"), a.get("arm"), a.get("k"))
         if a.get("status") == 200 and not a.get("refused") and slot not in got:
             got[slot] = a
-        elif slot in got and a.get("route") == got[slot].get("route"):
+        elif slot in got and (a.get("relay"), a.get("route")) == (got[slot].get("relay"), got[slot].get("route")):
             got[slot].update(a)
     return got
 

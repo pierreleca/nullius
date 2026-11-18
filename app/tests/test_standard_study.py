@@ -98,6 +98,14 @@ class Studies(StudyCase):
         self.assertEqual((doc["state"], len(Upstream.seen)), ("done", 2))
         self.assertEqual(sum(1 for c in read.call_args_list if c.args[1].get("route")), 2)
 
+    def test_a_slot_that_failed_in_one_start_keeps_its_answer_of_a_later_one(self):
+        os.makedirs(self.out)
+        failed = {"target": 1, "arm": "recorded", "k": 1, "route": "t1a1k1", "relay": "relay/s1-g1", "status": 502}
+        answered = dict(failed, relay="relay/s2-g1", status=200, body="{}")      # its rule failed: no line in answers
+        Path(self.out, "completed.jsonl").write_text(json.dumps(failed) + "\n" + json.dumps(answered) + "\n")
+        Path(self.out, "answers.jsonl").write_text(json.dumps(failed) + "\n")
+        self.assertEqual(study._answered(self.out)[(1, "recorded", 1)]["status"], 200)
+
     def test_linked_artifacts_are_refused_before_resume_or_recount(self):
         self.run_study(stop_after=1)
         before = tree(self.job)
