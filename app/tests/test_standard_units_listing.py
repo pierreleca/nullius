@@ -2,10 +2,14 @@
 of an id, a title or a text; category values, either within a field and both across fields, each value
 counted; 100 tasks a page with the total on every page; a driver without ``describe`` listed and searched by
 its ids; the listing cached by its options; ``set create --search`` and ``--category`` storing the ids the
-listing gives and the filter in its note; OSWorld1's ``describe`` from its task files. No key, no network:
-each driver is a script of the test's own, or the fake benchmark's."""
+listing gives and the filter in its note; OSWorld1's ``describe`` from its task files. A definition's
+``driver.list_command`` listing with no driver environment, OSWorld1's giving the driver's ids in its order;
+``state`` giving each of its answers and starting nothing; the command's one line before a first listing that
+fetches. No key, no network: each driver is a script of the test's own, the fake benchmark's or OSWorld1's on
+task files of the test's own."""
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import os
@@ -229,6 +233,185 @@ class SetFromAFilter(Scratch):
                 self.assertEqual((code, out), (2, ""))
                 self.assertIn(said, err)
         self.assertFalse(os.path.exists(os.path.join(self.cat, "sets")))
+
+
+ASKED = AssertionError("the listing asked for the driver's environment")
+HEAVY = {"command": ["{install}/.venv/bin/python", "{here}/driver.py"],
+         "install": {"python": "3.12", "pip": ["nothing-installed==1.0"]}, "describe": True}
+
+
+def no_environment():
+    """Each way to the driver's environment fails the test."""
+    stack = contextlib.ExitStack()
+    for name in ("driver_argv", "driver_packages", "packages"):
+        stack.enter_context(mock.patch.object(units.install, name, side_effect=ASKED))
+    return stack
+
+
+class LightCommand(Scratch):
+    def test_the_light_command_lists_and_the_drivers_environment_is_never_asked_for(self):
+        light = dict(self.b, driver=dict(HEAVY, list_command=[sys.executable, "{here}/driver.py"]))
+        with no_environment():
+            got = units.find(light, "all", size=None)
+        self.assertEqual((got["total"], got["described"], self.starts()), (250, True, 1))
+        self.assertEqual(got["tasks"], units.find(self.b, "all", size=None)["tasks"])     # as the driver's own start
+        with mock.patch.object(units.install, "upstream", return_value=None) as up, \
+                mock.patch.object(units.install, "dataset", return_value=None) as data, no_environment():
+            units.listing(dict(light, options={}), "all")                # another definition: listed again
+        self.assertEqual((up.call_count, data.call_count), (1, 1))      # the upstream and the dataset, prepared
+
+    def test_a_light_command_that_cannot_start_is_refused(self):
+        light = dict(self.b, driver=dict(HEAVY, list_command=["/nonexistent/python3", "{here}/driver.py"]))
+        with no_environment(), self.assertRaisesRegex(units.Refused, "cannot start described's driver for its listing"):
+            units.listing(light, "all")
+
+
+class Definition(unittest.TestCase):
+    def test_a_list_command_is_checked_as_the_other_commands_are(self):
+        bench = {"schema": "nullius.benchmark/v1", "key": "fixture", "label": "Fixture", "summary": "A task.",
+                 "family": "agent", "needs": ["agent.task/v1"], "driver": dict(HEAVY),
+                 "datasets": [{"id": "all", "units": 1}], "units": {"noun": "task", "nouns": "tasks"},
+                 "score": {"kind": "pass", "says": "the answer is right"}}
+        ok = dict(bench, driver=dict(HEAVY, list_command=["python3", "{here}/driver.py"]))
+        self.assertEqual(definitions.problems(ok, "benchmark"), [])
+        for words, said in (([], "driver.list_command: a list of words"),
+                            ("python3 {here}/driver.py", "driver.list_command: a list of words"),
+                            (["python3", 3], "driver.list_command: a list of words"),
+                            (["python3 -I", "{here}/driver.py"], "driver.list_command: 'python3 -I' is not a plain word"),
+                            (["{install}/.venv/bin/python", "{here}/driver.py"],
+                             "driver.list_command: {install} is not a slot (here)")):
+            with self.subTest(words=words):
+                self.assertIn(said, definitions.problems(dict(bench, driver=dict(HEAVY, list_command=words)), "benchmark"))
+        with open(os.path.join(OSWORLD1, "standard.json"), encoding="utf-8") as f:
+            osworld1 = json.load(f)
+        self.assertEqual(definitions.problems(osworld1, "benchmark"), [])
+        self.assertEqual(osworld1["driver"]["list_command"][1:], osworld1["driver"]["command"][1:])
+
+
+class State(Scratch):
+    """``units.state`` asked with every fetch and start failing the test, the files it could touch the same after."""
+
+    def tree(self) -> list:
+        got = []
+        for top in (self.tmp, units.install.HOME):
+            for root, dirs, files in os.walk(top):
+                got += [os.path.join(root, n) for n in dirs + files]
+        return sorted(got)
+
+    def asked(self, bench, dataset="all", options=None, programs=("git", "uv", "npm")):
+        before, started = self.tree(), self.starts()
+        with contextlib.ExitStack() as stack:
+            for name in ("upstream", "dataset", "download", "driver_argv", "driver_packages", "packages"):
+                stack.enter_context(mock.patch.object(units.install, name, side_effect=AssertionError(name)))
+            stack.enter_context(mock.patch.object(units.jsonl, "Proc", side_effect=AssertionError("a driver started")))
+            stack.enter_context(mock.patch.object(units.shutil, "which",
+                                                  side_effect=lambda w: f"/usr/bin/{w}" if w in programs else None))
+            got = units.state(bench, dataset, options)
+        self.assertEqual((self.tree(), self.starts()), (before, started))
+        return got
+
+    def fetching(self, **driver) -> dict:
+        return dict(self.b, upstream={"repository": "https://example.org/upstream.git", "tested": "a" * 40},
+                    datasets=[{"id": "all", "url": "https://example.org/all.json", "sha256": "b" * 64, "units": 250}],
+                    driver=dict(HEAVY, **driver))
+
+    def test_cached(self):
+        units.find(self.b, "all")
+        self.assertEqual(self.asked(self.b), {"state": "cached", "fetch": [], "reason": ""})
+        self.assertEqual(self.asked(self.b, options={"mode": "short"})["state"], "full")    # not listed under it
+
+    def test_light_and_what_it_fetches(self):
+        light = [sys.executable, "{here}/driver.py"]
+        self.assertEqual(self.asked(dict(self.b, driver=dict(HEAVY, list_command=light))),
+                         {"state": "light", "fetch": [], "reason": ""})
+        got = self.asked(self.fetching(list_command=light))
+        self.assertEqual((got["state"], got["reason"]), ("light", ""))
+        self.assertEqual(got["fetch"], [{"what": "upstream", "text": "the upstream https://example.org/upstream.git at aaaaaaaaaaaa"},
+                                        {"what": "dataset", "text": "the dataset https://example.org/all.json"}])
+
+    def test_full_and_the_environment_it_installs(self):
+        self.assertEqual(self.asked(self.b), {"state": "full", "fetch": [], "reason": ""})
+        got = self.asked(self.fetching())
+        self.assertEqual((got["state"], [f["what"] for f in got["fetch"]]), ("full", ["upstream", "dataset", "environment"]))
+        self.assertEqual(got["fetch"][2]["text"], "the driver's environment, installed with uv")
+
+    def test_refused_with_its_reason(self):
+        for bench, options, programs, said in (
+                (self.b, {"mode": "sideways"}, ("git", "uv"), "mode"),
+                (self.fetching(), None, ("git",), "cannot prepare described's dataset all for its listing: "
+                                                  "uv is not on this machine"),
+                (self.fetching(list_command=[sys.executable, "{here}/driver.py"]), None, ("uv",), "git is not on this machine"),
+                (dict(self.b, driver=dict(HEAVY, list_command=["python3", "{here}/driver.py"])), None, ("git",),
+                 "python3 is not on this machine"),
+                (dict(self.b, datasets=[{"id": "all", "path": "absent.json", "sha256": "c" * 64, "units": 1}]), None,
+                 ("git",), "dataset all: absent.json is not in the definition folder")):
+            with self.subTest(said=said):
+                got = self.asked(bench, options=options, programs=programs)
+                self.assertEqual((got["state"], got["fetch"]), ("refused", []))
+                self.assertIn(said, got["reason"])
+        with self.assertRaisesRegex(units.NotFound, "no dataset 'nope'"):
+            self.asked(self.b, "nope")
+
+
+class FirstListing(Scratch):
+    def test_the_command_says_in_one_line_what_a_first_listing_fetches(self):
+        data = os.path.join(self.tmp, "fetched.json")
+        self.b = dict(self.b, datasets=[{"id": "all", "url": "https://example.org/all.json", "sha256": "b" * 64,
+                                         "units": 250}])
+
+        def fetched(url, sha256, progress=None):
+            open(data, "w").close()
+            return data
+
+        with mock.patch.object(units.install, "download", side_effect=fetched) as download:
+            code, out, err = self.cli("units", "described", "--dataset", "all", "--search", "t042")
+            self.assertEqual((code, out.splitlines()[0], err), (0, "1 of 250 tasks of all",
+                                                                 "first listing of all: fetching the dataset "
+                                                                 "https://example.org/all.json\n"))
+            code, out, err = self.cli("units", "described", "--dataset", "all", "--search", "t042")
+        self.assertEqual((code, err, download.call_count, self.starts()), (0, "", 1, 1))   # the second from the cache
+
+    def test_a_program_not_on_this_machine_is_refused_before_anything_is_fetched(self):
+        self.b = dict(self.b, driver=dict(HEAVY, list_command=["/nonexistent/python3", "{here}/driver.py"]))
+        with no_environment():
+            code, out, err = self.cli("units", "described", "--dataset", "all")
+        self.assertEqual((code, out, self.starts()), (2, "", 0))
+        self.assertEqual(err, "refused: cannot prepare described's dataset all for its listing: "
+                              "/nonexistent/python3 is not on this machine\n")
+
+
+def osworld1_upstream(tmp: str, tasks: dict) -> str:
+    """An upstream folder of OSWorld's shape holding ``tasks`` ({domain: {id: instruction}}); its dataset file's path."""
+    for domain, ids in tasks.items():
+        os.makedirs(os.path.join(tmp, "evaluation_examples", "examples", domain))
+        for eid, instruction in ids.items():
+            with open(os.path.join(tmp, "evaluation_examples", "examples", domain, eid + ".json"), "w") as f:
+                json.dump({"id": eid, "instruction": instruction}, f)
+    meta = os.path.join(tmp, "test_small.json")
+    with open(meta, "w") as f:
+        json.dump({d: list(ids) for d, ids in tasks.items()}, f)
+    return meta
+
+
+class OSWorld1Light(Scratch):
+    def test_its_light_listing_gives_the_drivers_ids_in_its_order_with_no_environment(self):
+        up = os.path.join(self.tmp, "upstream")
+        meta = osworld1_upstream(up, {"vlc": {"v2": "Play the video.", "v1": "Mute it."}, "chrome": {"c1": "Open a tab."}})
+        bench = definitions.get("benchmark", "osworld1")
+        with mock.patch.object(units.install, "upstream", return_value=up), \
+                mock.patch.object(units.install, "dataset", return_value=meta), no_environment():
+            got = units.listing(bench, "test_small")
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("osworld1_driver_units", os.path.join(OSWORLD1, "driver.py"))
+        driver = importlib.util.module_from_spec(spec)
+        with mock.patch.dict(os.environ, {"NULLIUS_UPSTREAM": up, "NULLIUS_DATASET": meta}), \
+                mock.patch.object(sys, "argv", ["driver.py"]):
+            spec.loader.exec_module(driver)
+            ids = driver.units(dataset="test_small")["units"]
+        self.assertEqual([t["id"] for t in got["tasks"]], ids)
+        self.assertEqual(ids, ["vlc__v2", "vlc__v1", "chrome__c1"])
+        self.assertEqual(got["tasks"][0], {"id": "vlc__v2", "title": "Play the video.", "text": "Play the video.",
+                                           "categories": {"domain": "vlc"}})
 
 
 class OSWorld1(unittest.TestCase):

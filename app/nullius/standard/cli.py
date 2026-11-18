@@ -783,8 +783,12 @@ examples:
 exit codes:
   0  listed, a match of no task included
   1  unexpected error (a traceback: report it)
-  2  usage, or refused: an option or a category not known, a driver that could not list the dataset
+  2  usage, or refused: an option or a category not known, a program the listing needs not on this machine,
+     a driver that could not list the dataset
   3  not found: no such benchmark or dataset
+
+A first listing fetches what it needs first (the upstream, the dataset, the driver's environment unless the
+benchmark names a light listing command), said in one line on stderr; later listings read the cache.
 """
 
 
@@ -793,8 +797,14 @@ def cmd_units(a):
         b = _find_bench(a.benchmark)
         if b is None:
             raise unit_list.NotFound(f"no benchmark {a.benchmark!r}")
-        found = unit_list.find(b, a.dataset, options(a.bench_option, "--bench-option"), search=a.search or "",
-                               categories=unit_list.categories_of(a.category), size=None)
+        given, chosen = options(a.bench_option, "--bench-option"), unit_list.categories_of(a.category)
+        before = unit_list.state(b, a.dataset, given)
+        if before["state"] == "refused":
+            raise unit_list.Refused(before["reason"])
+        if before["fetch"]:
+            print(f"first listing of {a.dataset}: fetching " + ", then ".join(f["text"] for f in before["fetch"]),
+                  file=sys.stderr, flush=True)
+        found = unit_list.find(b, a.dataset, given, search=a.search or "", categories=chosen, size=None)
     except unit_list.Refused as e:
         return _refused(e)
     if a.json:

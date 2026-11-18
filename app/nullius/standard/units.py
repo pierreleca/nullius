@@ -3,14 +3,18 @@
 
 The driver is started as ``prove`` starts it, with the options given and the others at their defaults, after
 the same preparation as a run's: the upstream at its tested commit, the dataset's file checked by its
-sha256, the driver's own environment, each made once when it is not there. It is given no licence and no
-key, and it starts no unit. Its ``units`` gives the ids; when its definition says ``driver.describe``, its
+sha256, the driver's own environment, each made once when it is not there. A definition whose
+``driver.list_command`` names a lighter start (the standard library and the dataset's files alone) is
+listed by it instead, after the upstream and the dataset alone: its driver's environment is never made for
+a listing. A run checks its ids with the driver all the same. The driver is given no licence and no key,
+and it starts no unit. Its ``units`` gives the ids; when its definition says ``driver.describe``, its
 ``describe`` gives each a title, a text and named categories, read from the dataset's files alone. A driver
-without it gives ids, and a search reads the ids.
+without it gives ids, and a search reads the ids. ``state`` says, before a listing and with no side effect,
+whether it is in the cache, what a first listing fetches, or why it cannot be made.
 
 The listing is kept in the user cache (``paths.cache_dir()``, ``standard-units/<benchmark>/``) under a digest
-of what makes it: the benchmark's definition, the files its driver is started with, the dataset and the
-option values.
+of what makes it: the benchmark's definition, the files its driver (or its listing command) is started
+with, the dataset and the option values.
 The same listing again reads that file and starts nothing.
 
 A search is words: a task matches when each word is in its id, its title or its text, whatever the case. A
@@ -81,12 +85,18 @@ def filter_text(search: str = "", categories: Optional[Dict[str, List[str]]] = N
     return " ".join(words)
 
 
+def _light(bench: dict) -> Optional[List[str]]:
+    """The definition's ``driver.list_command``: a start that answers ``units`` and ``describe`` with the
+    standard library and the dataset's files alone; None when it names none."""
+    return (bench.get("driver") or {}).get("list_command") or None
+
+
 def _digest(bench: dict, ds: dict, values: dict) -> str:
     h = hashlib.sha256()
     definition = {k: v for k, v in bench.items() if not k.startswith("_") or k == "_version"}
     h.update(json.dumps([definition, ds, values], sort_keys=True, default=str).encode())
     here = bench.get("_here")
-    for word in (bench.get("driver") or {}).get("command") or []:
+    for word in _light(bench) or (bench.get("driver") or {}).get("command") or []:
         # the files the driver is started with, beside its definition: a change to its code lists again
         path = str(word).replace("{here}", here or "") if str(word).startswith("{here}/") else None
         if path and os.path.isfile(path):
@@ -99,10 +109,11 @@ def cache_path(bench: dict, ds: dict, values: dict) -> str:
 
 
 def _start(bench: dict, ds: dict, values: dict, work: str) -> jsonl.Proc:
+    light = _light(bench)
     try:
         up = install.upstream(bench)
         data = install.dataset(bench, ds, up)
-        cmd, extra = install.driver_argv(bench)
+        cmd, extra = (install.words(light, {"here": bench["_here"]}), {}) if light else install.driver_argv(bench)
     except (install.InstallFailed, OSError) as e:
         raise Refused(f"cannot prepare {bench['key']}'s dataset {ds['id']} for its listing: {e}")
     home, cwd = os.path.join(work, "driver-home"), os.path.join(work, "driver")
@@ -112,7 +123,10 @@ def _start(bench: dict, ds: dict, values: dict, work: str) -> jsonl.Proc:
                               "NULLIUS_DATASET_ID": ds["id"], "PYTHONPATH": run.driver_path(),
                               "PYTHONDONTWRITEBYTECODE": "1", "NULLIUS_VERSION": str(bench.get("_version") or ""),
                               **run.option_env(values)})
-    return jsonl.Proc(cmd, cwd, env, os.path.join(work, "driver.log")).start()
+    try:
+        return jsonl.Proc(cmd, cwd, env, os.path.join(work, "driver.log")).start()
+    except OSError as e:
+        raise Refused(f"cannot start {bench['key']}'s driver for its listing: {e}")
 
 
 def _described(got: object, ids: List[str]) -> Dict[str, dict]:
@@ -169,6 +183,77 @@ def listing(bench: dict, dataset: str, options: Optional[dict] = None) -> dict:
         json.dump(got, f, ensure_ascii=False)
     os.replace(tmp, path)
     return got
+
+
+def _cached(path: str) -> bool:
+    try:
+        with open(path, encoding="utf-8") as f:
+            got = json.load(f)
+        return isinstance(got, dict) and isinstance(got.get("tasks"), list)
+    except (OSError, ValueError):
+        return False
+
+
+def _program(word: str) -> Optional[str]:
+    """The program a command's first word names, when it is not on this machine."""
+    there = os.access(word, os.X_OK) if os.sep in word else shutil.which(word) is not None
+    return None if there else word
+
+
+def state(bench: dict, dataset: str, options: Optional[dict] = None) -> dict:
+    """What a listing of ``dataset`` under ``options`` needs before it is made, said without making, fetching or
+    starting anything: {state, fetch: [{what, text}], reason}. ``state`` is one of
+
+    - ``cached``: the listing is in the cache; ``find`` reads it and starts nothing.
+    - ``light``: the definition's ``driver.list_command`` makes it with the standard library and the dataset's
+      files; ``fetch`` names what is fetched first (``upstream``, ``dataset``), empty when it is here.
+    - ``full``: the driver makes it from its own environment on this machine; ``fetch`` also names that
+      environment (``environment``) when it is not installed.
+    - ``refused``: it cannot be made; ``reason`` says why (an option, a program not on this machine, a
+      dataset's file not there).
+
+    ``reason`` is empty but for ``refused``. Raises ``NotFound`` for a dataset the benchmark does not have."""
+    ds = dataset_of(bench, dataset)
+    key = bench["key"]
+
+    def refused(why: str) -> dict:
+        return {"state": "refused", "fetch": [], "reason": why}
+
+    try:
+        values = option_values(bench, ds["id"], options)
+    except Refused as e:
+        return refused(str(e))
+    if _cached(cache_path(bench, ds, values)):
+        return {"state": "cached", "fetch": [], "reason": ""}
+    prepare = f"cannot prepare {key}'s dataset {ds['id']} for its listing: "
+    fetch, needs = [], []
+    up = bench.get("upstream") or {}
+    up_dir = install.upstream_dir(bench)
+    if up_dir and not install.ready(up_dir):
+        fetch.append({"what": "upstream", "text": f"the upstream {up['repository']} at {str(up['tested'])[:12]}"})
+        needs.append("git")
+    if ds.get("url"):
+        if not os.path.isfile(install.download_path(ds["url"], ds["sha256"])):
+            fetch.append({"what": "dataset", "text": f"the dataset {ds['url']}"})
+    elif ds.get("path") and not up_dir and not os.path.isfile(os.path.join(bench["_here"], ds["path"])):
+        return refused(prepare + f"dataset {ds['id']}: {ds['path']} is not in the definition folder")
+    light = _light(bench)
+    if not light:
+        inst = definitions.driver_install(bench)["install"]
+        where = install.driver_dir(bench)
+        if where and not install.ready(where):
+            tools = (["uv"] if any(inst.get(k) for k in ("pip", "project", "indexes", "wheels")) else []) \
+                + (["npm"] if inst.get("npm") else [])
+            fetch.append({"what": "environment",
+                          "text": "the driver's environment" + (f", installed with {' and '.join(tools)}" if tools else "")})
+            needs += tools
+    first = (light or (bench.get("driver") or {}).get("command") or [""])[0]
+    if first and "{install}" not in first:                  # a program of the machine's, or a file beside the definition
+        needs.append(install.words([first], {"here": bench["_here"]})[0])
+    missing = next((w for w in needs if _program(w)), None)
+    if missing:
+        return refused(prepare + f"{missing} is not on this machine")
+    return {"state": "light" if light else "full", "fetch": fetch, "reason": ""}
 
 
 def _matches(task: dict, words: List[str]) -> bool:

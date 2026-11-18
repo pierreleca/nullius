@@ -333,6 +333,12 @@ class TaskSetCommands(Scratch):
                 self.assertEqual(out.returncode, code, out.stderr)
                 self.assertIn(said, out.stderr)
                 self.assertEqual(out.stdout, "")
+        # a listing that needs a program this machine lacks is refused before it fetches anything
+        out = self.sh("standard.cli", "units", "humaneval", "--dataset", "humaneval",
+                      env=dict(env, PATH=os.path.join(self.tmp, "no-programs")))
+        self.assertEqual((out.returncode, out.stdout), (2, ""))
+        self.assertEqual(out.stderr, "refused: cannot prepare humaneval's dataset humaneval for its listing: "
+                                     "git is not on this machine\n")
         self.assertFalse(os.path.exists(cat))
         out = self.sh("standard.cli", "set", "list", "--json", env=env)
         self.assertEqual((out.returncode, json.loads(out.stdout), out.stderr), (0, [], ""))

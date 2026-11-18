@@ -447,6 +447,7 @@ use the source folders and repository checks.
 | `driver.participant` | `true`: `setup` is also sent `participant`, the kind of what runs the unit, for a driver that starts something only an agent uses. A driver whose `setup` takes `unit` and `dir` alone leaves it out |
 | `driver.unit_end` | `true`: the driver is sent `end` (`unit`, `dir`) once each unit an agent ran has ended, scored or not, so that what its setup started for the agent ends with the unit. Only a unit whose `setup` was sent gets it, and only while that driver still runs: a driver closed after a request got no reply in its time is not asked, nor is one whose request a stop left unanswered. A control's or a setup's unit gets none, nor does any other driver |
 | `driver.describe` | `true`: the driver answers `describe`. Without it a listing gives ids alone |
+| `driver.list_command` | A second start of the driver's code for a listing alone (`units`, and `describe` with `driver.describe`): Python's standard library and the dataset's files, `{here}` its one slot. The listing then prepares the upstream and the dataset and never the driver's environment; a run still checks its ids with `driver.command` |
 | `limits.attempts` | How the upstream tells attempts apart; the driver is then sent `attempt` with `setup`, `turn` and `answer` |
 | `units.redistribute` | `false` when the data may not be redistributed: `cli prove` then records no unit id |
 

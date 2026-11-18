@@ -1299,6 +1299,9 @@ def problems(d: dict, kind: str) -> List[str]:
                 bad.append("driver.unit_end: true or false - whether the driver is told each unit's end")
             if "describe" in drv and not isinstance(drv["describe"], bool):
                 bad.append("driver.describe: true or false - whether the driver answers describe")
+            if "list_command" in drv:
+                # a listing's start: the standard library and the dataset's files, never the driver's install
+                bad += _command("driver.list_command", drv["list_command"], {"here"})
         bad += _mcp_servers(d.get("mcp_servers"), isinstance(drv, dict) and "install" in drv)
         ds = d.get("datasets")
         if not isinstance(ds, list) or not ds:
