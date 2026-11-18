@@ -94,6 +94,11 @@ class Studies(StudyCase):
         self.assertNotEqual(study.rule_record(configured("old")), study.rule_record(configured("new")))
         self.assertEqual(study.rule_record(configured("old")), study.rule_record(configured("old")))
 
+    def test_a_rule_run_from_another_path_or_moved_in_its_file_is_the_same_rule(self):
+        rule = lambda a: "x"
+        moved = type(rule)(rule.__code__.replace(co_filename="elsewhere.py", co_firstlineno=99), {})
+        self.assertEqual(study.rule_record(rule), study.rule_record(moved))
+
     def test_uncheckable_rules_need_confirmation_on_restart(self):
         class Reader:
             def __call__(self, a):

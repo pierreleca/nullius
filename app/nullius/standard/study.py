@@ -135,10 +135,17 @@ def _pattern(text: str, what: str):
         raise Refused(f"{what} {text!r} is not a regular expression: {e}")
 
 
+def _bare(code: types.CodeType) -> types.CodeType:
+    """``code`` and the code nested in it without their file and lines: a rule run from another path, or moved in
+    its file, is the same rule."""
+    return code.replace(co_filename="", co_firstlineno=1, co_linetable=b"",
+                        co_consts=tuple(_bare(c) if isinstance(c, types.CodeType) else c for c in code.co_consts))
+
+
 def _function_fingerprint(rule: rp.Rule) -> Optional[str]:
     def describe(value):
         if isinstance(value, types.FunctionType):
-            return {"code": marshal.dumps(value.__code__).hex(), "defaults": describe(value.__defaults__),
+            return {"code": marshal.dumps(_bare(value.__code__)).hex(), "defaults": describe(value.__defaults__),
                     "keywords": describe(value.__kwdefaults__),
                     "closure": [describe(c.cell_contents) for c in value.__closure__ or ()],
                     "globals": describe(inspect.getclosurevars(value).globals)}
