@@ -80,10 +80,28 @@ class SignTest(unittest.TestCase):
 
 
 class Studies(StudyCase):
+    def test_a_reader_failure_keeps_the_answer_and_resume_reads_it_without_resending(self):
+        def reader(a):
+            if "route" in a:
+                raise ValueError("unexpected answer")
+            return "recorded"
+
+        for attempt in range(2):
+            with self.assertRaisesRegex(study.Refused, "unexpected answer"):
+                self.run_study(times=1, targets=self.targets[:1], rule=reader)
+            self.assertEqual(len(Upstream.seen), 1, attempt)
+            saved = study._answered(self.out)
+            self.assertEqual(len(saved), 1)
+            self.assertEqual(json.loads(next(iter(saved.values()))["body"]), reply_of(3))
+        with mock.patch.object(replay, "_read_rule", return_value="recovered") as read:
+            doc = self.run_study(times=1, targets=self.targets[:1], rule=reader)
+        self.assertEqual((doc["state"], len(Upstream.seen)), ("done", 2))
+        self.assertEqual(sum(1 for c in read.call_args_list if c.args[1].get("route")), 2)
+
     def test_linked_artifacts_are_refused_before_resume_or_recount(self):
         self.run_study(stop_after=1)
         before = tree(self.job)
-        for name in ("answers.jsonl", "study.json", "targets.jsonl", "relay", "ledger", "recounts", "study.json.part"):
+        for name in ("answers.jsonl", "completed.jsonl", "study.json", "targets.jsonl", "relay", "ledger", "recounts", "study.json.part"):
             path = Path(self.out, name)
             backup = path.with_name(name + ".saved")
             existed = path.exists()
@@ -143,7 +161,7 @@ class Studies(StudyCase):
         self.assertEqual(doc["starts"][0]["sent_as_prepared"], True)
         self.assertEqual(doc["plan"]["arms"][1]["changes"], [{"name": "replace_text", "args": {"old": "one tool call", "new": "one or two tool calls"}}])
         out = Path(doc["out"])
-        self.assertEqual(sorted(p.name for p in out.iterdir()), ["answers.jsonl", "ledger", "relay", "study.json", "targets.jsonl"])
+        self.assertEqual(sorted(p.name for p in out.iterdir()), ["answers.jsonl", "completed.jsonl", "ledger", "relay", "study.json", "targets.jsonl"])
         self.assertEqual(json.loads((out / "study.json").read_text())["test"], t)
         answers = [json.loads(x) for x in (out / "answers.jsonl").read_text().splitlines()]
         self.assertEqual(sorted((a["target"], a["arm"], a["k"]) for a in answers),

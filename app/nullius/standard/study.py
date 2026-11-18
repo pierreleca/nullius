@@ -269,10 +269,13 @@ def tally(plan: dict, recorded: List[Optional[str]], rows: List[dict], yes: Opti
 def _answered(out: str) -> Dict[tuple, dict]:
     """The study's answered sends by (target, arm, k): the first answer of each, a refusal or a failure is none."""
     got = {}
-    for a in rp._jsonl(os.path.join(out, "answers.jsonl")):
+    for a in rp._jsonl(os.path.join(out, "completed.jsonl")) + rp._jsonl(os.path.join(out, "answers.jsonl")):
+        rp._inside(out, a.get("relay") or "", exchanges.FOLDER, (a.get("route") or "") + ".jsonl")
         slot = (a.get("target"), a.get("arm"), a.get("k"))
         if a.get("status") == 200 and not a.get("refused") and slot not in got:
             got[slot] = a
+        elif slot in got and a.get("route") == got[slot].get("route"):
+            got[slot].update(a)
     return got
 
 
@@ -379,6 +382,11 @@ def study(out: str, targets: Sequence[Target], arms: Sequence[Arm] = (), times: 
         led = ledgers.Ledger.create(led.path, cap)
     doc = kept
     recorded = [rp._read_rule(rule, rp.answer_of(row[0].source.path, row[0].source.reply), keys.values()) for row in preps]
+    for a in answered.values():
+        if "label" not in a:
+            a["label"] = rp._read_rule(rule, a, keys.values())
+            with open(os.path.join(out, "answers.jsonl"), "a", encoding="utf-8") as f:
+                f.write(json.dumps({x: v for x, v in a.items() if x != "body"}, ensure_ascii=False) + "\n")
     if todo:
         _send(out, doc, preps, names, todo, keys, led, times, rule, concurrency, stop_after, say)
     answered = _answered(out)
@@ -433,6 +441,8 @@ def _send(out, doc, preps, names, todo, keys, led, times, rule, concurrency, sto
         a, rec = rp.post(rl, preps[i - 1][j], f"t{i:0{wi}d}a{j + 1}k{k:0{wk}d}")
         a, rec = exchanges._cut_key([a, rec], keys.values())
         a.update({"target": i, "arm": names[j], "k": k, "start": start, "relay": os.path.relpath(rl.dir, out)})
+        with lock, open(os.path.join(out, "completed.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps(a, ensure_ascii=False) + "\n")
         if a["refused"]:
             stop.set()
             why.append(f"t{i} {names[j]} send {k} was refused ({a['refused']}): " + str(rec.get("error") or ""))
@@ -440,7 +450,11 @@ def _send(out, doc, preps, names, todo, keys, led, times, rule, concurrency, sto
             stop.set()
             why.append(f"t{i} {names[j]} send {k}: the provider refused the key (HTTP {a['status']})")
         elif a["status"] == 200:
-            a["label"] = rp._read_rule(rule, a, keys.values())
+            try:
+                a["label"] = rp._read_rule(rule, a, keys.values())
+            except Exception:
+                stop.set()
+                raise
         with lock:
             with open(os.path.join(out, "answers.jsonl"), "a", encoding="utf-8") as f:
                 f.write(json.dumps({x: v for x, v in a.items() if x != "body"}, ensure_ascii=False) + "\n")
@@ -507,7 +521,8 @@ def recount(folder: str, rule: Optional[rp.Rule] = None, yes: Optional[str] = No
         recorded = [rule(rp.answer_of(t.get("path") or "", t.get("reply"))) for t in tg]
         rows, missing = [], 0
         for a in _answered(folder).values():
-            reply = _reply(folder, a.get("relay") or "", a.get("route") or "")
+            rp._inside(folder, a.get("relay") or "", exchanges.FOLDER, (a.get("route") or "") + ".jsonl")
+            reply = a if "body" in a else _reply(folder, a.get("relay") or "", a.get("route") or "")
             if reply is None:
                 missing += 1
                 continue

@@ -109,6 +109,7 @@ nullius standard recount <dir> [--read CMD] [--yes REGEX] [--compare A B] [--jso
 | `study.json` | The plan, the cap, each start, the spend, the counts, the table, the test |
 | `targets.jsonl` | Each target's source and its recorded reply as it arrived |
 | `answers.jsonl` | One line per send, written as it is answered: target, arm, K, label, text, tool calls, cost |
+| `completed.jsonl` | Whole answers saved before the reading rule runs; a restart reads any missing labels without another send |
 | `relay/` | One relay per start and destination: each reply whole, as it arrived |
 | `ledger/`, `recounts/` | The cap's ledger; each recount |
 
