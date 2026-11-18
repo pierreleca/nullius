@@ -231,6 +231,23 @@ class Merge(unittest.TestCase):
         self.assertEqual(cfg["task_set"], of())
         self.assertNotIn("merged_despite", cfg)
 
+    def test_whole_task_set_ids_and_hashes_are_compared(self):
+        record = {"id": "a" * 32, "name": "dev", "revision": 1, "hash": "1" * 64,
+                  "units": sorted(self.split[1] + self.split[2] + self.split[3])}
+        a = write_shard(self.tmp, "a", self.split[1], 1, 3, task_set=record)
+        for field in ("id", "hash"):
+            with self.subTest(field=field):
+                changed = dict(record, **{field: record[field][:-1] + "b"})
+                b = write_shard(self.tmp, "b-" + field, self.split[2], 2, 3, task_set=changed)
+                with self.assertRaisesRegex(merge.Refused, "task set") as refused:
+                    merge.merge([a, b], os.path.join(self.tmp, "never-" + field))
+                self.assertFalse(os.path.exists(os.path.join(self.tmp, "never-" + field)))
+                self.assertNotIn(changed[field], str(refused.exception))
+                got = merge.merge([a, b], os.path.join(self.tmp, "forced-" + field), force=True)
+                cfg = read(os.path.join(got["out"], "config.json"))["standard"]
+                self.assertEqual(cfg["task_set"], record)
+                self.assertTrue(any(d.startswith("task set: ") for d in cfg["merged_despite"]))
+
     def test_a_shard_recorded_with_docker_is_of_one_launch_with_a_container_shard(self):
         a = write_shard(self.tmp, "a", self.split[1], 1, 3, backend="docker")      # the container backend's earlier name
         b = write_shard(self.tmp, "b", self.split[2], 2, 3, backend="container")

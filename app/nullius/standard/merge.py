@@ -78,9 +78,17 @@ def _same(cfg: dict, path) -> object:
     A task set is its name, revision, id and hash: the record's other fields follow from them."""
     got = _at(cfg, path)
     if path == ("standard", "task_set"):
-        return (f"{got.get('name')}@{got.get('revision')} ({str(got.get('id'))[:8]}, {str(got.get('hash'))[:12]})"
+        return (tuple(got.get(k) for k in ("name", "revision", "id", "hash"))
                 if isinstance(got, dict) else None)
     return got or 0 if path == ("standard", "retries") else got
+
+
+def _shown(cfg: dict, path) -> object:
+    got = _same(cfg, path)
+    if path == ("standard", "task_set") and got is not None:
+        name, revision, identity, digest = got
+        return f"{name}@{revision} ({str(identity)[:8]}, {str(digest)[:12]})"
+    return got
 
 
 def _listed(cfg: dict) -> Optional[tuple]:
@@ -172,7 +180,7 @@ def check(job_dirs: List[str], force: bool = False) -> dict:
     for label, path in SAME:
         seen = {json.dumps(_same(s["config"], path), sort_keys=True) for s in shards}      # a mapping by its content
         if len(seen) > 1:
-            differ.append(f"{label}: " + ", ".join(f"{s['name']} {_same(s['config'], path)!r}" for s in shards))
+            differ.append(f"{label}: " + ", ".join(f"{s['name']} {_shown(s['config'], path)!r}" for s in shards))
     if differ and not force:
         raise Refused("the shards are not of one launch - " + "; ".join(differ) + " (--force merges them anyway)")
     # every trial by its unit: two of one unit are never merged, force or not
