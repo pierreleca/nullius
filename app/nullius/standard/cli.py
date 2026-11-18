@@ -909,7 +909,7 @@ def main(argv=None):
                                 "before --shard and --limit; the job's config records the file's name, sha256 and units")
             p.add_argument("--set", dest="task_set", metavar="NAME[@REV]",
                            help="only the units of this task set (nullius standard set), its latest revision or REV: its "
-                                "dataset and options are the run's; the job's config records the set and its revision")
+                                "dataset is the run's, the options the run's own; the job's config records the set and its revision")
             p.add_argument("--limit", type=int)
             p.add_argument("-j", "--concurrency", type=int, default=4)
             p.add_argument("--judge-model", help="a benchmark scored by a model: this judge instead of its official one")
