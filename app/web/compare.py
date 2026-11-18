@@ -126,6 +126,10 @@ def summary_rows(jobs):
             [j.mean_score for j in jobs], "higher",
             "The mean of the benchmark's own score, over every part scored when a trial is scored on its parts"),
     ] if any(j.mean_score is not None for j in jobs) else []
+    if any(j.mean_score_planned is not None for j in jobs):
+        scored.append(row("Mean over planned", ["" if j.mean_score_planned is None else f"{j.mean_score_planned:.2f}" for j in jobs],
+                          [j.mean_score_planned for j in jobs], "higher",
+                          "The mean of each trial's score over all planned trials, with an unscored trial counting 0"))
     # and by the field the benchmark breaks it down by (a question's category), a row a value
     by = next((j.parts_by for j in jobs if j.parts_by), "")
     groups = {}

@@ -203,6 +203,23 @@ class RunFactsOnTheJobPage(unittest.TestCase):
         for passed in ("facts", "harbor"):                                                               # a pass or fail benchmark: unchanged
             self.assertNotIn("planned-mean", self.page(passed))
 
+    def test_the_comparison_summary_shows_the_planned_mean(self):
+        response = self.client.get(f"/compare?pick={self.ws.name}:scored&pick={self.ws.name}:facts")
+        self.addCleanup(response.close)
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertRegex(self.text(html, r'<th class="rowhead"[^>]*>Mean score</th>.*?</tr>'), r"^Mean score 0\.50 ")
+        self.assertEqual(self.text(html, r'<th class="rowhead"[^>]*>Mean over planned</th>.*?</tr>'), "Mean over planned 0.38")
+
+    def test_both_runs_list_views_show_the_planned_mean(self):
+        response = self.client.get("/runs")
+        self.addCleanup(response.close)
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertEqual(re.findall(r'<small class="mean-planned faint">(.*?)</small>', html), ["0.38 planned", "0.38 planned"])
+        self.assertRegex(html, r'<div class="la-rate la-score"[^>]*><b>0\.50</b>')
+        self.assertRegex(html, r'<td data-col="adjusted" data-sort="0\.5"[^>]*>0\.50')
+
 
 class BuilderKeepsTheCap(CompilerCase):
     def test_a_saved_recipe_keeps_an_amount_above_zero_and_nothing_else(self):
