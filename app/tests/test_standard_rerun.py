@@ -498,6 +498,17 @@ class FinishTest(unittest.TestCase):
         os.makedirs(os.path.join(job_dir, "retried"))
         os.replace(os.path.join(job_dir, good), os.path.join(job_dir, "retried", f"{good}.try-1"))
         os.makedirs(os.path.join(job_dir, good, "workspace"))                     # a re-run's try, killed
+
+        def inventory(folder):
+            return {str(p.relative_to(folder)): p.read_bytes() if p.is_file() else None
+                    for p in folder.rglob("*") if p.relative_to(folder) != Path(rerun.NO_RESULT)}
+
+        for name in (model, good):
+            workspace = Path(job_dir, name, "workspace")
+            (workspace / "empty").mkdir()
+            (workspace / "nested").mkdir()
+            (workspace / "nested" / "evidence.bin").write_bytes(b"\x00kept evidence\xff")
+        inventories = {name: inventory(Path(job_dir, name)) for name in (model, good)}
         self.assertEqual(rerun.unfinished(job_dir), {model: {"unit": "model", "folder": True}, good: {"unit": "good", "folder": True}})
         self.assertEqual(len(parse.parse_job(job_dir).trials), 1)
         got = self.again(job_dir, [], every_unfinished=True)
@@ -508,6 +519,7 @@ class FinishTest(unittest.TestCase):
         self.assertEqual({x["trial"]: (x["try"], x["was"]) for x in got["replaced"]}, {model: (1, {}), good: (2, {})})
         for name, n in ((model, 1), (good, 2)):
             kept = os.path.join(job_dir, "retried", f"{name}.try-{n}")
+            self.assertEqual(inventory(Path(kept)), inventories[name])
             self.assertFalse(os.path.exists(os.path.join(kept, "result.json")))
             self.assertIsNone(self.read(kept, rerun.NO_RESULT)["result"])
             self.assertEqual(self.read(job_dir, name, "result.json")["standard"]["retries"], n)
