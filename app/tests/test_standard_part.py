@@ -23,7 +23,7 @@ serve({"units": lambda dataset: {"units": [f"t{i}" for i in range(6)]}, "setup":
        "score": lambda unit, dir, transcript, answer: {"reward": 1.0, "passed": True, "detail": {}}})
 '''
 # what differs between two runs of the same plan by their clocks and their names alone
-VOLATILE = {"started_at", "finished_at", "at", "found_at", "id", "job_name", "job", "date", "seconds", "ts", "cost_usd"}
+VOLATILE = {"started_at", "finished_at", "at", "found_at", "id", "job_name", "job", "date", "seconds", "ts"}
 
 
 def steady(doc):
@@ -33,6 +33,12 @@ def steady(doc):
     if isinstance(doc, list):
         return [steady(v) for v in doc]
     return doc
+
+
+class RecordComparison(unittest.TestCase):
+    def test_cost_changes_are_not_discarded(self):
+        self.assertNotEqual(steady({"agent_result": {"cost_usd": base.CALL}}),
+                            steady({"agent_result": {"cost_usd": 42}}))
 
 
 class PartTest(unittest.TestCase):
@@ -57,7 +63,7 @@ class PartTest(unittest.TestCase):
         b, o = definitions.get("benchmark", "fakebench", root), definitions.get("agent", "fake", root)
         return run.run(b, o, model="m-1", provider="custom", jobs_root=self.tmp, env=self.env,
                        say=(lines.append if lines is not None else lambda s: None), unsandboxed=True, name=name,
-                       concurrency=2, dataset="all", **kw)
+                       concurrency=2, dataset="all", prices=base.PRICES, **kw)
 
     def again(self, job_dir, ids, **kw) -> dict:
         return rerun.rerun(job_dir, ids, env=self.env, say=lambda s: None, root=self.catalogue(), **kw)
