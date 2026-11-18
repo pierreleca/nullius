@@ -79,7 +79,9 @@ class ScoredCutsTest(unittest.TestCase):
         return b
 
     def go(self, b, **kw):
-        kw = dict({"timeouts": {"agent": 3}, "retries": 0}, **kw)
+        # a name of its own: two runs begun in the same second would otherwise share one job folder
+        self.runs = getattr(self, "runs", 0) + 1
+        kw = dict({"timeouts": {"agent": 3}, "retries": 0, "name": f"cuts-{self.runs}"}, **kw)
         job_dir = run.run(b, definitions.get("agent", "fake", ROOT), model="m-1", provider="custom", jobs_root=self.tmp,
                           concurrency=1, env=self.env, say=lambda s: None, unsandboxed=True, proving=True, **kw)
         trials = {t.trial_name.split("__")[0]: t for t in parse.parse_job(job_dir).trials}
