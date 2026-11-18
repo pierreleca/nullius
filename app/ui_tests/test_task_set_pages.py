@@ -314,8 +314,8 @@ class RenameAndDelete(Case):
 
     def setUp(self):
         super().setUp()
-        self.entry = sets.create(self.b, "dev", dataset="all", units=["t001", "t002"], description="two of them")
-        sets.update("described", "dev", add=["t003"])
+        self.entry = sets.create(self.b, "dev", dataset="all", units=["t001", "t002"], description="two of them", note="first selection")
+        sets.update("described", "dev", add=["t003"], note="added t003")
 
     def form(self, action, data, csrf=True):
         r = self.client.post(f"/benchmarks/described/tasks/all/{action}", data=dict(data, **({"csrf": self.csrf} if csrf else {})),
@@ -337,16 +337,18 @@ class RenameAndDelete(Case):
         self.assertNotIn("tasks-set-action", self.get("/benchmarks/described/tasks/all").get_data(as_text=True))
 
     def test_a_rename_keeps_the_id_and_the_revisions_and_opens_the_new_name(self):
+        before = sets.load("described", "dev")
         r, said = self.form("rename", {"set": "dev", "name": "misses"})
         self.assertEqual((r.status_code, r.headers["Location"]), (302, "/benchmarks/described/tasks/all?set=misses"))
         self.assertEqual(said, ["Renamed dev to misses. Runs made from it follow the new name."])
         got = sets.load("described", "misses")
-        self.assertEqual((got["id"], got["description"], [r["revision"] for r in got["revisions"]]), (self.entry["id"], "two of them", [1, 2]))
+        self.assertEqual((got["id"], got["description"], got["revisions"]), (self.entry["id"], "two of them", before["revisions"]))
         self.assertFalse(os.path.exists(sets.path_of("described", "dev")))
         self.assertIn("<h1>", self.get(r.headers["Location"]).get_data(as_text=True))
         # from an earlier revision, the same revision under the new name
         r, _ = self.form("rename", {"set": "misses", "name": "dev", "rev": "1"})
         self.assertEqual(r.headers["Location"], "/benchmarks/described/tasks/all?set=dev&rev=1")
+        self.assertEqual(sets.load("described", "dev")["revisions"], before["revisions"])
 
     def test_a_name_taken_empty_or_with_a_slash_is_refused_as_at_creation(self):
         sets.create(self.b, "other", dataset="all", units=["t009"])

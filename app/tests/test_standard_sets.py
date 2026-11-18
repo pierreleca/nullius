@@ -230,14 +230,15 @@ class Names(Scratch):
 class RenameAndDelete(Scratch):
     def test_a_rename_keeps_the_id_and_the_revisions_and_the_id_finds_it(self):
         first = self.make("dev", "good\nmodel\n", "--description", "two of them")
-        self.cli("set", "update", "fakebench", "dev", "--add", "slow")
+        self.cli("set", "update", "fakebench", "dev", "--add", "slow", "--note", "added slow")
+        before = sets.load("fakebench", "dev")
         code, out, err = self.cli("set", "rename", "fakebench", "dev", "misses")
         self.assertEqual((code, err), (0, ""))
         self.assertTrue(out.startswith("renamed dev to misses ("), out)
         self.assertIn("its id and 2 revisions kept", out)
         got = sets.load("fakebench", "misses")
-        self.assertEqual((got["id"], got["description"], [r["revision"] for r in got["revisions"]]),
-                         (first["id"], "two of them", [1, 2]))
+        self.assertEqual((got["id"], got["description"], got["revisions"]),
+                         (first["id"], "two of them", before["revisions"]))
         self.assertEqual(sorted(os.listdir(os.path.join(self.cat, "sets", "fakebench"))), ["misses.json"])
         self.assertEqual(sets.by_id("fakebench", first["id"], "dev")["name"], "misses")
         # another set made under the old name is another set: the id still finds the renamed one
