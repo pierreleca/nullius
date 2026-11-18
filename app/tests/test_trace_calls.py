@@ -276,6 +276,10 @@ class ThreeKinds(Base):
         self.assertEqual((first["number"], first["answer"]["abridged"], first["answer"]["tool_calls"][0]["name"]), (1, True, "click"))
         self.assertEqual(first["tokens"], {"input": 100, "output": 10, "cached": 0, "reasoning": 0})
         self.assertEqual((first["cost_usd"], first["seconds"]), (0.001, 2.0))
+        self.assertEqual(alone["calls"][2]["answer"]["text"], "saving")
+        selected = calls.page(alone, position=2, section="text")["selected"]
+        self.assertTrue(selected["answer"]["abridged"])
+        self.assertEqual(selected["content"]["text"], "saving")
         none = os.path.join(self.tmp, "harbor", "task__x")
         os.makedirs(os.path.join(none, "agent"))
         self.assertEqual((calls.recorded(none), load(none)["record"], load(none)["calls"]), (0, None, []))
