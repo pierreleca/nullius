@@ -495,7 +495,7 @@ def _read_rule(rule: Rule, a: dict, keys) -> str:
 def answer(path: str, status: int, body: bytes, streamed: bool) -> dict:
     """A reply read whole: text, reasoning, tool calls with their arguments, usage, who served it, how it ended,
     an error; ``status`` as it came."""
-    out = {"status": status, "text": "", "reasoning": "", "tool_calls": [], "usage": None}
+    out = {"status": status, "streamed": streamed, "text": "", "reasoning": "", "tool_calls": [], "usage": None}
     if status == 200:
         try:
             got = relay.read_reply(path, body, streamed, reasoning=True, whole=True)
@@ -797,7 +797,7 @@ def send(prep: Prepared, times: int, max_usd: float, out: str, *, rule: Optional
     rl = relay.Relay(prep.endpoint, key, os.path.join(out, "relay"), prices={prep.model: prep.price}, model=prep.model,
                      key_header=prep.key_header, ledger=led.path, serving=prep.serving or None, exchanges="whole").start()
     width = max(3, len(str(times)))
-    stop, why = threading.Event(), []
+    stop, why, lock = threading.Event(), [], threading.Lock()
 
     def one(i: int) -> Optional[dict]:
         if stop.is_set():
@@ -805,14 +805,18 @@ def send(prep: Prepared, times: int, max_usd: float, out: str, *, rule: Optional
         a, rec = post(rl, prep, f"r{i + 1:0{width}d}")
         a, rec = exchanges._cut_key([a, rec], (key,))
         a["send"] = i + 1
-        if a["refused"]:
-            stop.set()
-            why.append(f"send {i + 1} was refused ({a['refused']}): " + str(rec.get("error") or ""))
-        elif a["status"] in STOP_STATUS:
-            stop.set()
-            why.append(f"send {i + 1}: the provider refused the key (HTTP {a['status']})")
-        else:
-            a["label"] = _read_rule(rule, a, (key,))
+        try:
+            if a["refused"]:
+                stop.set()
+                why.append(f"send {i + 1} was refused ({a['refused']}): " + str(rec.get("error") or ""))
+            elif a["status"] in STOP_STATUS:
+                stop.set()
+                why.append(f"send {i + 1}: the provider refused the key (HTTP {a['status']})")
+            else:
+                a["label"] = _read_rule(rule, a, (key,))
+        finally:
+            with lock, open(os.path.join(out, "answers.jsonl"), "a", encoding="utf-8") as f:
+                f.write(json.dumps(a, ensure_ascii=False) + "\n")
         return a
 
     try:
@@ -821,9 +825,6 @@ def send(prep: Prepared, times: int, max_usd: float, out: str, *, rule: Optional
     finally:
         rl.stop()
     answers = [a for a in got if a is not None]
-    with open(os.path.join(out, "answers.jsonl"), "w", encoding="utf-8") as f:
-        for a in answers:
-            f.write(json.dumps({k: v for k, v in a.items() if k != "body"}, ensure_ascii=False) + "\n")
     labels = [a["label"] for a in answers if "label" in a]
     try:
         state = led.state()

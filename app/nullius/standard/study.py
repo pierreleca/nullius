@@ -533,7 +533,7 @@ def recount(folder: str, rule: Optional[rp.Rule] = None, yes: Optional[str] = No
         for a in rp._jsonl(os.path.join(folder, "answers.jsonl")):
             if a.get("status") != 200 or a.get("refused"):
                 continue
-            reply = _reply(folder, "relay", a.get("route") or "")
+            reply = a if "body" in a else _reply(folder, "relay", a.get("route") or "")
             if reply is None:
                 missing += 1
                 continue

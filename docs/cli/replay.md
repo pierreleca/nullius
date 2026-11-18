@@ -59,8 +59,8 @@ A command given to `--through` or `--read` runs without any provider key in its 
 | --- | --- |
 | `replay.json` | The source call, the changes, K, the cap, the rule (written before the first send), the spend, the counts |
 | `request.json` | The bytes sent |
-| `answers.jsonl` | Each answer read: text, reasoning, tool calls whole, usage, cost, who served it, its label |
-| `relay/` | The replay relay's call record and exchange record: each reply whole, as it arrived |
+| `answers.jsonl` | Each answer read: the whole reply body, text, reasoning, tool calls, usage, cost, who served it, its label |
+| `relay/` | The replay relay's call record and bounded exchange record |
 | `ledger/` | The spending cap's ledger |
 
 ## From a program
