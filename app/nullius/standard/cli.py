@@ -838,7 +838,7 @@ def main(argv=None):
     named.add_argument("--units", metavar="FILE", help="the ids a file lists, one a line (# starts a comment)")
     named.add_argument("--unfinished", action="store_true",
                        help="every planned trial with no result (never begun or killed), cut off by the run's spending cap, "
-                            "or stopped by the run; excludes scores and agent errors")
+                            "or ended by a Stop; excludes scores and agent errors")
     rr.add_argument("--reason", help="why, kept in the job's record of the re-run")
     rr.add_argument("-j", "--concurrency", type=int, help="units at once (default: the job's)")
     rr.add_argument("--retries", type=_retries, default=RETRIES, metavar="N",

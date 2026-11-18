@@ -250,7 +250,7 @@ class CommandLine(Scratch):
         for line in ("usage:", "rerun", "JOB_DIR", "examples:", "exit codes:"):
             self.assertIn(line, out.stdout)
         help_text = " ".join(out.stdout.split())
-        for kind in ("no result", "spending cap", "stopped by the run"):
+        for kind in ("no result", "spending cap", "ended by a Stop"):
             self.assertIn(kind, help_text)
         self.assertIn("excludes scores and agent errors", help_text)
         self.assertEqual(out.stderr, "")
