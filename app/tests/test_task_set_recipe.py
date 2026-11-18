@@ -78,7 +78,9 @@ class TheRecipe(Scratch):
         sets.create(self.b, "dev", dataset="all", units=["good"])
         plain, empty = self.compile(), self.compile(task_sets={})
         self.assertEqual(plain, empty)
-        self.assertNotIn("--set", plain["shards"][0]["command"])
+        self.assertEqual(plain["shards"][0]["command"],
+                         'nullius standard run fakebench nop --provider openai --dataset all -j 1 '
+                         '--name fake-sets --from-run --jobs "${NULLIUS_JOBS:-jobs_standard}"')
         self.assertEqual(next(r for r in plain["review"] if r[1] == "Dataset")[2], "all · 4 tasks")
 
     def test_the_builder_offers_each_datasets_sets(self):

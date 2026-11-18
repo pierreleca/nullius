@@ -341,7 +341,9 @@ class State(Scratch):
         got = []
         for top in (self.tmp, units.install.HOME):
             for root, dirs, files in os.walk(top):
-                got += [os.path.join(root, n) for n in dirs + files]
+                for name in dirs + files:
+                    path = os.path.join(root, name)
+                    got.append((path, Path(path).read_bytes() if name in files else None))
         return sorted(got)
 
     def asked(self, bench, dataset="all", options=None, programs=("git", "uv", "npm")):
