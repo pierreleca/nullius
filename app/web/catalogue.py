@@ -249,11 +249,11 @@ def benchmark_tasks_rename(key, dataset):
     name = _set_guard(key, dataset)
     new = (request.form.get("name") or "").strip()
     rev = {"rev": request.form["rev"]} if request.form.get("rev", "").isdigit() else {}
-    problem = f"The task set is named {name} already." if new and new == name else _set_problem(key, new)
-    if problem:
-        flash(problem, "error")
-        return redirect(url_for("benchmark_tasks", key=key, dataset=dataset, set=name, **rev))
     try:
+        problem = f"The task set is named {name} already." if new and new == name else _set_problem(key, new)
+        if problem:
+            flash(problem, "error")
+            return redirect(url_for("benchmark_tasks", key=key, dataset=dataset, set=name, **rev))
         entry = sets.rename(key, name, new)
     except sets.Refused as e:
         flash(sets.plain(e, key, name), "error")

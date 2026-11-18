@@ -360,6 +360,24 @@ class RenameAndDelete(Case):
         self.assertEqual(sorted(os.listdir(self.tmp / "catalogue" / "sets" / "described")), ["dev.json", "other.json"])
         self.assertEqual(sets.load("described", "dev")["id"], self.entry["id"])
 
+    def test_a_linked_destination_is_refused_on_the_page_without_a_path(self):
+        before = sets.load("described", "dev")
+        outside = self.tmp / "outside.json"
+        outside.write_text("{}")
+        alias = self.tmp / "catalogue" / "sets" / "described" / "alias.json"
+        alias.symlink_to(outside)
+        r = self.client.post("/benchmarks/described/tasks/all/rename",
+                             data={"csrf": self.csrf, "set": "dev", "name": "alias", "rev": "1"},
+                             headers={"Origin": "http://localhost"}, follow_redirects=True)
+        self.addCleanup(r.close)
+        self.assertEqual((r.status_code, r.request.query_string), (200, b"set=dev&rev=1"))
+        html = r.get_data(as_text=True)
+        self.assertIn("The task set dev cannot be read: nullius standard set show described dev says why.", visible(html))
+        self.assertNotIn(str(self.tmp), html)
+        self.assertEqual(sets.load("described", "dev"), before)
+        self.assertTrue(alias.is_symlink())
+        self.assertEqual(outside.read_text(), "{}")
+
     def test_a_delete_removes_the_set_and_opens_the_benchmarks_sets(self):
         r, said = self.form("delete", {"set": "dev"})
         self.assertEqual((r.status_code, r.headers["Location"]), (302, "/benchmarks/described#task-sets"))
