@@ -500,7 +500,7 @@ def page(v: dict, *, query="", page=1, position=None, step=None, section=None, c
     query = conversation._text(query).strip()[:500]
     calls = v.get("calls") or []
     result = {"view": "calls", "query": query, "kind": "calls", "page_size": PAGE_SIZE, "page": 1, "pages": 1,
-              "total": len(calls), "matches": 0, "rows": [], "selected": None, "notice": v.get("notice") or "", "record": v.get("record")}
+              "total": len(calls), "matches": 0, "rows": [], "selected": None, "notice": "" if calls else v.get("notice") or "", "record": v.get("record")}
     needle = query.casefold()
     matching = [i for i, c in enumerate(calls) if not needle or needle in c["search"]]
     result["matches"] = len(matching)

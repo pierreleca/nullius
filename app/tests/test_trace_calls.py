@@ -343,6 +343,9 @@ class LaterVersion(Base):
                                                  "this Nullius reads version 1: read it with a later Nullius"})
                 self.assertEqual((v["calls"][3]["answer"]["text"], v["calls"][3]["answer"]["abridged"]), ("done", True))
                 self.assertIn("version 2", calls.page(v)["selected"]["sent"]["note"])
+                # each call says why: the page's own notices stay as they were
+                self.assertEqual([calls.page(v, **ask)["notice"] for ask in ({}, {"query": "zzzz"}, {"step": "none"})],
+                                 ["", "No calls match this search.", "No call in this search holds that source step."])
                 with self.assertRaises(LookupError):
                     calls.picture(v, sha(P1))
 
