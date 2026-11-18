@@ -6,11 +6,12 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import shutil
 from pathlib import Path
 from unittest import mock
 
 from nullius import execution, hosts
-from nullius.standard import recipe
+from nullius.standard import definitions, recipe, run
 
 from tests.execution_support import Base, HostBase
 
@@ -74,15 +75,35 @@ class Here(Base):
         self.assertFalse(ex.never_ran("j1"))
 
     def test_the_cli_s_rerun_is_the_command_and_its_words_reach_it(self):
-        """The part ``recipe.again`` writes runs this tree's ``cli rerun`` on the job's folder, with the job's
-        settings: here a folder that is no job of the standard, refused by the command itself."""
-        ex = self.wait(execution.Execution(self.plan(), root=str(self.tmp / "runs"), key="sk-first-key-0001").start())
+        """The generated command runs precisely the named tasks of a finished job."""
+        dest = self.tmp / "catalogue/benchmarks/fakebench"
+        shutil.copytree(Path(__file__).parent / "fixtures/standard/catalogue/benchmarks/fakebench", dest)
+        spec = json.loads((dest / "standard.json").read_text())
+        spec["controls"] = {"nop": {"source": "nullius", "from": "Empty answer."}}
+        (dest / "standard.json").write_text(json.dumps(spec))
+        (dest / "driver.py").write_text(
+            'from nullius.standard.jsonl import serve\n'
+            'serve({"units": lambda dataset: {"units": ["t1", "t 2", "untouched"]}, '
+            '"setup": lambda unit, dir: {"prompt": ""}, '
+            '"score": lambda **kw: {"reward": 0.0}})\n')
+        bench = definitions.get("benchmark", "fakebench", str(self.tmp / "catalogue"))
+        plan = self.plan()
+        plan.parts[0]["script"] = "true"
+        ex = self.wait(execution.Execution(plan, root=str(self.tmp / "runs"), key="sk-first-key-0001").start())
+        path = Path(run.run(bench, definitions.control(bench, "nop"), model="", provider="custom",
+                            jobs_root=ex.jobs, name="j1", env={}, concurrency=1, say=lambda s: None))
+        names = {json.loads((p / "result.json").read_text())["standard"]["unit"]: p.name
+                 for p in path.iterdir() if (p / "result.json").is_file()}
+        untouched = (path / names["untouched"] / "result.json").read_bytes()
         self.wait(ex.again(recipe.again("j1", ["t1", "t 2"], reason="the provider's 'failure'", n=1), env={"OPENAI_API_KEY": "sk-first-key-0001"}))
-        self.assertEqual((ex.state, ex.exit_code), ("failed", 2), ex.lines)
-        text = "\n".join(ex.lines)
-        self.assertIn("refused:", text)
-        self.assertIn("not a job of the Nullius standard", text)
-        self.assertNotIn("usage:", text)                                     # every word was the command's
+        self.assertEqual((ex.state, ex.exit_code), ("done", 0), ex.lines)
+        (record,) = json.loads((path / "result.json").read_text())["reruns"]
+        self.assertEqual(record["trials"], [names["t1"], names["t 2"]])
+        self.assertEqual([r["unit"] for r in record["replaced"]], ["t1", "t 2"])
+        self.assertEqual(record["reason"], "the provider's 'failure'")
+        self.assertEqual(sorted(p.name for p in (path / "retried").iterdir()),
+                         sorted(names[u] + ".try-1" for u in ("t1", "t 2")))
+        self.assertEqual((path / names["untouched"] / "result.json").read_bytes(), untouched)
 
     def test_a_job_no_longer_here_is_said(self):
         ex = self.wait(execution.Execution(self.plan(), root=str(self.tmp / "runs"), key="sk-first-key-0001").start())
