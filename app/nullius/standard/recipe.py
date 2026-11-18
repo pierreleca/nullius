@@ -859,9 +859,10 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
                       + (f" · user simulator {sim_model or (b.get('simulator') or {}).get('model')}" + (" (leaderboard)" if lb.get("simulator") else "" if sim_model else " (official)") if b.get("simulator") else "")
                       + (f" · judge {judge_model or b['score']['judge']['model']}" + ("" if judge_model else " (official)") if (b.get("score") or {}).get("judge") else "")
                       + "".join(f" · {SERVED_LABEL[r_]} served by {', '.join(s)}" for r_, s in served.items())],
-                     [STEP["limits"], "Scope", f"{'first ' + str(n) if isinstance(limit, int) else 'all ' + str(total or '')} {nouns}"
-                      + (" of each shard" if of > 1 and isinstance(limit, int) else "") + f" · {conc} at a time".replace("  ", " ")
-                      + (" of each dataset" if many and isinstance(limit, int) else "")
+                     [STEP["limits"], "Scope", (f"{planned or 'all'} planned, {begin or 'all'} to begin" if set_of or start_of
+                      else f"{'first ' + str(n) if isinstance(limit, int) else 'all ' + str(total or '')} {nouns}")
+                      + (" of each shard" if of > 1 and isinstance(limit, int) and not (set_of or start_of) else "") + f" · {conc} at a time".replace("  ", " ")
+                      + (" of each dataset" if many and isinstance(limit, int) and not (set_of or start_of) else "")
                       + (f" · {len(pairs)} jobs, one after the other" if len(pairs) > 1 else "")
                       + (f" · {repeat} attempts each (pass^1 to pass^{repeat})" if repeat > 1 else "")
                       + (f" · up to {retries} {'retry' if retries == 1 else 'retries'} an attempt" if retries else "")
