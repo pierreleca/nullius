@@ -285,7 +285,7 @@ def _system_slots(req: dict) -> List[tuple]:
             out.append((req, k))
         elif isinstance(v, list):
             out += [(b, "text") for b in v if isinstance(b, dict) and isinstance(b.get("text"), str)]
-    for m in req.get("messages") or []:
+    for m in req.get("messages") or req.get("input") or []:
         if isinstance(m, dict) and m.get("role") in ("system", "developer"):
             out += _text_slots(m)
     return out
@@ -308,7 +308,8 @@ def _text_slots(v) -> List[tuple]:
 
 def _texts(req: dict) -> List[tuple]:
     seen, out = set(), []
-    for c, k in _system_slots(req) + _text_slots(req.get("messages") or req.get("input") or []):
+    inputs = [(req, "input")] if isinstance(req.get("input"), str) else []
+    for c, k in inputs + _system_slots(req) + _text_slots(req.get("messages") or req.get("input") or []):
         if (id(c), k) not in seen:
             seen.add((id(c), k))
             out.append((c, k))
@@ -340,7 +341,7 @@ def system_text(text: str) -> Change:
             if k in req and isinstance(req[k], (str, list)):
                 req[k] = text
                 return req
-        for m in req.get("messages") or []:
+        for m in req.get("messages") or req.get("input") or []:
             if isinstance(m, dict) and m.get("role") in ("system", "developer"):
                 m["content"] = text
                 return req

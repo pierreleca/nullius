@@ -212,6 +212,21 @@ class Rebuilt(ReplayCase):
 
 
 class Changes(ReplayCase):
+    def test_responses_text_and_system_inputs_accept_prompt_changes(self):
+        self.record_trial("text__u0002", 1, path="/responses", req={"model": "m", "input": "Open settings."})
+        prep = self.prepared(replay.replace_text("settings", "browser"), trial="text__u0002", call=1)
+        self.assertEqual(prep.request["input"], "Open browser.")
+        self.assertChain(prep, ["replace_text"])
+        for role in ("system", "developer"):
+            with self.subTest(role=role):
+                req = {"input": [{"role": role, "content": [{"type": "input_text", "text": "Be brief."}]},
+                                 {"role": "user", "content": "Open settings."}]}
+                changed = replay.replace_text("brief", "careful").apply(req)
+                self.assertEqual(changed["input"][0]["content"][0]["text"], "Be careful.")
+                changed = replay.system_text("Be concise.").apply(changed)
+                self.assertEqual(changed["input"][0]["content"], "Be concise.")
+                self.assertEqual(changed["input"][1]["content"], "Open settings.")
+
     def test_stream_usage_is_in_the_prepared_bytes_and_change_hash(self):
         self.record_trial("chat__u0002", 1, path="/chat/completions", req={
             "model": "m", "messages": [{"role": "user", "content": "Open settings."}]})
