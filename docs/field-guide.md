@@ -32,7 +32,7 @@ Benchmarks measure performance. Kits check that an agent or capability implement
 
 ## Attempts and retries {#attempts}
 
-An attempt is one run of a task, counted whatever its result. A retry reruns an attempt after an infrastructure or agent failure; its last try is the trial. A task run again by hand after the run ended ([`standard rerun`](cli/rerun.md)) is a further try of the same attempt.
+An attempt is one run of a task, counted whatever its result. A retry reruns an attempt after an infrastructure or agent failure; its last try is the trial. A task run again by hand after the run ended ([`standard rerun`](cli/rerun.md)) is a further try of the same attempt; a task the run planned and never began, run then, is its first try, and a try killed before its result is kept and counted as a try.
 
 Standard runs with repeated, scored attempts record both measures in `pass_hat_k`. They answer different questions.
 

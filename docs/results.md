@@ -33,14 +33,15 @@ Foreign results open the same way: [Open existing results](getting-started.md#op
 ## Run tasks again
 
 On a job of the Nullius standard that has ended: tick the rows, or **Select the rows shown** under the outcome filter,
-then **Run selected again**.
+then **Run selected again**. A task the job planned with no result (never run, or its run killed) is a row of its own,
+outcome **No result**, ticked the same way; it is run, not run again.
 
 | Step | Detail |
 | --- | --- |
 | Ask | A reason (optional), a spending cap (optional), the number of tasks |
 | Where | Where the job ran: this machine, or the host it was sent to, in the job's own folder |
 | While it runs | Each task shows its earlier result, marked **running again**, until the new one lands |
-| After | The new result is the task's; the earlier tries stay as its tabs, the one asked for marked **run again by hand** with its reason; **Run again by hand** lists each re-run |
+| After | The new result is the task's; the earlier tries stay as its tabs, the one asked for marked **run again by hand** with its reason; **Run again by hand** lists each re-run, the tasks run for the first time and the tries that had no result |
 | No button | A job not started from this application, still running, merged from shards, or whose host left Settings: one line says which |
 | Refused, nothing started | A host that no longer holds the job; a provider whose key is not set here |
 
