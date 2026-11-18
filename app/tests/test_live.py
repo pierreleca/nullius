@@ -122,6 +122,41 @@ class Reading(unittest.TestCase):
 
 
 class Fold(unittest.TestCase):
+    def test_an_ordinary_run_with_named_tasks_keeps_automatic_retry_aggregates(self):
+        board = board_of(ev(1, "job.start", trial=None, n_total=1, tasks=["task"]),
+                         ev(2, "trial.phase", task="task", phase="agent_run"),
+                         ev(3, "trial.end", outcome="infra_error", cost_usd=0.25),
+                         ev(4, "trial.phase", phase="agent_run")).snapshot()
+        self.assertEqual((board["counts"]["running"], board["counts"]["completed"]), (1, 0))
+        self.assertIsNone(board["mean_reward"])
+        self.assertEqual(board["totals"]["cost_usd"], 0.25)
+
+    def test_manual_reruns_keep_the_previous_result_in_the_totals_until_replaced(self):
+        for outcome, reward in (("resolved", 1.0), ("unresolved", 0.0), ("scored", 0.5)):
+            with self.subTest(outcome=outcome):
+                lines = [ev(1, "job.start", trial=None, n_total=1, agents=["agent"]),
+                         ev(2, "trial.phase", task="task", agent="agent", phase="agent_run"),
+                         ev(3, "trial.end", outcome=outcome, reward=reward, cost_usd=0.25),
+                         ev(4, "job.end", trial=None),
+                         ev(5, "job.start", trial=None, n_total=1, agents=["agent"], tasks=["task"])]
+                before = board_of(*lines).snapshot()
+                lines += [ev(6, "trial.queued", position=0), ev(7, "trial.phase", phase="agent_run")]
+                during = board_of(*lines).snapshot()
+                self.assertEqual((during["state"], during["trials"][0]["state"]), ("running", "running"))
+                self.assertEqual(during["counts"]["running"], 1)
+                for key in ("completed", "resolved", "unresolved", "scored", "errored", "cancelled"):
+                    self.assertEqual(during["counts"].get(key), before["counts"].get(key), key)
+                self.assertEqual(during["mean_reward"], reward)
+                self.assertEqual(during["totals"]["cost_usd"], 0.25)
+                self.assertEqual(during["lanes"][0]["mean_reward"], reward)
+                lines += [ev(8, "trial.progress", cost_usd=0.03)]
+                self.assertAlmostEqual(board_of(*lines).snapshot()["totals"]["cost_usd"], 0.28)
+                lines += [ev(9, "trial.end", outcome="unresolved", reward=0.0, cost_usd=0.03)]
+                after = board_of(*lines).snapshot()
+                self.assertEqual((after["counts"]["completed"], after["counts"]["unresolved"]), (1, 1))
+                self.assertEqual((after["mean_reward"], after["lanes"][0]["mean_reward"]), (0.0, 0.0))
+                self.assertAlmostEqual(after["totals"]["cost_usd"], 0.28)
+
     def test_the_last_phase_event_wins_and_time_in_phase_is_now_minus_its_ts(self):
         b = board_of(ev(1, "trial.phase", phase="env_setup", timeout_sec=300),
                      ev(2, "trial.phase", phase="agent_run", timeout_sec=540),
