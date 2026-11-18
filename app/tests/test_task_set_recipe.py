@@ -78,7 +78,9 @@ class TheRecipe(Scratch):
         sets.create(self.b, "dev", dataset="all", units=["good"])
         plain, empty = self.compile(), self.compile(task_sets={})
         self.assertEqual(plain, empty)
-        self.assertNotIn("--set", plain["shards"][0]["command"])
+        self.assertEqual(plain["shards"][0]["command"],
+                         'nullius standard run fakebench nop --provider openai --dataset all -j 1 '
+                         '--name fake-sets --from-run --jobs "${NULLIUS_JOBS:-jobs_standard}"')
         self.assertEqual(next(r for r in plain["review"] if r[1] == "Dataset")[2], "all · 4 tasks")
 
     def test_the_builder_offers_each_datasets_sets(self):
@@ -93,19 +95,22 @@ class OnAHost(Scratch):
     the copy of the snapshot's catalogue a host run reads, runs the set and records it."""
 
     def test_the_snapshot_carries_the_recipes_sets_and_the_run_there_records_the_set(self):
-        entry = sets.create(self.b, "dev", dataset="all", units=["good", "wrong"])
-        r = self.recipe(task_sets={"all": "dev@1"})
-        self.assertEqual(payload.recipe_sets(r), [("fakebench", "dev")])
+        entry = sets.create(self.b, "settings", dataset="all", units=["good", "wrong"])
+        r = self.recipe(task_sets={"all": "settings@1"})
+        self.assertEqual(payload.recipe_sets(r), [("fakebench", "settings")])
         self.assertEqual(payload.recipe_sets(self.recipe()), [])
         empty = self.tmp / "empty-package"
         shutil.copytree(Path(payload.PACKAGE), empty, ignore=shutil.ignore_patterns("__pycache__", "catalogue", "kits"))
         key0, _ = payload.build(str(self.tmp / "cache"), package=empty, catalogue=str(self.cat))
         key, here = payload.build(str(self.tmp / "cache"), package=empty, catalogue=str(self.cat), sets=payload.recipe_sets(r))
         self.assertNotEqual(key, key0)
-        carried = Path(here) / "app/nullius/catalogue/sets/fakebench/dev.json"
+        self.assertEqual(payload.build(str(self.tmp / "cache"), package=empty, catalogue=str(self.cat),
+                                       sets=payload.recipe_sets(r)), (key, here))
+        carried = Path(here) / "app/nullius/catalogue/sets/fakebench/settings.json"
         self.assertEqual(json.loads(carried.read_text())["id"], entry["id"])
-        with self.assertRaises(ValueError):
-            payload.build(str(self.tmp / "cache"), package=empty, catalogue=str(self.cat), sets=[("fakebench", "gone")])
+        for name in ("gone", "../settings"):
+            with self.assertRaises(ValueError):
+                payload.build(str(self.tmp / "cache"), package=empty, catalogue=str(self.cat), sets=[("fakebench", name)])
         # on the host: the snapshot's catalogue copied for the run (execution: cp -R .../app/nullius/catalogue), read there
         run_catalogue = self.tmp / "host" / "runs" / "fake-sets" / "catalogue"
         shutil.copytree(Path(here) / "app/nullius/catalogue", run_catalogue)
@@ -115,7 +120,7 @@ class OnAHost(Scratch):
         with mock.patch.dict(os.environ, {"NULLIUS_CATALOGUE": str(run_catalogue)}), \
                 mock.patch.object(cli, "_bench", return_value=self.b), mock.patch.object(cli, "_exit_on_term"), \
                 mock.patch.object(cli.settings, "load"), redirect_stdout(out), redirect_stderr(err):
-            code = cli.main(["run", "fakebench", "nop", "--dataset", "all", "--set", "dev@1", "-j", "1", "--name", "fake-sets",
+            code = cli.main(["run", "fakebench", "nop", "--dataset", "all", "--set", "settings@1", "-j", "1", "--name", "fake-sets",
                              "--jobs", str(jobs)])
         self.assertEqual(code, 0, out.getvalue() + err.getvalue())
         cfg = json.loads((jobs / "fake-sets" / "config.json").read_text())

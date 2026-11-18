@@ -18,6 +18,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 from unittest import mock
 
 from nullius import paths
@@ -164,6 +165,40 @@ class WithoutDescribe(Scratch):
 
 
 class Cache(Scratch):
+    def test_cache_links_cannot_read_or_write_outside_the_cache_root(self):
+        path = Path(units.cache_path(self.b, self.b["datasets"][0], {"mode": "long"}))
+        outside = Path(self.tmp, "outside-cache")
+        outside.mkdir()
+        cached = outside / "listing.json"
+        cached.write_text(json.dumps({"tasks": [], "described": False}))
+        for link, target in ((path.parent.parent, outside), (path.parent, outside), (path, cached)):
+            with self.subTest(link=link.name):
+                link.parent.mkdir(parents=True, exist_ok=True)
+                link.symlink_to(target, target_is_directory=target.is_dir())
+                before = {p.name: p.read_bytes() for p in outside.iterdir()}
+                try:
+                    with self.assertRaisesRegex(units.Refused, "outside the cache root"):
+                        units.listing(self.b, "all")
+                    self.assertEqual(units.state(self.b, "all")["state"], "refused")
+                    self.assertEqual(self.starts(), 0)
+                    self.assertEqual({p.name: p.read_bytes() for p in outside.iterdir()}, before)
+                finally:
+                    link.unlink()
+
+    def test_a_linked_cache_root_keeps_the_listing_under_its_resolved_root(self):
+        root = Path(paths.cache_dir())
+        destination = Path(self.tmp, "cache-disk")
+        destination.mkdir()
+        root.parent.mkdir(parents=True, exist_ok=True)
+        root.symlink_to(destination, target_is_directory=True)
+        got = units.listing(self.b, "all")
+        path = Path(units.cache_path(self.b, self.b["datasets"][0], {"mode": "long"}))
+        self.assertTrue(path.resolve().is_relative_to(destination))
+        self.assertEqual(json.loads(path.read_text()), got)
+        self.assertEqual(units.state(self.b, "all")["state"], "cached")
+        self.assertEqual(units.listing(self.b, "all"), got)
+        self.assertEqual(self.starts(), 1)
+
     def test_the_second_listing_starts_no_driver_and_another_option_lists_again(self):
         units.find(self.b, "all")
         units.find(self.b, "all", search="t1", page=2)
@@ -198,11 +233,22 @@ class CommandLine(Scratch):
         got = json.loads(out)
         self.assertEqual((code, got["total"], got["pages"], len(got["tasks"])), (0, 83, 1, 83))
 
+    def test_the_longmemeval_help_example_names_a_known_dataset(self):
+        import shlex
+        example = next(line for line in cli.UNITS_EPILOG.splitlines() if "units longmemeval" in line)
+        args = shlex.split(example)
+        bench = definitions.get("benchmark", "longmemeval")
+        dataset = args[args.index("--dataset") + 1]
+        self.assertEqual(units.dataset_of(bench, dataset)["id"], "longmemeval_oracle")
+        self.assertEqual(units.option_values(bench, dataset, {"question_type": "multi-session"})["question_type"],
+                         "multi-session")
+
     def test_refusals_are_one_line_on_stderr(self):
         for args, code, said in ((["units", "nowhere", "--dataset", "all"], 3, "no benchmark 'nowhere'"),
                                  (["units", "described", "--dataset", "nope"], 3, "no dataset 'nope'"),
                                  (["units", "described", "--dataset", "all", "--category", "kind"], 2, "FIELD=VALUE"),
-                                 (["units", "described", "--dataset", "all", "--bench-option", "mode=x"], 2, "mode")):
+                                 (["units", "described", "--dataset", "all", "--bench-option", "mode=x"], 2, "mode"),
+                                 (["units", "described", "--dataset", "all", "--bench-option", "broken"], 2, "NAME=VALUE")):
             with self.subTest(args=args):
                 got, out, err = self.cli(*args)
                 self.assertEqual((got, out), (code, ""))
@@ -295,7 +341,9 @@ class State(Scratch):
         got = []
         for top in (self.tmp, units.install.HOME):
             for root, dirs, files in os.walk(top):
-                got += [os.path.join(root, n) for n in dirs + files]
+                for name in dirs + files:
+                    path = os.path.join(root, name)
+                    got.append((path, Path(path).read_bytes() if name in files else None))
         return sorted(got)
 
     def asked(self, bench, dataset="all", options=None, programs=("git", "uv", "npm")):
@@ -328,6 +376,33 @@ class State(Scratch):
         self.assertEqual((got["state"], got["reason"]), ("light", ""))
         self.assertEqual(got["fetch"], [{"what": "upstream", "text": "the upstream https://example.org/upstream.git at aaaaaaaaaaaa"},
                                         {"what": "dataset", "text": "the dataset https://example.org/all.json"}])
+
+    def test_a_prepared_upstream_must_hold_the_datasets_file(self):
+        up = Path(self.tmp, "upstream")
+        up.mkdir()
+        bench = dict(self.fetching(list_command=[sys.executable, "{here}/driver.py"]),
+                     datasets=[{"id": "all", "path": "absent.json", "sha256": "b" * 64, "units": 250}])
+        with mock.patch.object(units.install, "upstream_dir", return_value=str(up)):
+            self.assertEqual(self.asked(bench)["state"], "light")
+            self.assertEqual([f["what"] for f in self.asked(bench)["fetch"]], ["upstream"])
+            (up / units.install.MARK).touch()
+            got = self.asked(bench)
+        self.assertEqual((got["state"], got["fetch"]), ("refused", []))
+        self.assertIn("absent.json is not in the upstream", got["reason"])
+
+    def test_a_present_dataset_is_not_checksummed_by_state(self):
+        data = Path(self.b["_here"], "data.json")
+        data.write_text("{}")
+        bench = dict(self.b, datasets=[{"id": "all", "path": "data.json", "sha256": "b" * 64, "units": 250}],
+                     driver=dict(HEAVY, list_command=[sys.executable, "{here}/driver.py"]))
+        sha256 = units.install.sha256_of
+
+        def digest(path):
+            self.assertNotEqual(Path(path), data)
+            return sha256(path)
+
+        with mock.patch.object(units.install, "sha256_of", side_effect=digest):
+            self.assertEqual(self.asked(bench), {"state": "light", "fetch": [], "reason": ""})
 
     def test_full_and_the_environment_it_installs(self):
         self.assertEqual(self.asked(self.b), {"state": "full", "fetch": [], "reason": ""})

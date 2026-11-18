@@ -20,7 +20,7 @@
       {% if entry and entry.description %}<p class="bench-domain">{{ entry.description }}</p>{% endif %}
     </div>
     <div class="bench-actions">
-      {% if not read_only %}<a class="btn ghost" href="{{ url_for('new_run', standard=bench.key) }}">Build a run <span aria-hidden="true">→</span></a>{% endif %}
+      {% if not read_only %}<a class="btn ghost" href="{{ url_for('new_run', standard=bench.key, dataset=ds.id, set=(entry.name ~ '@' ~ rev.revision) if entry else none) }}">Build a run <span aria-hidden="true">→</span></a>{% endif %}
     </div>
   </header>
   {% if problem %}<p class="bench-blocked" role="note">{{ problem }}</p>{% endif %}
