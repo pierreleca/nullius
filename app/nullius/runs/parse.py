@@ -30,7 +30,7 @@ DEFAULT_TRACE_NAME = "trace.json"
 # The shape this module produces. A workspace caches parsed Jobs keyed on it,
 # so bump it when a Trial or Job field is added, renamed or means something
 # new — otherwise a cache written by the old parse is read back as current.
-SCHEMA = "18"
+SCHEMA = "19"
 
 # What a rate-limit record in `agent/gateway.log` looks like. The agent's SDK
 # retries a 429 below the harness (an agent's `max_retries` reaching its
@@ -827,7 +827,7 @@ _PHASE_MULTIPLIERS = ("agent_timeout_multiplier", "agent_setup_timeout_multiplie
 # A launch carries only the name of a value filed under a name like these: it
 # is a credential, and the record is embedded in the builder's page.
 _SECRET_KEY = re.compile(r"(?:api[-_]?key|token|password|authorization|credential|secret)", re.I)
-_TOKEN_COUNT_KEY = re.compile(r"^(?:(?:(?:max|min|num|n|total|input|output|prompt|completion|new)[-_])*tokens|token[-_](?:count|limit|budget))$", re.I)
+_TOKEN_COUNT_KEY = re.compile(r"^(?:(?:(?:max|min|num|n|total|input|output|prompt|completion|new)[-_])+tokens|token[-_](?:count|limit|budget))$", re.I)
 # What a recipe can say; any other key a config recorded is named, not dropped.
 _LAUNCH_TOP = {"job_name", "jobs_dir", "quiet", "debug", "agents", "datasets", "tasks", "retry",
                "n_concurrent_trials", "n_attempts", "timeout_multiplier", "environment", *_PHASE_MULTIPLIERS}

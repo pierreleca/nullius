@@ -844,6 +844,22 @@ class RunIdentity(unittest.TestCase):
                 self.assertEqual(job.identity["agent_options"], expected)
                 self.assertEqual(job.identity["benchmark_options"], expected)
 
+    def test_bare_tokens_are_credentials_in_options_and_launch_values(self):
+        counts = {"max_tokens": 4096, "total_tokens": 2048, "token_limit": 1024}
+        for key in ("tokens", "Tokens"):
+            options = dict(counts, **{key: ["credential-one", "credential-two"]},
+                           nested=dict(counts, **{key: ["credential-three"]}))
+            job = parse.parse_job(standard_job(self.tmp, key, [1], options=options, bench_options=options))
+            for field in ("agent_options", "benchmark_options"):
+                with self.subTest(key=key, field=field):
+                    self.assertEqual(job.identity[field], dict(counts, **{key: "[REDACTED]"}, nested=counts))
+            agent = parse.launch_of({"agents": [{"kwargs": options, "env": options}]})["agents"][0]
+            for field in ("kwargs", "env"):
+                with self.subTest(key=key, field=field):
+                    self.assertEqual(agent[field], dict(counts, nested=counts))
+                    self.assertIn(key, agent["secret"])
+                    self.assertIn(f"nested.{key}", agent["secret"])
+
     def test_a_job_that_records_a_fact_not_has_no_key_for_it(self):
         # written before the options, the pin, the limits and the served record existed
         d = os.path.join(self.tmp, "older")
