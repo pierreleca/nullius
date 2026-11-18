@@ -953,7 +953,28 @@ def _live_board_state(j):
     # "running" here means "show the board and keep polling": the preparation
     # window and the starting state are on the board too, so it is every
     # state but finished — and unknown, an empty feed, which has nothing to show.
-    return {"running": snap["state"] in ("preparing", "starting", "running"), "initial": snap}
+    return {"running": snap["state"] in ("preparing", "starting", "running"), "initial": _with_part(j, snap)}
+
+
+def _with_part(j, snap: dict) -> dict:
+    """The board's snapshot, with ``part`` while a standard job's run goes on over a part of its plan: the trials
+    of that part, the units its config began with or those the latest later start names. The board counts the
+    planned trials outside it as not run, not queued. The snapshot as it was otherwise."""
+    if not j.standard or snap.get("state") not in ("starting", "running"):
+        return snap
+    from nullius.standard import rerun
+    try:
+        starts = [e.data for e in live.read_events(live.feed_path(j.dir)).events if e.event == "job.start"]
+        with open(os.path.join(j.dir, "config.json"), encoding="utf-8") as f:
+            began = ((json.load(f).get("standard") or {}).get("start_with") or {}).get("units")
+    except (OSError, ValueError, AttributeError):
+        return snap
+    units = starts[-1].get("tasks") if len(starts) > 1 else began
+    plan = rerun.planned(j.dir) if isinstance(units, list) else None
+    if not plan:
+        return snap
+    wanted = set(units)
+    return dict(snap, part=[name for name, unit in plan if unit in wanted])
 
 
 @app.route("/job/<job_id>/live")
@@ -983,6 +1004,6 @@ def job_live(job_id):
         response.status_code = 422
         response.headers["Cache-Control"] = "no-store"
         return response
-    response = jsonify(snap)
+    response = jsonify(_with_part(j, snap))
     response.headers["Cache-Control"] = "no-store"
     return response

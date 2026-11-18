@@ -173,6 +173,41 @@ new Function('$', '$$', 'rows', 'document', 'nulliusFetch', 'URL', 'location',
             self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
             self.assertEqual(self.asked[-1][1]["trials"], body["trials"])
 
+    def test_while_a_part_runs_the_board_queues_its_tasks_and_says_not_run_for_the_rest(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node is required for the board")
+        d = self.tmp / "loose" / "r1"                                            # no run record: the feed alone says it runs
+        rerun_page.standard_job(d, "r1")
+        self.begun_on_a_part(d)
+        board = Path(__file__).resolve().parents[1] / "static/runs/live-board.js"
+        program = ("const L=require(" + json.dumps(str(board)) + ");const s=JSON.parse(process.argv[1]);"
+                   "process.stdout.write(JSON.stringify(L.render(s,{selected:'t-5__u0005'})));")
+        name = lambda k: f"t-{k}__u{k:04d}"
+        first = [("job.start", None, dict(n_total=6, tasks=PLAN))] + [("trial.queued", name(k), dict(position=k)) for k in range(6)]
+        later = [("trial.end", name(k), dict(outcome="resolved", reward=1.0)) for k in range(3)]
+        later += [("job.end", None, {}), ("job.start", None, dict(n_total=6, tasks=["t-4"])), ("trial.queued", name(4), dict(position=0))]
+        for events, part, said in [(first + [("trial.phase", name(0), dict(task="t-0", phase="agent_run"))], [name(k) for k in range(3)],
+                                    "Done 0 /6 Running 1 Queued 2 Not run 3"),
+                                   (first + later, [name(4)], "Done 3 /6 Running 0 Queued 1 Not run 2")]:
+            (d / "events.jsonl").unlink()
+            writer = feed.Writer(str(d / "events.jsonl"), "r1")
+            for event, trial, data in events:
+                writer.emit(event, trial, **data)
+            self.open(d.parent)
+            snap = json.loads(self.page("/job/r1/live"))
+            self.assertEqual((snap["state"], snap["part"]), ("running", part))
+            out = json.loads(subprocess.run([node, "-e", program, json.dumps(snap)], capture_output=True, text=True,
+                                            check=True, timeout=10).stdout)
+            self.assertEqual(text(out["stats"], r".*").split(" Rate")[0], said)
+            self.assertIn('u0005: not run"', out["tiles"])
+            self.assertIn('u0002: queued"' if len(part) == 3 else 'u0002: Resolved"', out["tiles"])
+            self.assertTrue(text(out["drawer"], r"<h3>.*?</h3>").endswith("Not run"), out["drawer"])
+            initial = re.search(r'<script id="live-board-initial" type="application/json">(.*?)</script>', self.page("/job/r1?view=live"), re.S)[1]
+            self.assertEqual(json.loads(initial)["part"], part)                  # the page's first draw counts as its polls do
+        writer.emit("job.end")                                                   # ended: the board's own count, no part
+        self.assertNotIn("part", json.loads(self.page("/job/r1/live")))
+
     def test_a_job_run_whole_shows_none_of_it(self):
         d = self.run_of()
         self.open(d.parent)
