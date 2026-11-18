@@ -223,3 +223,29 @@ class TheBuilder(task_set_pages.BuilderCase):
                    "process.stdout.write(JSON.stringify({read,cleared,count,dropped,other:r.start_with===undefined}));")
         got = json.loads(subprocess.run([node, "-"], input=program, check=True, capture_output=True, text=True).stdout)
         self.assertEqual(got, {"read": {"all": "set:dev@1"}, "cleared": True, "count": "3", "dropped": True, "other": True})
+
+    def test_deselecting_a_dataset_removes_its_start_choice_before_review(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node is required for the dataset control")
+        load = task_set_pages.definitions.load
+        def with_more(kind, root=None, every=False):
+            entries, errors = load(kind, root, every=every)
+            if kind == "benchmark":
+                entries = [dict(b, datasets=[*b["datasets"], {"id": "more", "units": 4}])
+                           if b["key"] == "fakebench" else b for b in entries]
+            return entries, errors
+        self.stack.enter_context(patch.object(task_set_pages.definitions, "load", with_more))
+        html = self.get("/new-run").get_data(as_text=True)
+        schema = json.loads(re.search(r'<script id="nb-schema" type="application/json">(.*?)</script>', html, re.S)[1])
+        folder = Path(__file__).resolve().parents[1] / "static/builder"
+        handler = next(line.strip()[5:] for line in (folder / "command-builder.js").read_text().splitlines()
+                       if "else if(d.stdDataset)" in line)
+        program = (f"const C=require({json.dumps(str(folder / 'command-builder-core.js'))})({json.dumps(schema)});"
+                   "const rec=C.createStandard('fakebench','fake');rec.datasets=['all','more'];"
+                   "rec.start_with={all:'1',more:'2'};rec.model='gpt-5-mini';rec.concurrency=1;rec.unsandboxed=true;"
+                   f"new Function('C','r','d',{json.dumps(handler)})(C,()=>rec,{{stdDataset:'all'}});"
+                   "process.stdout.write(JSON.stringify(rec));")
+        recipe = json.loads(subprocess.run([node, "-e", program], capture_output=True, text=True, check=True, timeout=10).stdout)
+        self.assertEqual(recipe["start_with"], {"more": "2"})
+        self.assertEqual(self.post("/new-run/runner", {"recipe": recipe})["errors"], [])
