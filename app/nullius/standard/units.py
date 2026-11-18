@@ -245,8 +245,10 @@ def state(bench: dict, dataset: str, options: Optional[dict] = None) -> dict:
     if ds.get("url"):
         if not os.path.isfile(install.download_path(ds["url"], ds["sha256"])):
             fetch.append({"what": "dataset", "text": f"the dataset {ds['url']}"})
-    elif ds.get("path") and not up_dir and not os.path.isfile(os.path.join(bench["_here"], ds["path"])):
-        return refused(prepare + f"dataset {ds['id']}: {ds['path']} is not in the definition folder")
+    elif ds.get("path") and (not up_dir or install.ready(up_dir)):
+        if not os.path.isfile(os.path.join(up_dir or bench["_here"], ds["path"])):
+            folder = "upstream" if up_dir else "definition folder"
+            return refused(prepare + f"dataset {ds['id']}: {ds['path']} is not in the {folder}")
     light = _light(bench)
     if not light:
         inst = definitions.driver_install(bench)["install"]

@@ -364,6 +364,33 @@ class State(Scratch):
         self.assertEqual(got["fetch"], [{"what": "upstream", "text": "the upstream https://example.org/upstream.git at aaaaaaaaaaaa"},
                                         {"what": "dataset", "text": "the dataset https://example.org/all.json"}])
 
+    def test_a_prepared_upstream_must_hold_the_datasets_file(self):
+        up = Path(self.tmp, "upstream")
+        up.mkdir()
+        bench = dict(self.fetching(list_command=[sys.executable, "{here}/driver.py"]),
+                     datasets=[{"id": "all", "path": "absent.json", "sha256": "b" * 64, "units": 250}])
+        with mock.patch.object(units.install, "upstream_dir", return_value=str(up)):
+            self.assertEqual(self.asked(bench)["state"], "light")
+            self.assertEqual([f["what"] for f in self.asked(bench)["fetch"]], ["upstream"])
+            (up / units.install.MARK).touch()
+            got = self.asked(bench)
+        self.assertEqual((got["state"], got["fetch"]), ("refused", []))
+        self.assertIn("absent.json is not in the upstream", got["reason"])
+
+    def test_a_present_dataset_is_not_checksummed_by_state(self):
+        data = Path(self.b["_here"], "data.json")
+        data.write_text("{}")
+        bench = dict(self.b, datasets=[{"id": "all", "path": "data.json", "sha256": "b" * 64, "units": 250}],
+                     driver=dict(HEAVY, list_command=[sys.executable, "{here}/driver.py"]))
+        sha256 = units.install.sha256_of
+
+        def digest(path):
+            self.assertNotEqual(Path(path), data)
+            return sha256(path)
+
+        with mock.patch.object(units.install, "sha256_of", side_effect=digest):
+            self.assertEqual(self.asked(bench), {"state": "light", "fetch": [], "reason": ""})
+
     def test_full_and_the_environment_it_installs(self):
         self.assertEqual(self.asked(self.b), {"state": "full", "fetch": [], "reason": ""})
         got = self.asked(self.fetching())
