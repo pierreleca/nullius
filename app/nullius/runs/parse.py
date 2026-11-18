@@ -88,11 +88,17 @@ def _reruns(res: dict) -> list:
         if not isinstance(r, dict):
             continue
         replaced = [x for x in r.get("replaced") or [] if isinstance(x, dict)] if isinstance(r.get("replaced"), list) else []
+        begun = [x for x in r.get("begun") or [] if isinstance(x, dict)] if isinstance(r.get("begun"), list) else []
+        empty = [str(t) for t in r.get("no_result") or [] if isinstance(t, str)] if isinstance(r.get("no_result"), list) else []
         out.append({"at": str(r.get("at") or ""), "finished_at": str(r.get("finished_at") or ""),
                     "reason": redact(str(r.get("reason") or "")),
                     "trials": [str(t) for t in r.get("trials") or [] if isinstance(t, str)] if isinstance(r.get("trials"), list) else [],
                     "replaced": [{"trial": str(x.get("trial") or ""), "unit": str(x.get("unit") or ""), "try": num(x.get("try")),
                                   "was": said(x.get("was")), "now": said(x.get("now"))} for x in replaced],
+                    # the tasks it began, planned and never begun before; the trials it took that had no result
+                    **({"begun": [{"trial": str(x.get("trial") or ""), "unit": str(x.get("unit") or ""), "now": said(x.get("now"))}
+                                  for x in begun]} if begun else {}),
+                    **({"no_result": empty} if empty else {}),
                     "max_usd": num(r.get("max_usd")), "spent_usd": num(r.get("spent_usd")), "stopped": r.get("stopped") is True})
     return out
 
@@ -353,8 +359,9 @@ class Job:
     # Source job names explicitly recorded by standard merge.
     merged_from: list[str] = field(default_factory=list)
     # Each time chosen trials of a Nullius standard job were run again in it (``result.json`` ``reruns``,
-    # ``standard/rerun.py``): {at, reason, trials, replaced [{trial, unit, try, was, now}], max_usd, spent_usd,
-    # stopped}, oldest first. [] for a job never run again.
+    # ``standard/rerun.py``): {at, reason, trials, replaced [{trial, unit, try, was, now}], begun [{trial, unit,
+    # now}] and no_result [trial] when it had any, max_usd, spent_usd, stopped}, oldest first. [] for a job never
+    # run again.
     reruns: list = field(default_factory=list)
     # How the job was launched, as its config.json recorded it with Harbor's
     # defaults filled in (launch_of): what "New run like this" rebuilds a

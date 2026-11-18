@@ -12,7 +12,7 @@
     PYTHONPATH=app python3 -m nullius.standard.cli prove BENCHMARK[@VERSION] [--dataset D] [--limit N]
     PYTHONPATH=app python3 -m nullius.standard.cli run ... --shard I/N [--launch ID]
     PYTHONPATH=app python3 -m nullius.standard.cli merge JOB_DIR... -o OUT [--force]
-    PYTHONPATH=app python3 -m nullius.standard.cli rerun JOB_DIR (--unit ID ... | --units FILE) [--reason TEXT] [-j N] [--retries N] [--max-usd USD]
+    PYTHONPATH=app python3 -m nullius.standard.cli rerun JOB_DIR (--unit ID ... | --units FILE | --unfinished) [--reason TEXT] [-j N] [--retries N] [--max-usd USD]
     PYTHONPATH=app python3 -m nullius.standard.cli fidelity AGENT --model M [--provider P] [--option NAME=VALUE ...] [--passes N] --unsandboxed
 
 An agent runs commands as you on the local backend, which is not a sandbox:
@@ -626,9 +626,10 @@ def cmd_merge(a):
 RERUN_EPILOG = """examples:
   nullius standard rerun jobs_standard/JOB --unit HumanEval/12 --reason "the provider failed"
   nullius standard rerun jobs_standard/JOB --units again.txt --max-usd 2
+  nullius standard rerun jobs_standard/JOB --unfinished --max-usd 5
 
 exit codes:
-  0  the tasks ran again (a refusal on stderr otherwise)
+  0  the tasks ran, or --unfinished found none to run (a refusal on stderr otherwise)
   2  refused before anything moved, or a bad flag
   3  no such job directory"""
 
@@ -665,7 +666,7 @@ def cmd_rerun(a):
     provider = str(std.get("provider") or "openai") if isinstance(std, dict) else "openai"
     try:
         got = rerun.rerun(a.job, ids, reason=a.reason or "", concurrency=a.concurrency, retries=a.retries,
-                          max_usd=a.max_usd, prices_unreachable=unreachable, licences=held,
+                          max_usd=a.max_usd, prices_unreachable=unreachable, licences=held, every_unfinished=a.unfinished,
                           **({"env": run_env(provider)} if a.from_run else {}))
     except run.Refused as e:
         print("refused:", e, file=sys.stderr)
@@ -835,6 +836,9 @@ def main(argv=None):
     named.add_argument("--unit", action="append", metavar="ID",
                        help="a trial's name, or a unit's id for each of its attempts (repeatable): run again whatever its result")
     named.add_argument("--units", metavar="FILE", help="the ids a file lists, one a line (# starts a comment)")
+    named.add_argument("--unfinished", action="store_true",
+                       help="every task the job planned that has no result (never begun, or its run killed), "
+                            "or that the run's spending cap cut off")
     rr.add_argument("--reason", help="why, kept in the job's record of the re-run")
     rr.add_argument("-j", "--concurrency", type=int, help="units at once (default: the job's)")
     rr.add_argument("--retries", type=_retries, default=RETRIES, metavar="N",

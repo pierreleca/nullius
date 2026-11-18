@@ -364,5 +364,157 @@ class RerunTest(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(job_dir, ".work", "rerun-1", "ledger", "ledger.json")))
 
 
+# five units, each one model call of 0.00003 USD (3 tokens out at 10 USD a million), each scored a pass
+FIVE_DRIVER = '''from nullius.standard.jsonl import serve
+serve({"units": lambda dataset: {"units": [f"t{i}" for i in range(5)]}, "setup": lambda unit, dir: {"prompt": "model hi"},
+       "score": lambda unit, dir, transcript, answer: {"reward": 1.0, "passed": True, "detail": {}}})
+'''
+
+
+class FinishTest(unittest.TestCase):
+    """The tasks a job planned and has no result for - never begun, or begun and killed - run in that job."""
+    setUpClass, tearDownClass = RerunTest.__dict__["setUpClass"], RerunTest.__dict__["tearDownClass"]
+    setUp, job, again, read, trials = RerunTest.setUp, RerunTest.job, RerunTest.again, RerunTest.read, RerunTest.trials
+
+    def capped(self) -> tuple:
+        """Five tasks, one at a time, under a cap of 0.00008 USD: two pass, the third's call does not fit and it is
+        cut off, and the last two are never begun. (the job, the catalogue it ran from)"""
+        root = os.path.join(self.tmp, "catalogue")
+        shutil.copytree(ROOT, root)
+        with open(os.path.join(root, "benchmarks", "fakebench", "driver.py"), "w") as f:
+            f.write(FIVE_DRIVER)
+        agent = Path(root, "agents", "fake", "agent.json")          # the fake agent's script, where the fixtures keep it
+        agent.write_text(agent.read_text().replace("{here}/../../..", os.path.dirname(ROOT)))
+        b, o = definitions.get("benchmark", "fakebench", root), definitions.get("agent", "fake", root)
+        job_dir = run.run(b, o, model="m-1", provider="custom", jobs_root=self.tmp, env=self.env, say=lambda s: None,
+                          unsandboxed=True, name="five", concurrency=1, max_usd=0.00008,
+                          prices={"m-1": {"input": 0.0, "output": 10.0, "max_output": 3}})
+        return job_dir, root
+
+    def test_a_job_its_cap_stopped_is_finished_in_that_job(self):
+        job_dir, root = self.capped()
+        first, config = self.read(job_dir, "result.json"), Path(job_dir, "config.json").read_bytes()
+        self.assertEqual((first["budget"]["stopped"], first["budget"]["cut_off"], first["budget"]["not_run"]), (True, ["t2"], ["t3", "t4"]))
+        names = [n for n, _ in rerun.planned(job_dir)]
+        self.assertEqual(names, [f"t{i}__u{i:04d}" for i in range(5)])                       # what the feed says it planned
+        self.assertEqual(rerun.unfinished(job_dir), {n: {"unit": n[:2], "folder": False} for n in names[3:]})
+        j0 = parse.parse_job(job_dir)
+        self.assertEqual((j0.n_planned, len(j0.trials), j0.n_resolved), (5, 3, 2))
+        said_lines = []
+        got = rerun.rerun(job_dir, [], every_unfinished=True, env=self.env, say=said_lines.append, root=root, reason="finish")
+        j1 = parse.parse_job(job_dir)
+        self.assertEqual((j1.n_planned, len(j1.trials), j1.n_resolved), (5, 5, 5))
+        self.assertEqual({t.trial_name: t.outcome for t in j1.trials}, {n: classify.RESOLVED for n in names})
+        res = self.read(job_dir, "result.json")
+        self.assertEqual((res["n_total_trials"], res["stats"]["n_completed_trials"], res["stats"]["n_cancelled_trials"]), (5, 5, 0))
+        self.assertEqual(res["standard"]["passed"], 5)                                       # the rate, over the five
+        self.assertEqual((res["started_at"], res["finished_at"], res["budget"]), (first["started_at"], first["finished_at"], first["budget"]))
+        self.assertEqual(Path(job_dir, "config.json").read_bytes(), config)
+        (entry,) = res["reruns"]
+        self.assertEqual(entry["trials"], names[2:])
+        self.assertEqual(entry["replaced"], [{"trial": names[2], "unit": "t2", "try": 1, "was": {"error": "SpendingCapError"},
+                                              "now": {"reward": 1.0}}])
+        self.assertEqual(entry["begun"], [{"trial": n, "unit": n[:2], "now": {"reward": 1.0}} for n in names[3:]])
+        self.assertNotIn("no_result", entry)
+        self.assertIsNone(entry["max_usd"])                                                  # the first run's cap is not reopened
+        self.assertAlmostEqual(entry["spent_usd"], 3 * 0.00003)
+        self.assertEqual(got["begun"], entry["begun"])
+        self.assertEqual((parse.parse_job(job_dir).reruns[0]["begun"], j0.reruns), (entry["begun"], []))
+        for n in names[3:]:                                                                  # each its first try
+            std = self.read(job_dir, n, "result.json")["standard"]
+            self.assertEqual((std.get("retries", 0), std["rerun"]["begun"], std["rerun"]["reason"]), (0, True, "finish"))
+            self.assertNotIn("replaced", std["rerun"])
+        self.assertEqual([x for x in os.listdir(os.path.join(job_dir, "retried"))], [f"{names[2]}.try-1"])
+        self.assertTrue(any(s.startswith("run: 2 of 2 begun") for s in said_lines), said_lines)
+        self.assertTrue(any(s.startswith("ran again: 1 of 1 replaced") for s in said_lines), said_lines)
+        # the board reads the job ended, every card done
+        board = live.load(live.feed_path(job_dir)).snapshot()
+        self.assertEqual(board["state"], "finished")
+        self.assertEqual(sorted((t["trial"], t["outcome"]) for t in board["trials"]), [(n, "resolved") for n in names])
+        # finished whole: nothing more to take, said, and nothing written
+        whole, said_lines = digest(job_dir), []
+        got = rerun.rerun(job_dir, [], every_unfinished=True, env=self.env, say=said_lines.append, root=root)
+        self.assertEqual((got["trials"], said_lines), ([], ["nothing to run: every task five planned has a result"]))
+        self.assertEqual(digest(job_dir), whole)
+
+    def test_a_task_never_begun_is_named_by_its_unit(self):
+        job_dir, root = self.capped()
+        got = rerun.rerun(job_dir, ["t4"], env=self.env, say=lambda s: None, root=root)
+        self.assertEqual(([x["trial"] for x in got["begun"]], got["replaced"]), (["t4__u0004"], []))
+        self.assertEqual(sorted(rerun.unfinished(job_dir)), ["t3__u0003"])
+
+    def test_a_task_killed_mid_run_is_kept_marked_and_run(self):
+        """Killed in the job's first run (a folder, no result), and killed in a re-run, after the try before it was
+        moved into retried/: each folder is kept as the try it was, marked, and the task runs again."""
+        job_dir = self.job()
+        before, _ = self.trials(job_dir)
+        model, good = before["model"].trial_name, before["good"].trial_name
+        os.remove(os.path.join(job_dir, model, "result.json"))                    # the first run's try, killed
+        os.makedirs(os.path.join(job_dir, "retried"))
+        os.replace(os.path.join(job_dir, good), os.path.join(job_dir, "retried", f"{good}.try-1"))
+        os.makedirs(os.path.join(job_dir, good, "workspace"))                     # a re-run's try, killed
+        self.assertEqual(rerun.unfinished(job_dir), {model: {"unit": "model", "folder": True}, good: {"unit": "good", "folder": True}})
+        self.assertEqual(len(parse.parse_job(job_dir).trials), 1)
+        got = self.again(job_dir, [], every_unfinished=True)
+        after, j = self.trials(job_dir)
+        self.assertEqual(len(j.trials), 3)
+        self.assertEqual(sorted(got["no_result"]), sorted([model, good]))
+        self.assertEqual((j.reruns[0]["no_result"], "begun" in j.reruns[0]), (got["no_result"], False))
+        self.assertEqual({x["trial"]: (x["try"], x["was"]) for x in got["replaced"]}, {model: (1, {}), good: (2, {})})
+        for name, n in ((model, 1), (good, 2)):
+            kept = os.path.join(job_dir, "retried", f"{name}.try-{n}")
+            self.assertFalse(os.path.exists(os.path.join(kept, "result.json")))
+            self.assertIsNone(self.read(kept, rerun.NO_RESULT)["result"])
+            self.assertEqual(self.read(job_dir, name, "result.json")["standard"]["retries"], n)
+            self.assertTrue(self.read(job_dir, name, "result.json")["standard"]["rerun"]["no_result"])
+        self.assertEqual(after["good"].outcome, classify.RESOLVED)
+        # the tries a page lists: the one kept with a result, and the last; the one with none is not a try to open
+        self.assertEqual([(n, t.trial_name) for n, t in parse.tries(after["good"])], [(1, f"{good}.try-1"), (3, good)])
+        self.assertEqual(rerun.unfinished(job_dir), {})
+
+    def test_a_stop_leaves_a_task_never_begun_as_it_was(self):
+        job_dir, root = self.capped()
+        whole = digest(job_dir)
+
+        def unit(r, i, u, rr=1, retry=0):
+            os.makedirs(os.path.join(r.job_dir, r.trial_name(i, u, rr), "workspace"))
+            raise SystemExit(143)
+        with mock.patch.object(run.Run, "unit", unit), self.assertRaises(SystemExit):
+            rerun.rerun(job_dir, ["t3"], env=self.env, say=lambda s: None, root=root)
+        self.assertEqual(sorted(rerun.unfinished(job_dir)), ["t3__u0003", "t4__u0004"])
+        self.assertFalse(any(n.startswith("t3__") for n in os.listdir(job_dir)))
+        entry = self.read(job_dir, "result.json")["reruns"][-1]
+        self.assertEqual((entry["begun"], entry["stopped"]), ([], True))
+        self.assertEqual({k for k, v in digest(job_dir).items() if whole.get(k) != v}, {"result.json", "events.jsonl", "progress.jsonl", ".work/rerun.lock"})
+
+    def test_each_refusal_moves_nothing(self):
+        job_dir, root = self.capped()
+        whole = digest(job_dir)
+        for what, ids, words in (("an id it never planned", ["t9"], "holds no trial or unit t9"),
+                                 ("a trial name it never planned", ["t3__u0009"], "holds no trial or unit t3__u0009")):
+            with self.subTest(what), self.assertRaises(run.Refused) as e:
+                rerun.rerun(job_dir, ids, env=self.env, say=lambda s: None, root=root)
+            self.assertIn(words, str(e.exception))
+            self.assertEqual(digest(job_dir), whole)
+        with self.subTest("a job still running"):
+            os.rename(os.path.join(job_dir, "result.json"), os.path.join(self.tmp, "result.json"))
+            whole = digest(job_dir)
+            with self.assertRaises(run.Refused) as e:
+                rerun.rerun(job_dir, [], every_unfinished=True, env=self.env, say=lambda s: None, root=root)
+            self.assertIn("is still running", str(e.exception))
+            self.assertEqual(digest(job_dir), whole)
+            os.rename(os.path.join(self.tmp, "result.json"), os.path.join(job_dir, "result.json"))
+        with self.subTest("a job whose feed does not say what it planned"):
+            os.rename(os.path.join(job_dir, "events.jsonl"), os.path.join(self.tmp, "events.jsonl"))
+            whole = digest(job_dir)
+            with self.assertRaises(run.Refused) as e:
+                rerun.rerun(job_dir, [], every_unfinished=True, env=self.env, say=lambda s: None, root=root)
+            self.assertIn("does not record the tasks it planned", str(e.exception))
+            with self.assertRaises(run.Refused) as e:
+                rerun.rerun(job_dir, ["t3"], env=self.env, say=lambda s: None, root=root)
+            self.assertIn("holds no trial or unit t3", str(e.exception))
+            self.assertEqual(digest(job_dir), whole)
+
+
 if __name__ == "__main__":
     unittest.main()

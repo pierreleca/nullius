@@ -263,6 +263,8 @@ class CommandLine(Scratch):
             (["rerun", str(job), "--unit", "nosuch"], 2, "refused: job holds no trial or unit nosuch"),
             (["rerun", str(job), "--unit", "a", "--units", os.path.join(self.tmp, "ids.txt")], 2, "usage:"),
             (["rerun", str(job), "--unit", "a", "--retries", "x"], 2, "usage:"),
+            (["rerun", str(job), "--unit", "a", "--unfinished"], 2, "usage:"),
+            (["rerun", str(job), "--unfinished"], 2, "refused: job does not record the tasks it planned"),
         ]
         for args, code, said in cases:
             with self.subTest(args=args[2:]):
@@ -272,6 +274,15 @@ class CommandLine(Scratch):
                 self.assertEqual(out.stdout, "", "a failure leaves stdout empty")
                 if said.startswith("refused"):
                     self.assertEqual(len(out.stderr.strip().splitlines()), 1)
+        self.assertEqual(tree_digest(job), before)
+        # a job whose feed says what it planned, every task with a result: nothing to run, said, exit 0
+        with open(job / "events.jsonl", "w") as f:
+            f.write(json.dumps({"seq": 1, "event": "job.start", "trial": None, "tasks": ["a"]}) + "\n")
+            f.write(json.dumps({"seq": 2, "event": "trial.queued", "trial": "a__u0000", "position": 0}) + "\n")
+        before = tree_digest(job)
+        out = self.sh("standard.cli", "rerun", str(job), "--unfinished")
+        self.assertEqual((out.returncode, out.stderr), (0, ""))
+        self.assertEqual(out.stdout.splitlines(), ["nothing to run: every task job planned has a result", str(job)])
         self.assertEqual(tree_digest(job), before)
         self.assertTmpHolds("job", "ids.txt")
 
