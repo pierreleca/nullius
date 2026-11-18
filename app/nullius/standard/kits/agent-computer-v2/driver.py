@@ -6,6 +6,8 @@ and the modules beside it): the same desktop image, fixture, verdicts, loop, rea
 - the port's server is version 2's (no python, no read, prepare, a step's files), its agent's folder ``FOLDER``, its
   window before the task closed by ``task_given`` (which the definition's ``driver.task_given`` asks Nullius to
   send) or, for the reference, as it starts; every prepare call is recorded in ``verifier/computer-prepare.jsonl``;
+  the bridge keeps version 1's progress file, which setup names as ``progress``, and the score says what ended the
+  loop;
 - ``late``: one labelled button appears ``LATE_SECONDS`` after the task is given; the agent clicks it. It passes when
   the click is the check ``click``'s, and an observation taken as a step ended, after the button was up, reached the
   agent before the press: it looked again by a step. Its times are the driver's own clock (when the button was up,
@@ -144,7 +146,8 @@ class Unit(v1.Unit):
         self.folder = folder
         os.mkdir(folder, 0o700)
         self.bridge = v1.KitBridge(Pictures(self.desktop, self), self.steps, v1.PAUSE, desktop.SCREEN,
-                                   v1.PYTHON_SECONDS, version=2, folder=FOLDER, window=True, prepared=self.prepared)
+                                   v1.PYTHON_SECONDS, progress=self.progress, version=2, folder=FOLDER, window=True,
+                                   prepared=self.prepared)
         self.server = Server(self.bridge, self.socket(), log=self.log)
         self.loop = threading.Thread(target=self.run_loop, name=f"kit-loop-{self.unit}", daemon=True)
         self.loop.start()
@@ -217,7 +220,8 @@ def setup(unit, dir, **_):
         u.close()
         raise
     return {"prompt": prompt(unit, u.expected),
-            "mcp": [{"name": "computer", "server": "computer", "args": [u.socket()]}], "agent_seconds": v1.AGENT_SECONDS}
+            "mcp": [{"name": "computer", "server": "computer", "args": [u.socket()]}], "agent_seconds": v1.AGENT_SECONDS,
+            "progress": v1.PROGRESS}
 
 
 def task_given(unit, dir, **_):
@@ -252,7 +256,8 @@ def score(unit, dir, transcript, answer, **_):
     else:
         v = checks.verdict(unit, u.expected, events, actions, message, calls, u.bridge.past)
     passed = v["passed"] and u.error is None
-    detail = {"said": (answer or "")[:200], "steps": u.steps, "steps_used": u.bridge.used, "past_budget": u.bridge.past,
+    detail = {"said": (answer or "")[:200], "steps": u.steps, "steps_used": u.bridge.used, "ended": u.bridge.ended_by,
+              "past_budget": u.bridge.past,
               "calls": [c.get("tool") for c in calls], "errors": sum(1 for c in calls if c.get("isError")),
               "actions": len(actions), "events": sum(1 for e in events if e.get("kind") in checks.POINTER + checks.KEYS)}
     why = v["why"] or u.error

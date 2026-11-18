@@ -124,6 +124,23 @@ class Units(unittest.TestCase):
         with open(os.path.join(os.path.dirname(ws), "verifier", "computer-prepare.jsonl")) as f:
             self.assertEqual([json.loads(line)["actions"] for line in f], [["print(1)"]])
 
+    def test_setup_names_the_progress_file_and_score_says_the_count(self):
+        ws, s = self.unit("click")
+        u, c = v1.OPEN["click"], self.client(s)
+        self.assertEqual(s["progress"], os.path.join("verifier", "computer-progress.json"))
+        path = os.path.join(os.path.dirname(ws), s["progress"])
+        c.call("prepare", {"actions": ["print(1)"]})               # the window before the task takes no step
+        with open(path) as f:
+            self.assertEqual(json.load(f), {"steps": 0, "steps_limit": u.steps, "ended": "", "open": 0})
+        driver.task_given("click", ws)
+        x, y = v1.centre(u.boxes[u.expected["target"]])
+        self.assertFalse(c.call("click", {"x": x, "y": y})[0])
+        got = driver.score("click", ws, [], "done")
+        self.assertEqual((got["detail"]["steps_used"], got["detail"]["steps"], got["detail"]["ended"]),
+                         (1, u.steps, "turn"))
+        with open(path) as f:
+            self.assertEqual(json.load(f), {"steps": 1, "steps_limit": u.steps, "ended": "turn", "open": 0})
+
     def test_input_sent_by_prepare_fails_the_check(self):
         ws, s = self.unit("click")
         u, c = v1.OPEN["click"], self.client(s)
