@@ -334,7 +334,7 @@ class Changes(ReplayCase):
         Path(script).write_text("import json, os, sys\nr = json.load(sys.stdin)\n"
                                 "r['metadata'] = {'key': os.environ.get('OPENROUTER_API_KEY', 'none')}\n"
                                 "json.dump(r, sys.stdout)\n")
-        prep = self.prepared(replay.through(f"{sys.executable} {script}"))
+        prep = self.prepared(replay.through(f"{sys.executable} {script}", env=self.env))
         self.assertEqual(prep.request["metadata"], {"key": "none"})
         self.assertChain(prep, ["through"])
         with self.assertRaisesRegex(replay.Refused, "printed no JSON object"):
@@ -437,7 +437,7 @@ class Sends(ReplayCase):
         Path(script).write_text("import json, os, sys\na = json.load(sys.stdin)\n"     # the answer read, and its body as it arrived
                                 "print(a['reasoning'], a['tool_calls'][0]['name'], len(json.loads(a['body'])['content']),"
                                 " os.environ.get('OPENROUTER_API_KEY', 'no key'))\n")
-        doc = self.send(self.prepared(), times=2, rule=replay.command_rule(f"{sys.executable} {script}"))
+        doc = self.send(self.prepared(), times=2, rule=replay.command_rule(f"{sys.executable} {script}", env=self.env))
         self.assertEqual(doc["counts"], [{"label": "look click 2 no key", "count": 2, "recorded": True}], "by the whole label")
         self.assertEqual(doc["rule"], {"name": "command", "command": f"{sys.executable} {script}"})
 
@@ -542,6 +542,19 @@ class CommandLine(ReplayCase):
         self.assertEqual((out.returncode, out.stdout), (2, ""))
         self.assertIn("refused: OPENROUTER_API_KEY is not set", out.stderr)
         self.assertEqual(sorted(os.listdir(self.tmp)), ["jobs", "site"], "a refusal writes nothing")
+
+
+class CredentialChecks(ReplayCase):
+    def test_both_helper_checks_detect_removed_filtering(self):
+        checks = ((Changes, "test_a_command_rebuilds_the_request_without_the_key"),
+                  (Sends, "test_a_rule_given_as_a_command_reads_each_answer_without_the_key"))
+        for cls, name in checks:
+            case, result = cls(name), unittest.TestResult()
+            case.base = self.base
+            with self.subTest(check=name), mock.patch.dict(os.environ, {"PATH": self.env["PATH"]}, clear=True), \
+                    mock.patch.object(replay, "_child_env", lambda env, drop=(): dict(os.environ if env is None else env)):
+                case.run(result)
+                self.assertEqual((len(result.failures), len(result.errors)), (1, 0))
 
 
 if __name__ == "__main__":
