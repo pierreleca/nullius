@@ -19,7 +19,7 @@
       title="{{ control.control }} must be {{ control.expected }} on every task; this is a check on the tasks, not a score">{{ control.label }}</span>{% endif %}
     {% if job.runner %}<span title="What ran: the runner, and the upstream commit its install resolved">{{ job.runner }}{% if job.runner_commit %} <span class="mono">{{ job.runner_commit }}</span>{% endif %}</span>
     {% else %}<span title="What ran, from the job\'s lock.json">harbor {% if job.harbor_label %}<span class="mono">{{ job.harbor_label }}</span>{% else %}<span class="faint">unknown</span>{% endif %}</span>{% endif %}
-    <span>{{ job.trials|length }}{% if job.n_planned and job.n_planned != job.trials|length and not job.start_with %} of {{ job.n_planned }} planned{% endif %} trials</span>
+    <span>{{ job.trials|length }}{% if job.n_planned and job.n_planned != job.trials|length and not job.start_with %} of {{ job.n_planned }} planned{% endif %} trial{{ '' if job.trials|length == 1 else 's' }}</span>
     {% if job.start_with %}<span id="plan-run" title="Planned on the whole and begun on {% if job.start_with.by == 'count' %}its first {{ job.start_with.units }}{% else %}{{ job.start_with.name }}{% endif %}: the rates are over the tasks run">{{ job.n_tasks_run }} of {{ job.n_tasks }} planned tasks run</span>{% endif %}
     {% if job.n_retries %}<span class="warn" title="Trials Harbor restarted after an error">{{ job.n_retries }} retried</span>{% endif %}
     {% if job.duration_min %}<span>{{ job.duration_min|runtime }}</span>{% endif %}

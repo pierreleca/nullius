@@ -181,6 +181,17 @@ new Function('$', '$$', 'rows', 'document', 'nulliusFetch', 'URL', 'location',
             self.assertNotIn(absent, html)
         self.assertNotIn("tasks run</span>", self.page("/runs"))
 
+    def test_the_head_uses_trial_for_one_and_trials_for_more(self):
+        d = self.run_of()
+        for count in (3, 1):
+            for k in range(count, 3):
+                shutil.rmtree(d / trial_name(k))
+            top = json.loads((d / "result.json").read_text())
+            top["n_total_trials"] = count
+            (d / "result.json").write_text(json.dumps(top))
+            self.open(d.parent)
+            self.assertIn(f"<span>{count} trial{'' if count == 1 else 's'}</span>", self.page("/job/r1?view=results"))
+
     def test_an_interrupted_job_keeps_no_result_and_offers_the_rest(self):
         d = self.run_of()
         self.interrupted(d)
