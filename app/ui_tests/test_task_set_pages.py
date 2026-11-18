@@ -309,6 +309,114 @@ class Saving(Case):
         self.assertIsNone(bar(self.get("/benchmarks/described/tasks/all?set=dev&rev=1").get_data(as_text=True)))
 
 
+class RenameAndDelete(Case):
+    """The set's page renames and deletes it, each asked in place, from a browser on this machine."""
+
+    def setUp(self):
+        super().setUp()
+        self.entry = sets.create(self.b, "dev", dataset="all", units=["t001", "t002"], description="two of them", note="first selection")
+        sets.update("described", "dev", add=["t003"], note="added t003")
+
+    def form(self, action, data, csrf=True):
+        r = self.client.post(f"/benchmarks/described/tasks/all/{action}", data=dict(data, **({"csrf": self.csrf} if csrf else {})),
+                             headers={"Origin": "http://localhost"}); self.addCleanup(r.close)
+        with self.client.session_transaction() as session:
+            said = [m for _, m in session.pop("_flashes", [])]
+        return r, said
+
+    def test_the_sets_page_offers_both_and_the_delete_names_the_set_its_tasks_and_revisions(self):
+        for query in ("?set=dev", "?set=dev&rev=1"):
+            with self.subTest(query=query):
+                html = self.get("/benchmarks/described/tasks/all" + query).get_data(as_text=True)
+                ask = re.search(r'<details class="bench-delete" name="tasks-set-action">(.*?)</details>', html, re.S)
+                self.assertEqual(visible(ask.group(1)).replace(" :", ":"), "Delete Delete the task set dev: 3 tasks, 2 revisions? Runs made from it stay. "
+                                                        "Yes, delete Keep it")
+                rename = re.search(r'<details class="bench-delete tasks-rename" name="tasks-set-action">(.*?)</details>', html, re.S)
+                self.assertIn('action="/benchmarks/described/tasks/all/rename"', rename.group(1))
+                self.assertIn('name="name" value="dev"', rename.group(1))
+        self.assertNotIn("tasks-set-action", self.get("/benchmarks/described/tasks/all").get_data(as_text=True))
+
+    def test_a_rename_keeps_the_id_and_the_revisions_and_opens_the_new_name(self):
+        before = sets.load("described", "dev")
+        r, said = self.form("rename", {"set": "dev", "name": "misses"})
+        self.assertEqual((r.status_code, r.headers["Location"]), (302, "/benchmarks/described/tasks/all?set=misses"))
+        self.assertEqual(said, ["Renamed dev to misses. Runs made from it follow the new name."])
+        got = sets.load("described", "misses")
+        self.assertEqual((got["id"], got["description"], got["revisions"]), (self.entry["id"], "two of them", before["revisions"]))
+        self.assertFalse(os.path.exists(sets.path_of("described", "dev")))
+        self.assertIn("<h1>", self.get(r.headers["Location"]).get_data(as_text=True))
+        # from an earlier revision, the same revision under the new name
+        r, _ = self.form("rename", {"set": "misses", "name": "dev", "rev": "1"})
+        self.assertEqual(r.headers["Location"], "/benchmarks/described/tasks/all?set=dev&rev=1")
+        self.assertEqual(sets.load("described", "dev")["revisions"], before["revisions"])
+
+    def test_a_name_taken_empty_or_with_a_slash_is_refused_as_at_creation(self):
+        sets.create(self.b, "other", dataset="all", units=["t009"])
+        for new, message in (("other", "A task set named other exists already: choose another name."),
+                             ("", "Give the task set a name."),
+                             ("a/b", "A task set's name holds no slash: letters, digits, '.', '_' and '-'."),
+                             ("dev", "The task set is named dev already.")):
+            with self.subTest(new=new):
+                r, said = self.form("rename", {"set": "dev", "name": new})
+                self.assertEqual((r.status_code, r.headers["Location"], said), (302, "/benchmarks/described/tasks/all?set=dev", [message]))
+        self.assertEqual(sorted(os.listdir(self.tmp / "catalogue" / "sets" / "described")), ["dev.json", "other.json"])
+        self.assertEqual(sets.load("described", "dev")["id"], self.entry["id"])
+
+    def test_a_linked_destination_is_refused_on_the_page_without_a_path(self):
+        before = sets.load("described", "dev")
+        outside = self.tmp / "outside.json"
+        outside.write_text("{}")
+        alias = self.tmp / "catalogue" / "sets" / "described" / "alias.json"
+        alias.symlink_to(outside)
+        r = self.client.post("/benchmarks/described/tasks/all/rename",
+                             data={"csrf": self.csrf, "set": "dev", "name": "alias", "rev": "1"},
+                             headers={"Origin": "http://localhost"}, follow_redirects=True)
+        self.addCleanup(r.close)
+        self.assertEqual((r.status_code, r.request.query_string), (200, b"set=dev&rev=1"))
+        html = r.get_data(as_text=True)
+        self.assertIn("The task set dev cannot be read: nullius standard set show described dev says why.", visible(html))
+        self.assertNotIn(str(self.tmp), html)
+        self.assertEqual(sets.load("described", "dev"), before)
+        self.assertTrue(alias.is_symlink())
+        self.assertEqual(outside.read_text(), "{}")
+
+    def test_a_delete_removes_the_set_and_opens_the_benchmarks_sets(self):
+        r, said = self.form("delete", {"set": "dev"})
+        self.assertEqual((r.status_code, r.headers["Location"]), (302, "/benchmarks/described#task-sets"))
+        self.assertEqual(said, ["Deleted the task set dev. Runs made from it stay."])
+        self.assertFalse(os.path.exists(sets.path_of("described", "dev")))
+        r, said = self.form("delete", {"set": "dev"})
+        self.assertEqual((r.headers["Location"], said), ("/benchmarks/described/tasks/all?set=dev", ["There is no task set dev."]))
+        html = self.get("/benchmarks/described/tasks/all?set=dev").get_data(as_text=True)
+        self.assertIn("There is no task set dev.", visible(html))
+        self.assertNotIn("tasks-set-action", html)
+
+    def test_each_change_needs_the_form_token(self):
+        for action, data in (("rename", {"set": "dev", "name": "x"}), ("delete", {"set": "dev"})):
+            with self.subTest(action=action):
+                r, _ = self.form(action, data, csrf=False)
+                self.assertEqual(r.status_code, 403)
+        self.assertEqual(sets.load("described", "dev")["id"], self.entry["id"])
+
+    def test_an_entry_of_the_earlier_format_is_refused_without_its_path_and_can_be_deleted(self):
+        path = sets.path_of("described", "dev")
+        with open(path) as f:
+            earlier = dict(json.load(f), benchmark_options={"mode": "hard"}, setup="yours")
+        with open(path, "w") as f:
+            json.dump(earlier, f)
+        html = self.get("/benchmarks/described/tasks/all?set=dev").get_data(as_text=True)
+        self.assertIn("The task set dev is of an earlier format, which kept a run's options: delete it and make it again.", visible(html))
+        self.assertNotIn(str(self.tmp), html)
+        self.assertNotIn("tasks-rename", html)
+        ask = re.search(r'<details class="bench-delete" name="tasks-set-action">(.*?)</details>', html, re.S)
+        self.assertEqual(visible(ask.group(1)).replace(" ?", "?"), "Delete Delete the task set dev? Runs made from it stay. Yes, delete Keep it")
+        r, said = self.form("rename", {"set": "dev", "name": "new"})
+        self.assertEqual(said, ["The task set dev is of an earlier format, which kept a run's options: delete it and make it again."])
+        r, said = self.form("delete", {"set": "dev"})
+        self.assertEqual(said, ["Deleted the task set dev. Runs made from it stay."])
+        self.assertFalse(os.path.exists(path))
+
+
 class TheBenchmarksSection(Case):
     def section(self, key):
         html = self.get(f"/benchmarks/{key}").get_data(as_text=True)
@@ -360,6 +468,43 @@ class TheBuilder(BuilderCase):
         self.assertEqual(out["errors"], [])
         self.assertIn(["Dataset", "all · task set dev, revision 1 · 2 tasks"], [r[1:] for r in out["review"]])
         self.assertTrue(out["confirm"].startswith("Run all 2 tasks of Fake bench"))
+
+
+class TheBuilderAfterAChange(BuilderCase):
+    """A deleted set is no longer offered and a saved recipe that names it is refused plainly; a renamed one is offered
+    under its new name."""
+
+    RECIPE = {"version": 1, "harness": "standard", "name": "fake-0101-120000", "title": "t", "benchmark": "fakebench", "dataset": "all",
+              "other": "fake", "provider": "openai", "model": "gpt-5-mini", "concurrency": 1, "unsandboxed": True, "where": "local"}
+
+    def offered(self):
+        html = self.get("/new-run").get_data(as_text=True)
+        schema = json.loads(re.search(r'<script id="nb-schema" type="application/json">(.*?)</script>', html, re.S).group(1))
+        fake = next(b for b in schema["standard"]["benchmarks"] if b["key"] == "fakebench")
+        return [(s["name"], s["units"], s["revision"]) for s in fake["datasets"][0]["sets"]]
+
+    def errors(self, ref):
+        return self.post("/new-run/runner", {"recipe": dict(self.RECIPE, task_sets={"all": ref})})["errors"]
+
+    def test_a_renamed_set_is_offered_under_its_new_name(self):
+        sets.rename("fakebench", "dev", "pair")
+        self.assertEqual(self.offered(), [("pair", 2, 1)])
+        self.assertEqual(self.errors("pair@1"), [])
+
+    def test_a_deleted_set_is_not_offered_and_a_saved_recipe_naming_it_is_refused_plainly(self):
+        sets.delete("fakebench", "dev")
+        self.assertEqual(self.offered(), [])
+        self.assertEqual([e["message"] for e in self.errors("dev@1")], ["Fake bench has no task set dev: choose another, or all of all's tasks."])
+
+    def test_a_saved_recipe_naming_an_entry_of_the_earlier_format_is_refused_without_its_path(self):
+        path = sets.path_of("fakebench", "dev")
+        with open(path) as f:
+            earlier = dict(json.load(f), benchmark_options={"mode": "hard"})
+        with open(path, "w") as f:
+            json.dump(earlier, f)
+        self.assertEqual(self.offered(), [])
+        said = [e["message"] for e in self.errors("dev@1")]
+        self.assertEqual(said, ["The task set dev is of an earlier format, which kept a run's options: delete it and make it again."])
 
 
 class TheRecipeCore(BuilderCase):
@@ -452,6 +597,20 @@ class TheJobPage(Case):
         html = self.page("of-a-set")
         self.assertIn("task set dev, revision 1", self.meta(html))
         self.assertNotIn("/tasks/all?set=dev", html)
+
+    def test_a_renamed_set_is_named_by_its_new_name_with_its_link(self):
+        sets.rename("fakebench", "dev", "trio")
+        sets.create(self.fake, "dev", dataset="all", units=["good"])            # another set under the old name
+        html = self.page("of-a-set")
+        self.assertIn("task set trio, revision 1", self.meta(html))
+        self.assertIn('href="/benchmarks/fakebench/tasks/all?set=trio&amp;rev=1"', html)
+        self.assertNotIn("/tasks/all?set=dev", html)
+
+    def test_a_deleted_set_is_named_without_a_link(self):
+        sets.delete("fakebench", "dev")
+        html = self.page("of-a-set")
+        self.assertIn("task set dev, revision 1", self.meta(html))
+        self.assertNotIn("/tasks/all?set=", html)
 
     def test_save_as_task_set_stores_the_full_unit_ids_of_the_rows_shown(self):
         self.assertIn("Save the tasks shown", self.page("of-a-set"))

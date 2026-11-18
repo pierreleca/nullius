@@ -248,7 +248,7 @@ tick().then(() => process.stdout.write(JSON.stringify(destination)));
         self.open(d.parent)
         html = self.page("/job/r1?view=results")
         self.assertEqual(text(html, r'<details id="reruns" open>.*?</details>'),
-                         "Run again by hand 1 2026-11-18 15:40Z the provider failed t-1 reward 0.0 → reward 1.0 try 1 "
+                         "Run later 1 2026-11-18 15:40Z the provider failed t-1 reward 0.0 → reward 1.0 try 1 "
                          "1 task · $0.0012 spent of a $0.50 cap")
         self.assertIn('<th scope="col" class="num">Retries</th>', html)
         cells = re.findall(r'<td class="num run-retries">(.*?)</td>', html)
@@ -261,11 +261,69 @@ tick().then(() => process.stdout.write(JSON.stringify(destination)));
         earlier = self.page(f"/trial/r1/{trial_name(1)}.try-1")
         self.assertNotIn('class="try-why"', earlier)                              # the earlier try was the run's own
 
+    def interrupted(self, d):
+        """The job as an interrupted run leaves it: five tasks planned, as its feed says; t-2 begun and killed (a
+        folder, no result), the last two never begun."""
+        writer = feed.Writer(str(d / "events.jsonl"), "r1")
+        writer.emit("job.start", n_total=5, tasks=[f"t-{k}" for k in range(5)])
+        for k in range(5):
+            writer.emit("trial.queued", f"t-{k}__u{k:04d}", agent="fake", position=k)
+        writer.emit("job.end")
+        os.remove(d / trial_name(2) / "result.json")
+        top = json.loads((d / "result.json").read_text())
+        top["n_total_trials"] = 5
+        (d / "result.json").write_text(json.dumps(top))
+
+    def test_the_tasks_with_no_result_are_rows_to_tick_under_an_outcome_of_their_own(self):
+        d = self.run_of()
+        self.interrupted(d)
+        self.open(d.parent)
+        html = self.page("/job/r1?view=results")
+        waiting = ["t-2__u0002", "t-3__u0003", "t-4__u0004"]
+        self.assertEqual(re.findall(r'<input class="pick-row" type="checkbox" value="([^"]+)"', html), [trial_name(0), trial_name(1)] + waiting)
+        self.assertEqual(re.findall(r'<input class="pick-row" type="checkbox" value="([^"]+)" data-first', html), waiting)
+        self.assertEqual(text(html, r'<span class="cnt" id="trial-count">.*?</span>'), "5")
+        self.assertEqual(text(html, r'<a class="fx" data-o="no_result".*?</a>'), "No result 3")
+        rows = {n: text(html, rf'<tr data-outcome="no_result"[^>]*data-trial="{n}".*?</tr>') for n in waiting}
+        self.assertEqual(rows, {"t-2__u0002": "t-2 No result begun, ended with none", "t-3__u0003": "t-3 No result never run",
+                                "t-4__u0004": "t-4 No result never run"})
+        self.assertIn('data-first="On this machine, in this job: a task with no result gets its first;', html)
+        r = self.post("r1", {"trials": ["t-3__u0003", trial_name(1)]})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertIn("--unit t-3__u0003 --unit t-1__u0001 --from-run", self.asked[-1][1]["script"])
+        r = self.post("r1", {"trials": ["t-5__u0005"]})
+        self.assertEqual((r.status_code, r.json["error"]), (400, "r1 holds no trial t-5__u0005"))
+
+    def test_a_job_that_ran_on_a_host_is_finished_there(self):
+        d = self.run_of(host="bench")
+        self.interrupted(d)
+        self.open(d.parent)
+        self.assertIn('data-first="On bench, in this job:', self.page("/job/r1?view=results"))
+        r = self.post("r1", {"trials": ["t-4__u0004", "t-2__u0002"]})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        ((ex, part),) = self.asked
+        self.assertEqual((ex.plan.host.label, part["trials"]), ("bench", ["t-4__u0004", "t-2__u0002"]))
+        self.assertIn("--unit t-4__u0004 --unit t-2__u0002 --from-run", part["script"])
+
+    def test_the_record_says_which_tasks_were_begun_and_which_had_no_result(self):
+        d = self.run_of()
+        top = json.loads((d / "result.json").read_text())
+        top["reruns"] = [{"at": "2026-11-18T15:40:12+00:00", "finished_at": "2026-11-18T15:42:00+00:00", "trials": [trial_name(1), "t-3__u0003"],
+                          "replaced": [{"trial": trial_name(1), "unit": "t-1", "try": 1, "was": {}, "now": {"reward": 1.0}}],
+                          "begun": [{"trial": "t-3__u0003", "unit": "t-3", "now": {"reward": 0.0}}], "no_result": [trial_name(1)],
+                          "max_usd": None, "spent_usd": 0.0012}]
+        (d / "result.json").write_text(json.dumps(top))
+        self.open(d.parent)
+        html = self.page("/job/r1?view=results")
+        self.assertEqual(text(html, r'<details id="reruns" open>.*?</details>'),
+                         "Run later 1 2026-11-18 15:40Z t-1 no result → reward 1.0 try 1 t-3 first run → reward 0.0 "
+                         "2 tasks · $0.0012 spent")
+
     def test_a_job_never_run_again_shows_none_of_it(self):
         d = self.run_of()
         self.open(d.parent)
         html = self.page("/job/r1?view=results")
-        for absent in ('id="reruns"', ">Retries<", "run-retries", "again-now", "running again"):
+        for absent in ('id="reruns"', ">Retries<", "run-retries", "again-now", "running again", "no_result", "data-first"):
             self.assertNotIn(absent, html)
         trial = self.page(f"/trial/r1/{trial_name(1)}")
         self.assertNotIn("try-tabs", trial); self.assertNotIn("try-why", trial)

@@ -12,10 +12,11 @@
     PYTHONPATH=app python3 -m nullius.standard.cli prove BENCHMARK[@VERSION] [--dataset D] [--limit N]
     PYTHONPATH=app python3 -m nullius.standard.cli run ... --shard I/N [--launch ID]
     PYTHONPATH=app python3 -m nullius.standard.cli merge JOB_DIR... -o OUT [--force]
-    PYTHONPATH=app python3 -m nullius.standard.cli set create|update|list|show|import ...
+    PYTHONPATH=app python3 -m nullius.standard.cli set create|update|list|show|rename|delete|import ...
     PYTHONPATH=app python3 -m nullius.standard.cli run ... --set NAME[@REV]
+    PYTHONPATH=app python3 -m nullius.standard.cli run ... --start-with N|FILE|set:NAME[@REV]
     PYTHONPATH=app python3 -m nullius.standard.cli units BENCHMARK --dataset D [--search TEXT] [--category FIELD=VALUE ...] [--json]
-    PYTHONPATH=app python3 -m nullius.standard.cli rerun JOB_DIR (--unit ID ... | --units FILE) [--reason TEXT] [-j N] [--retries N] [--max-usd USD]
+    PYTHONPATH=app python3 -m nullius.standard.cli rerun JOB_DIR (--unit ID ... | --units FILE | --unfinished | --next N | --set NAME[@REV]) [--reason TEXT] [-j N] [--retries N] [--max-usd USD]
     PYTHONPATH=app python3 -m nullius.standard.cli fidelity AGENT --model M [--provider P] [--option NAME=VALUE ...] [--passes N] --unsandboxed
 
 An agent runs commands as you on the local backend, which is not a sandbox:
@@ -49,7 +50,9 @@ runs only the units a file lists (``run.units_file``: one id a line), read on
 the machine the command runs on, ``--from-run`` or not; ``merge``
 puts a launch's shard jobs together into one job (``standard/merge.py``); ``rerun`` runs
 chosen tasks of an ended job again in that job, with its settings, each earlier
-try kept (``standard/rerun.py``). ``set``
+try kept (``standard/rerun.py``). ``run --start-with`` plans the whole and
+begins a part of it; ``rerun --next``, ``--set`` or ``--unfinished`` runs the
+rest in the job later. ``set``
 keeps a named list of a benchmark's units in the user catalogue, with its
 revisions (``standard/sets.py``), and ``run --set NAME[@REV]`` runs one: its
 dataset taken from it, the job recording which revision ran. ``units`` lists a
@@ -580,6 +583,11 @@ def cmd_run(a):
             price_list.update()
         except ValueError as e:
             unreachable = str(e)
+    try:
+        part = start_with(b, a.start_with) if a.start_with is not None else None
+    except (run.Refused, sets.Refused) as e:
+        print("refused:", e)
+        return 2
     held, spill = licences(b, from_run=a.from_run)
     try:
         job, failed = run.run_and_report(b, other, model=a.model or "", provider=a.provider, dataset=dataset, limit=a.limit,
@@ -593,6 +601,7 @@ def cmd_run(a):
                       exchanges=a.exchanges, exchanges_max_mb=a.exchanges_max_mb,
                       **({"units_file": run.units_file(a.units)} if a.units is not None else {}),
                       **({"task_set": task_set} if task_set else {}),
+                      **({"start_with": part} if part else {}),
                       **({"served_by": run.served_by(a.served_by, a.model or "")} if a.served_by else {}),
                       **({"env": run_env(a.provider)} if a.from_run else {}))
     except run.Refused as e:
@@ -606,6 +615,25 @@ def cmd_run(a):
     # by its exit status, so a launch of several agents pauses rather than running the next into the same error.
     # A run its spending cap stopped did what was asked of it: no failure
     return 3 if failed else 0
+
+
+def start_with(bench: dict, value: str) -> dict:
+    """``run --start-with``: the part a run begins with (``run.Run``'s ``start_with``). A whole number is a count,
+    ``set:NAME[@REV]`` a task set of the benchmark (its latest revision, or REV), anything else a file of ids
+    (``run.units_file``)."""
+    value = value.strip()
+    if value.isdigit():
+        if int(value) < 1:
+            raise run.Refused(f"--start-with {value}: begin with one unit at least")
+        return {"count": int(value)}
+    if value.startswith("set:"):
+        name, rev = sets.split_ref(value[4:])
+        entry = sets.load(bench["key"], name)
+        return {"task_set": sets.record(entry, sets.revision(entry, rev)), "dataset": entry["dataset"]}
+    try:
+        return {"units_file": run.units_file(value)}
+    except run.Refused as e:
+        raise run.Refused(str(e).replace("--units", "--start-with", 1))
 
 
 def _shard(spec):
@@ -656,12 +684,15 @@ examples:
   nullius standard set create osworld1 chrome-tabs --dataset test_nogdrive --search tab --category domain=chrome
   nullius standard set update humaneval misses --remove HumanEval/12 --note "solved upstream"
   nullius standard set show humaneval misses@1 --json
+  nullius standard set rename humaneval misses misses-june
+  nullius standard set delete humaneval misses-june
   nullius standard run humaneval reference --model M --set misses@2 --unsandboxed
 
 exit codes:
   0  done; an update that changes nothing adds no revision
   1  unexpected error (a traceback: report it)
-  2  usage, or refused: a name taken or not allowed, a list the set cannot hold, an import that conflicts
+  2  usage, or refused: a name taken or not allowed, a list the set cannot hold, an import that conflicts,
+     an entry of the earlier format
   3  not found: no such benchmark, set, revision, file or job
 """
 
@@ -768,6 +799,26 @@ def cmd_set_show(a):
     return 0
 
 
+def cmd_set_rename(a):
+    entry = sets.rename(a.benchmark, a.name, a.new)
+    n = len(entry["revisions"])
+    print(f"renamed {a.name} to {entry['name']} ({sets.path_of(entry['benchmark'], entry['name'])}): its id and "
+          f"{n} revision{'s' if n != 1 else ''} kept; jobs that ran it find it by its id")
+    return 0
+
+
+def cmd_set_delete(a):
+    path = sets._file_of(a.benchmark, a.name, None)
+    entry = sets.delete(a.benchmark, a.name)
+    if entry is None:
+        print(f"deleted {path}: an entry this version could not read")
+        return 0
+    n, last = len(entry["revisions"]), sets.revision(entry)
+    print(f"deleted {path}: {entry['name']}, {len(last['units'])} units, {n} revision{'s' if n != 1 else ''}; "
+          "jobs that ran it keep their record")
+    return 0
+
+
 def cmd_set_import(a):
     entry, added = sets.import_path(a.path)
     if added:
@@ -781,7 +832,7 @@ def cmd_set_import(a):
 def cmd_set(a):
     try:
         return {"create": cmd_set_create, "update": cmd_set_update, "list": cmd_set_list, "show": cmd_set_show,
-                "import": cmd_set_import}[a.set_cmd](a)
+                "rename": cmd_set_rename, "delete": cmd_set_delete, "import": cmd_set_import}[a.set_cmd](a)
     except (sets.Refused, unit_list.Refused) as e:
         return _refused(e)
 
@@ -839,9 +890,12 @@ def cmd_units(a):
 RERUN_EPILOG = """examples:
   nullius standard rerun jobs_standard/JOB --unit HumanEval/12 --reason "the provider failed"
   nullius standard rerun jobs_standard/JOB --units again.txt --max-usd 2
+  nullius standard rerun jobs_standard/JOB --unfinished --max-usd 5
+  nullius standard rerun jobs_standard/JOB --next 20
+  nullius standard rerun jobs_standard/JOB --set chrome-tabs@2
 
 exit codes:
-  0  the tasks ran again (a refusal on stderr otherwise)
+  0  the tasks ran, or --unfinished or --set found none to run (a refusal on stderr otherwise)
   2  refused before anything moved, or a bad flag
   3  no such job directory"""
 
@@ -877,10 +931,19 @@ def cmd_rerun(a):
     held, spill = licences(bench, from_run=a.from_run) if bench else (None, None)
     provider = str(std.get("provider") or "openai") if isinstance(std, dict) else "openai"
     try:
+        part = None
+        if a.task_set is not None:
+            # a set of the job's benchmark: its tasks the job planned and has not run
+            name, rev = sets.split_ref(a.task_set)
+            entry = sets.load(str(std.get("benchmark") or "") if isinstance(std, dict) else "", name)
+            part = {"task_set": sets.record(entry, sets.revision(entry, rev)), "dataset": entry["dataset"]}
         got = rerun.rerun(a.job, ids, reason=a.reason or "", concurrency=a.concurrency, retries=a.retries,
-                          max_usd=a.max_usd, prices_unreachable=unreachable, licences=held,
-                          **({"env": run_env(provider)} if a.from_run else {}))
-    except run.Refused as e:
+                          max_usd=a.max_usd, prices_unreachable=unreachable, licences=held, every_unfinished=a.unfinished,
+                          count=a.next, task_set=part, **({"env": run_env(provider)} if a.from_run else {}))
+    except sets.NotFound as e:
+        print("refused:", e, file=sys.stderr)
+        return 3
+    except (run.Refused, sets.Refused) as e:
         print("refused:", e, file=sys.stderr)
         return 2
     finally:
@@ -991,6 +1054,10 @@ def main(argv=None):
                            help="only the units of this task set (nullius standard set), its latest revision or REV: its "
                                 "dataset is the run's, the options the run's own; the job's config records the set and its revision")
             p.add_argument("--limit", type=int)
+            p.add_argument("--start-with", metavar="N|FILE|set:NAME[@REV]",
+                           help="plan the whole (the dataset, or what --units, --set, --limit name) and begin with a part: "
+                                "its first N units, the units a file lists, or a task set's; the rest stay planned with no "
+                                "attempt, for rerun to run in the job later")
             p.add_argument("-j", "--concurrency", type=int, default=4)
             p.add_argument("--judge-model", help="a benchmark scored by a model: this judge instead of its official one")
             p.add_argument("--simulator-model", help="a benchmark whose user a model plays: this model instead of its official one")
@@ -1087,6 +1154,15 @@ def main(argv=None):
     sw.add_argument("benchmark", metavar="BENCH")
     sw.add_argument("ref", metavar="NAME[@REV]", help="the set, at its latest revision or at REV")
     sw.add_argument("--json", action="store_true", help="the set and the revision as one JSON document")
+    sr = ss.add_parser("rename", help="another name for a task set: its id and revisions kept",
+                       epilog=SET_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sr.add_argument("benchmark", metavar="BENCH")
+    sr.add_argument("name", metavar="NAME")
+    sr.add_argument("new", metavar="NEW", help="letters, digits, '.', '_' and '-'; unique among the benchmark's sets")
+    sd = ss.add_parser("delete", help="remove a task set from this catalogue: jobs that ran it keep their record",
+                       epilog=SET_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sd.add_argument("benchmark", metavar="BENCH")
+    sd.add_argument("name", metavar="NAME")
     si = ss.add_parser("import", help="a task set from its file, or from a job that ran one, into this catalogue",
                        epilog=SET_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
     si.add_argument("path", metavar="PATH", help="an entry's .json file, or a job's directory")
@@ -1108,6 +1184,13 @@ def main(argv=None):
     named.add_argument("--unit", action="append", metavar="ID",
                        help="a trial's name, or a unit's id for each of its attempts (repeatable): run again whatever its result")
     named.add_argument("--units", metavar="FILE", help="the ids a file lists, one a line (# starts a comment)")
+    named.add_argument("--unfinished", action="store_true",
+                       help="every planned trial with no result (never begun or killed), cut off by the run's spending cap, "
+                            "or ended by a Stop; excludes scores and agent errors")
+    named.add_argument("--next", type=int, metavar="N",
+                       help="the next N planned tasks with no result, in the plan's order, each with all its attempts")
+    named.add_argument("--set", dest="task_set", metavar="NAME[@REV]",
+                       help="the planned tasks with no result that this task set of the job's dataset names")
     rr.add_argument("--reason", help="why, kept in the job's record of the re-run")
     rr.add_argument("-j", "--concurrency", type=int, help="units at once (default: the job's)")
     rr.add_argument("--retries", type=_retries, default=RETRIES, metavar="N",

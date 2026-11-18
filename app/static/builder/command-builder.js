@@ -622,6 +622,26 @@
           ...(on && !picked ? [tile({attr: 'std-taskset', key: on, data: ` data-of="${esc(x.id)}"`, on: true, title: on})] : [])].join('') + '</div>';
     return `<div class="nb-sectionhead std-sethead"><h3>${esc(x.label)}: which tasks?</h3><a class="nb-inlinebutton" href="${page}${picked ? '?set=' + encodeURIComponent(picked.name) : ''}">${picked ? 'Open ' + esc(picked.name) : 'Choose its tasks'} <span aria-hidden="true">→</span></a></div>` + choice;
   }
+  // A chosen dataset's plan begun on a part: all of it, a number of its tasks, or a task set of it (not the one it runs),
+  // small cards, a select past five; the rest stay planned, run later from the job's page
+  function startChoice(rec, b, x, u) {
+    const on = (rec.start_with || {})[x.id] || '', plan = (rec.task_sets || {})[x.id] || '', ref = s => s.name + '@' + s.revision;
+    const sets = (x.sets || []).filter(s => plan !== ref(s) && plan !== s.name), count = /^\d+$/.test(on);
+    const picked = sets.find(s => on === 'set:' + ref(s) || on === 'set:' + s.name);
+    const data = ` data-of="${esc(x.id)}"`, many = n => n + ' ' + (n === 1 ? u.noun : u.nouns);
+    const choice = sets.length + 2 > 5
+      ? `<label class="nb-field">Start ${esc(x.label)} with<select data-std-start-select="${esc(x.id)}"><option value="">All of it</option>`
+        + `<option value="${count ? esc(on) : '5'}" ${count ? 'selected' : ''}>A number of ${esc(u.nouns)}</option>`
+        + sets.map(s => `<option value="set:${esc(ref(s))}" ${s === picked ? 'selected' : ''}>${esc(s.name)} · ${many(s.units)} · revision ${s.revision}</option>`).join('')
+        + (on && !count && !picked ? `<option value="${esc(on)}" selected>${esc(on.slice(4))}</option>` : '') + '</select></label>'
+      : `<div class="nb-pick-grid std-optgrid">` + [tile({attr: 'std-start', key: '', data, on: !on, title: 'All of it'}),
+          tile({attr: 'std-start', key: count ? on : '5', data, on: count, title: 'A number of ' + u.nouns}),
+          ...sets.map(s => tile({attr: 'std-start', key: 'set:' + ref(s), data, on: s === picked, title: s.name, tip: s.description || '',
+            meta: `${many(s.units)} · revision ${s.revision}`})),
+          ...(on && !count && !picked ? [tile({attr: 'std-start', key: on, data, on: true, title: on.slice(4)})] : [])].join('') + '</div>';
+    return `<div class="nb-sectionhead std-sethead"><h3>${esc(x.label)}: start with</h3></div>` + choice
+      + (count ? `<div class="nb-two"><label class="nb-field">Number of ${esc(u.nouns)} to begin<input aria-label="Number of ${esc(u.nouns)} to begin" data-std-start-count="${esc(x.id)}" type="number" min="1" step="1" value="${esc(on)}" autocomplete="off"><small>The first ones, in its order; the rest are run later from the job's page.</small></label></div>` : '');
+  }
   function standardForm(rec) {
     const st = C.standard(), b = C.standardBench(rec);
     if (!b) return note('Choose a benchmark first', button('Benchmark step', `data-step="${S.benchmark}"`, 'nb-inlinebutton'));
@@ -632,7 +652,7 @@
           tip: x.summary || '', meta: x.units ? x.units + ' ' + u.nouns : '',
           foot: (x.controls || []).map(c => controlChip(c)).join('') + checkChip('stable', (x.proofs || {}).units, (x.failed || {}).units, 'the same ids twice, each unique')
             + ((b.controls || []).some(c => c.key === 'oracle') ? checkChip('no leak', (x.proofs || {}).leak, (x.failed || {}).leak, 'nothing of the reference shows before the run') : '')})).join('')}</div>`
-        + b.datasets.filter(x => C.datasetsOf(rec).includes(x.id)).map(x => taskSetChoice(rec, b, x, u)).join('')
+        + b.datasets.filter(x => C.datasetsOf(rec).includes(x.id)).map(x => taskSetChoice(rec, b, x, u) + startChoice(rec, b, x, u)).join('')
         + credentialWarnings(b, b.datasets.filter(x => C.datasetsOf(rec).includes(x.id)));
     if (step === S.agent) {
       const agent = b.family === 'agent', all = C.standardOthers(rec), others = all.filter(o => !o.control && !o.setup);
@@ -965,7 +985,7 @@
     if(blocked)return `<div class="nb-runbox" id="nb-runbox"><div class="nb-runline">${button('▶ Run on '+esc(where),'id="nb-run" disabled data-held title="'+esc(blocked)+'"','nb-button nb-primary')}</div><p class="nb-note nb-error">${esc(blocked)} ${button('Model step','data-step="'+S.model+'"','nb-inlinebutton')} · ${button('Settings','data-href="/settings#'+C.needsOf(C.choiceOf(rec))+'"','nb-inlinebutton')}</p></div>`;
     if(C.isStandard(rec)){
       const out=runnerOut||{errors:[{message:'Compiling the recipe…'}]}, noun=C.isStandard(rec)?unitsOf(rec).noun:'item';
-      return `<div class="nb-runbox" id="nb-runbox">${(out.errors||[]).length?out.errors.map(e=>`<p class="nb-note">${esc(e.message)}</p>`).join(''):`<div class="nb-runline">${button('▶ Run on '+esc(where),'id="nb-run"','nb-button nb-primary')}<span id="nb-runstate" class="nb-note"></span></div>`+(out.confirm?`<p class="nb-note nb-nolimit">No ${esc(noun)} limit: ${esc(out.confirm.replace(/^Run /,'').replace(/\?$/,''))}. Run asks before it starts.</p>`:'')}</div>`;
+      return `<div class="nb-runbox" id="nb-runbox">${(out.errors||[]).length?out.errors.map(e=>`<p class="nb-note">${esc(e.message)}</p>`).join(''):`<div class="nb-runline">${button('▶ Run on '+esc(where),'id="nb-run"','nb-button nb-primary')}<span id="nb-runstate" class="nb-note"></span></div>`+(out.confirm?`<p class="nb-note nb-nolimit">${/^Run /.test(out.confirm)?`No ${esc(noun)} limit: `+esc(out.confirm.replace(/^Run /,'').replace(/\?$/,'')):esc(out.confirm.replace(/\?$/,''))}. Run asks before it starts.</p>`:'')}</div>`;
     }
     const plan=C.runnable(rec);
     return `<div class="nb-runbox" id="nb-runbox">${plan.errors.length?plan.errors.map(e=>`<p class="nb-note">${esc(e)}</p>`).join(''):`<div class="nb-runline">${button('▶ Run on '+esc(where),'id="nb-run"'+(C.validate(rec).errors.length?' disabled data-held':''),'nb-button nb-primary')}<span id="nb-runstate" class="nb-note"></span></div>`+(plan.confirm?`<p class="nb-note nb-nolimit">No task limit: ${esc(plan.confirm.replace(/^Run /,'').replace(/\?$/,''))}. Run asks before it starts.</p>`:'')}</div>`;
@@ -1056,8 +1076,9 @@
     else if(d.runner){toRunner(d.runner,C.benchKey(r()));}
     else if(d.bench){toRunner(C.runnerFor(r(),d.bench),d.bench);}
     else if(d.stdBench){C.setStandardBenchmark(r(),d.stdBench);}
-    else if(d.stdDataset){const rec=r(),c=C.datasetsOf(rec);rec.datasets=c.includes(d.stdDataset)?(c.length>1?c.filter(k=>k!==d.stdDataset):c):[...c,d.stdDataset];delete rec.dataset;C.keepTaskSets(rec);}
+    else if(d.stdDataset){const rec=r(),c=C.datasetsOf(rec);rec.datasets=c.includes(d.stdDataset)?(c.length>1?c.filter(k=>k!==d.stdDataset):c):[...c,d.stdDataset];delete rec.dataset;C.keepTaskSets(rec);C.keepStartWith(rec);}
     else if(d.stdTaskset!==undefined){C.setTaskSet(r(),d.of,d.stdTaskset);}
+    else if(d.stdStart!==undefined){C.setStartWith(r(),d.of,d.stdStart);}
     else if(d.stdOther){const rec=r(),c=C.chosenOf(rec);rec.others=c.includes(d.stdOther)?c.filter(k=>k!==d.stdOther):[...c,d.stdOther];delete rec.other;if(rec.options)delete rec.options[d.stdOther];}
     // the standard's machines: each a toggle, one at least; several split the run into shards
     else if(d.stdWhere){const rec=r(),list=C.whereList(rec),on=list.includes(d.stdWhere),next=on?list.filter(w=>w!==d.stdWhere):[...list,d.stdWhere];if(!next.length)return;rec.where=next.length>1?next:next[0];}
@@ -1111,6 +1132,7 @@
       else if(['model','simulator_model','judge_model'].includes(d.field)){C.setModelOf(rec,d.field,value);syncServed();}   // the field's pin goes with its model; its Served by follows, in place
       else rec[d.field]=value;
       if(el.list?.id==='nb-paths')completeDirectory(el.value);
+    }else if(d.stdStartCount!==undefined){if(/^[1-9]\d*$/.test(el.value))C.setStartWith(rec,d.stdStartCount,el.value);refreshPlan();return;
     }else if(d.stdMinutes){const t=Object.assign({},rec.timeouts);if(el.value===''||!(Number(el.value)>0))delete t[d.stdMinutes];else t[d.stdMinutes]=Number(el.value);if(Object.keys(t).length)rec.timeouts=t;else delete rec.timeouts;refreshPlan();return;
     }else if(d.minutes){C.setPhaseMinutes(rec,d.minutes,el.value===''?'':Number(el.value));const row=el.closest('tr');if(row){const m=row.querySelector('.nb-mono');const t=C.effectiveTimeouts(rec);const p=t&&t.phases.find(x=>x.key===d.minutes);if(m&&p)m.textContent='×'+p.multiplier;}refreshPlan();return;}
     else if(d.customAgent!==undefined){rec.customAgents[Number(d.customAgent)]=el.value;refreshPlan();return;}
@@ -1135,6 +1157,7 @@
     else if(d.stdUnsandboxed!==undefined){r().unsandboxed=el.checked;refreshPlan();}
     else if(d.stdVersion!==undefined){C.setStandardBenchmark(r(),el.value);render();}
     else if(d.stdTasksetSelect!==undefined){C.setTaskSet(r(),d.stdTasksetSelect,el.value);renderForm();refreshPlan();}
+    else if(d.stdStartSelect!==undefined){C.setStartWith(r(),d.stdStartSelect,el.value);renderForm();refreshPlan();}
     // an option at its default is left out: the recipe names only what was changed. A select's value can show or hide
     // the options that apply under it (`when`): the step is drawn again and the focus goes back to the select, or to the
     // menu button controls.js puts after it once this change is handled; a typed value is left as it is

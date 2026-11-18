@@ -249,6 +249,10 @@ class CommandLine(Scratch):
         self.assertEqual(out.returncode, 0, out.stderr)
         for line in ("usage:", "rerun", "JOB_DIR", "examples:", "exit codes:"):
             self.assertIn(line, out.stdout)
+        help_text = " ".join(out.stdout.split())
+        for kind in ("no result", "spending cap", "ended by a Stop"):
+            self.assertIn(kind, help_text)
+        self.assertIn("excludes scores and agent errors", help_text)
         self.assertEqual(out.stderr, "")
         job = Path(self.tmp, "job")
         write_json(job / "config.json", {"job_name": "job", "runner": "standard",
@@ -263,6 +267,13 @@ class CommandLine(Scratch):
             (["rerun", str(job), "--unit", "nosuch"], 2, "refused: job holds no trial or unit nosuch"),
             (["rerun", str(job), "--unit", "a", "--units", os.path.join(self.tmp, "ids.txt")], 2, "usage:"),
             (["rerun", str(job), "--unit", "a", "--retries", "x"], 2, "usage:"),
+            (["rerun", str(job), "--unit", "a", "--unfinished"], 2, "usage:"),
+            (["rerun", str(job), "--unfinished"], 2, "refused: job does not record the tasks it planned"),
+            (["rerun", str(job), "--next", "2"], 2, "refused: job does not record the tasks it planned"),
+            (["rerun", str(job), "--next", "x"], 2, "usage:"),
+            (["rerun", str(job), "--unit", "a", "--next", "1"], 2, "usage:"),
+            (["rerun", str(job), "--set", "nosuch"], 3, "refused: no task set 'nosuch' of humaneval"),
+            (["rerun", str(job), "--set", "a/b"], 2, "refused: 'a/b' is not a task set's name"),
         ]
         for args, code, said in cases:
             with self.subTest(args=args[2:]):
@@ -272,6 +283,19 @@ class CommandLine(Scratch):
                 self.assertEqual(out.stdout, "", "a failure leaves stdout empty")
                 if said.startswith("refused"):
                     self.assertEqual(len(out.stderr.strip().splitlines()), 1)
+        self.assertEqual(tree_digest(job), before)
+        # a job whose feed says what it planned, every task with a result: nothing to run, said, exit 0
+        with open(job / "events.jsonl", "w") as f:
+            f.write(json.dumps({"seq": 1, "event": "job.start", "trial": None, "tasks": ["a"]}) + "\n")
+            f.write(json.dumps({"seq": 2, "event": "trial.queued", "trial": "a__u0000", "position": 0}) + "\n")
+        before = tree_digest(job)
+        out = self.sh("standard.cli", "rerun", str(job), "--unfinished")
+        self.assertEqual((out.returncode, out.stderr), (0, ""))
+        self.assertEqual(out.stdout.splitlines(), ["nothing to run: every task job planned has a result", str(job)])
+        self.assertEqual(tree_digest(job), before)
+        out = self.sh("standard.cli", "rerun", str(job), "--next", "1")             # more than are left
+        self.assertEqual((out.returncode, out.stdout), (2, ""))
+        self.assertEqual(out.stderr.strip(), "refused: --next 1: 0 tasks of the plan are left to run")
         self.assertEqual(tree_digest(job), before)
         self.assertTmpHolds("job", "ids.txt")
 
@@ -337,8 +361,8 @@ class TaskSetCommands(Scratch):
         error or a refusal, 3 for what is not found, and writes nothing."""
         cat = os.path.join(self.tmp, "catalogue")
         env = {"NULLIUS_CATALOGUE": cat, "NULLIUS_HOME": os.path.join(self.tmp, "profile")}
-        for sub in (("set",), ("set", "create"), ("set", "update"), ("set", "list"), ("set", "show"), ("set", "import"),
-                    ("units",)):
+        for sub in (("set",), ("set", "create"), ("set", "update"), ("set", "list"), ("set", "show"), ("set", "rename"),
+                    ("set", "delete"), ("set", "import"), ("units",)):
             with self.subTest(help=sub):
                 out = self.sh("standard.cli", *sub, "--help", env=env)
                 self.assertEqual(out.returncode, 0, out.stderr)
@@ -353,6 +377,9 @@ class TaskSetCommands(Scratch):
             (["set", "create", "no-such-bench", "ok", "--dataset", "x", "--units", listed], 3, "no benchmark"),
             (["set", "show", "humaneval", "nowhere"], 3, "no task set 'nowhere'"),
             (["set", "update", "humaneval", "nowhere", "--add", "HumanEval/2"], 3, "no task set 'nowhere'"),
+            (["set", "rename", "humaneval", "nowhere", "elsewhere"], 3, "no task set 'nowhere'"),
+            (["set", "rename", "humaneval", "nowhere"], 2, "usage:"),
+            (["set", "delete", "humaneval", "nowhere"], 3, "no task set 'nowhere'"),
             (["set", "import", os.path.join(self.tmp, "absent.json")], 3, "no such file or job"),
             (["set", "create", "humaneval", "ok", "--dataset", "humaneval", "--units", listed, "--bench-option", "a=b"], 2,
              "unrecognized arguments: --bench-option"),

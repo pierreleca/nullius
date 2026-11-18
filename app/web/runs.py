@@ -548,12 +548,67 @@ def job(job_id):
     board = _live_board_state(j)
     again = ex.again_of(job_id) if ex is not None else None
     j, running_again = _until_again(j, (again or {}).get("trials") or [])
+    waiting = waiting_of(j, (again or {}).get("trials") or [])
     return render_template("runs/job.html", job=j, live_board=board, view=_view_of(board, j),
                            execution=ex, csrf=shared._csrf_token(), set_link=_set_link(j), set_saving=_set_saving(j),
                            judgement=judge.job_summary(j) if j.trials else None,
                            control=feasibility.summary_of(j), ended=execution.ended_for(job_id), own=own, deletable=_deletable(job_id, ex),
                            trial_rows=attempts.grouped(j), pass_k=attempts.for_job(j), names=_identity_names(j.identity),
-                           again=execute.again_offer(j, ex), running_again=running_again, rerunning=again is not None)
+                           again=execute.again_offer(j, ex), running_again=running_again, rerunning=again is not None,
+                           waiting=waiting, plan_sets=plan_sets(j, waiting))
+
+
+def waiting_of(j, running=()) -> list:
+    """The tasks a standard job planned that have no result (``rerun.unfinished``), each {trial, trials, unit, folder,
+    running, outcome}: one row per unit, with its planned attempts in ``trials`` and its first in ``trial``.
+    Never begun, or begun and ended with none (``folder``); ``running``, one of the trials
+    ``running`` names, those a re-run under way runs. ``outcome``: ``not_run`` for a task never begun of a job
+    begun on a part of its plan (``start_with``), ``no_result`` otherwise. Its feed is read only for a job with
+    fewer trials than it planned: [] for every other job."""
+    if not j.standard or len(j.trials) >= j.n_planned:
+        return []
+    from nullius.standard import rerun
+    waiting = {}
+    for name, x in rerun.unfinished(j.dir).items():
+        row = waiting.setdefault(x["unit"], dict(x, trial=name, trials=[], running=False,
+                                               outcome="not_run" if j.start_with else "no_result"))
+        row["trials"].append(name)
+        row["running"] |= name in running
+        if x["folder"]:
+            row.update(folder=x["folder"], outcome="no_result")
+    return list(waiting.values())
+
+
+def plan_sets(j, waiting: list) -> list:
+    """The task sets of the job's benchmark and dataset that name planned tasks with no result, at their latest
+    revision: [{name, revision, trials, tasks}], ``trials`` those of ``waiting`` (:func:`waiting_of`) the set names and no
+    re-run is running. What the job page's "Run a set" offers; [] when no set names one."""
+    if not waiting:
+        return []
+    try:
+        with open(os.path.join(j.dir, "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+        bench = (cfg.get("standard") or {}).get("benchmark")
+        dataset = str(((cfg.get("datasets") or [{}])[0] or {}).get("name") or "").partition("/")[2]
+    except (OSError, ValueError, AttributeError):
+        return []
+    if not isinstance(bench, str) or not bench:
+        return []
+    try:
+        entries, _ = task_sets.entries(bench)
+    except task_sets.Refused:
+        return []
+    out = []
+    for e in entries:
+        if e.get("dataset") != dataset:
+            continue
+        last = task_sets.revision(e)
+        wanted = set(last["units"])
+        trials = [w["trial"] for w in waiting if w["unit"] in wanted and not w["running"]]
+        if trials:
+            out.append({"name": e["name"], "revision": last["revision"], "trials": trials,
+                        "tasks": len({w["unit"] for w in waiting if w["trial"] in trials})})
+    return out
 
 
 def _identity_names(identity: dict) -> dict:
@@ -576,20 +631,22 @@ def _identity_names(identity: dict) -> dict:
             "agent_options": labels(other, identity.get("agent_options") or {})}
 
 
-def _set_link(j) -> str:
-    """The page of the task set a job ran, at the revision it ran; "" when the catalogue here has no set of that
-    name and id, or not that revision."""
+def _set_link(j) -> dict:
+    """The task set a job ran as its page names it: {name, link}. Found by its id, under the name it has now (a set
+    renamed since), its link the page of the revision the job ran; when the catalogue here holds no set of that id,
+    or not that revision, the name the job recorded and no link."""
     ts = j.task_set
-    if not ts or not ts.get("benchmark"):
-        return ""
+    if not ts:
+        return {}
+    entry = task_sets.by_id(ts["benchmark"], ts.get("id"), ts["name"]) if ts.get("benchmark") else None
+    if entry is None:
+        return {"name": ts["name"], "link": ""}
     try:
-        entry = task_sets.load(ts["benchmark"], ts["name"])
         task_sets.revision(entry, ts.get("revision"))
     except task_sets.Refused:
-        return ""
-    if entry["id"] != ts.get("id"):
-        return ""
-    return url_for("benchmark_tasks", key=ts["benchmark"], dataset=entry["dataset"], set=ts["name"], rev=ts.get("revision"))
+        return {"name": entry["name"], "link": ""}
+    return {"name": entry["name"], "link": url_for("benchmark_tasks", key=ts["benchmark"], dataset=entry["dataset"],
+                                                   set=entry["name"], rev=ts.get("revision"))}
 
 
 def _set_saving(j) -> bool:

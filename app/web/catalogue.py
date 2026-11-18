@@ -104,18 +104,25 @@ def benchmark_tasks(key, dataset):
     members ticked and a new revision offered, an earlier revision read only. The page asks for the listing
     once loaded; this request reads no listing."""
     bench, ds = _std_dataset(key, dataset)
-    entry, rev, problem = None, None, ""
+    entry, rev, problem, broken = None, None, "", ""
     if request.args.get("set"):
+        name = request.args["set"]
         try:
-            entry = sets.load(key, request.args["set"])
-            rev = sets.revision(entry, int(request.args["rev"]) if request.args.get("rev", "").isdigit() else None)
+            entry = sets.load(key, name)
         except sets.Refused as e:
-            problem, entry = str(e), None
+            # said without the file's path; a file there that cannot be read can still be deleted from the page
+            problem, broken = sets.plain(e, key, name), "" if isinstance(e, sets.NotFound) else name
+        else:
+            try:
+                rev = sets.revision(entry, int(request.args["rev"]) if request.args.get("rev", "").isdigit() else None)
+            except sets.Refused as e:
+                problem, entry = str(e), None
         if entry is not None and entry["dataset"] != dataset:
             return redirect(url_for("benchmark_tasks", key=key, dataset=entry["dataset"], **request.args))
     latest = sets.revision(entry)["revision"] if entry else None
     return render_template("catalogue/tasks.html", bench=bench, title=standard_definitions.title(bench), ds=ds, entry=entry, rev=rev, latest=latest, problem=problem,
-                           nouns=(bench.get("units") or {}).get("nouns", "units"), csrf=shared._csrf_token(),
+                           broken=broken, nouns=(bench.get("units") or {}).get("nouns", "units"),
+                           noun=(bench.get("units") or {}).get("noun", "unit"), csrf=shared._csrf_token(),
                            writable=settings_web._local_client(),
                            others=[s for s in sets.rows(key) if s["dataset"] == dataset])
 
@@ -224,6 +231,49 @@ def benchmark_tasks_save(key, dataset):
     except sets.Refused as e:
         return jsonify(ok=False, error=str(e)), 400
     return jsonify(ok=True, added=True, revision=1, open=url_for("benchmark_tasks", key=key, dataset=dataset, set=entry["name"], rev=1))
+
+
+def _set_guard(key: str, dataset: str) -> str:
+    """Every change to a set from its page: the form token and a browser on this machine; the set's name."""
+    shared._require_csrf()
+    if not settings_web._local_client():
+        abort(403, description="Task sets are changed from a browser on the application host only.")
+    _std_dataset(key, dataset)
+    return (request.form.get("set") or "").strip()
+
+
+@app.route("/benchmarks/<key>/tasks/<dataset>/rename", methods=["POST"])
+def benchmark_tasks_rename(key, dataset):
+    """Give the set another name, its id and revisions kept (a job that ran it finds it by its id); then its page
+    under the new name. A name taken, empty or not allowed is refused as at creation."""
+    name = _set_guard(key, dataset)
+    new = (request.form.get("name") or "").strip()
+    rev = {"rev": request.form["rev"]} if request.form.get("rev", "").isdigit() else {}
+    try:
+        problem = f"The task set is named {name} already." if new and new == name else _set_problem(key, new)
+        if problem:
+            flash(problem, "error")
+            return redirect(url_for("benchmark_tasks", key=key, dataset=dataset, set=name, **rev))
+        entry = sets.rename(key, name, new)
+    except sets.Refused as e:
+        flash(sets.plain(e, key, name), "error")
+        return redirect(url_for("benchmark_tasks", key=key, dataset=dataset, set=name, **rev))
+    flash(f"Renamed {name} to {entry['name']}. Runs made from it follow the new name.", "ok")
+    return redirect(url_for("benchmark_tasks", key=key, dataset=entry["dataset"], set=entry["name"], **rev))
+
+
+@app.route("/benchmarks/<key>/tasks/<dataset>/delete", methods=["POST"])
+def benchmark_tasks_delete(key, dataset):
+    """Remove the set from the catalogue; then the benchmark's task sets. A job that ran it keeps its record and names
+    it without a link."""
+    name = _set_guard(key, dataset)
+    try:
+        sets.delete(key, name)
+    except sets.Refused as e:
+        flash(sets.plain(e, key, name), "error")
+        return redirect(url_for("benchmark_tasks", key=key, dataset=dataset, set=name))
+    flash(f"Deleted the task set {name}. Runs made from it stay.", "ok")
+    return redirect(url_for("benchmark_page", key=key, _anchor="task-sets"))
 
 
 @app.route("/catalogue/<group>/<key>/use-bundled", methods=["POST"])

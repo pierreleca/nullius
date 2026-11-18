@@ -471,9 +471,14 @@ a.std-need { font-size: .78rem; color: var(--text-dim); text-decoration: underli
 .tasks-field input:focus, .tasks-paste-box textarea:focus { outline: none; border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .tasks-msg { margin: 12px 0 0; min-height: 1.2em; font-size: 14px; }
 .tasks-msg.bad { color: var(--bad); }
+#task-sets { scroll-margin-top: calc(var(--topbar-height) + 24px); }
+.tasks-rename[open] summary { border-color: var(--accent); }
+.tasks-rename .bench-delete-ask { border-color: var(--border); }
+.tasks-rename .tasks-field { flex: 1 1 100%; }
 @media (max-width: 640px) {
   .tasks-browse, .tasks-save { padding: 16px; } .tasks-field, .tasks-field.tasks-wide { flex: 1 1 100%; } .tasks-catname { min-width: 0; width: 100%; }
   .tasks-table th:nth-child(3), .tasks-table td.tasks-catcol { display: none; }
   .tasks-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
   .tasks-table th, .tasks-table td { padding: .55rem .4rem; }
+  .tasks-page .bench-delete-ask { left: 0; right: auto; }
 }

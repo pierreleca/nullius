@@ -153,18 +153,29 @@
   addEventListener('scroll', hide, { passive: true });
 
   // ---- tasks to run again: a tick per trial, the rows the filters show at once, the count, then the question ----
+  // a task with no result (data-first) is run, not run again: the words say which
   const ticks = $$('#trial-rows .pick-row'), ask = $('#rerun-ask');
   if (ticks.length && ask) {
     const pickN = $('#pick-count'), go = $('#rerun-open'), form = $('form', ask), err = $('[data-error]', ask);
-    const chosen = () => ticks.filter(x => x.checked);
+    const chosen = () => ticks.filter(x => x.checked), first = x => 'first' in x.dataset;
     const tasks = n => n + (n === 1 ? ' task' : ' tasks');
-    const recount = () => { const n = chosen().length; pickN.textContent = n + ' chosen'; go.disabled = !n; };
+    const where = $('p.muted', ask), again = where.textContent;
+    const recount = () => { const c = chosen(), n = c.length; pickN.textContent = n + ' chosen'; go.disabled = !n;
+      go.textContent = n && c.every(first) ? 'Run selected' : 'Run selected again'; };
     ticks.forEach(x => x.addEventListener('change', recount));
     $('#pick-shown').addEventListener('click', () => { rows.forEach(r => { const x = $('.pick-row', r); if (x && r.matched) x.checked = true; }); recount(); });
+    // the rest, or a set's tasks not yet run: those rows ticked alone, then the same question
+    $$('#rerun-pick [data-pick]').forEach(b => b.addEventListener('click', () => {
+      const want = new Set(b.dataset.pick.split(' ')); ticks.forEach(x => { x.checked = want.has(x.value); });
+      const menu = b.closest('details'); if (menu) menu.open = false;
+      recount(); go.click();
+    }));
     go.addEventListener('click', () => {
-      const picked = chosen();
-      $$('[data-n]', ask).forEach(s => { s.textContent = tasks(picked.length); });
-      $('[data-go]', ask).textContent = 'Run ' + tasks(picked.length) + ' again';
+      const picked = chosen(), fresh = picked.filter(first).length;
+      const words = 'Run ' + tasks(picked.length) + (!fresh ? ' again' : fresh < picked.length ? ', ' + (picked.length - fresh) + ' again' : '');
+      $('#rerun-ask-h').textContent = words;
+      $('[data-go]', ask).textContent = words;
+      where.textContent = fresh && where.dataset.first ? where.dataset.first : again;
       $('[data-names]', ask).replaceChildren(...picked.map(x => { const li = document.createElement('li'); li.textContent = x.getAttribute('aria-label').replace(/^Choose /, ''); return li; }));
       err.hidden = true; $('[data-go]', ask).disabled = false; ask.showModal();
     });
@@ -174,7 +185,7 @@
       const b = e.submitter; b.disabled = true; err.hidden = true;
       try {
         const r = await nulliusFetch(ask.dataset.post, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': ask.dataset.csrf },
-          body: JSON.stringify({ trials: chosen().map(x => x.value), reason: form.elements.reason.value, max_usd: form.elements.max_usd.value }) });
+          body: JSON.stringify({ trials: chosen().flatMap(x => (x.dataset.trials || x.value).split(' ')), reason: form.elements.reason.value, max_usd: form.elements.max_usd.value }) });
         const j = await r.json().catch(() => ({}));
         if (r.ok && j.ok) { const u = new URL(location.href); u.searchParams.delete('view'); location.assign(u); return; }
         throw new Error(j.error || 'refused: HTTP ' + r.status);

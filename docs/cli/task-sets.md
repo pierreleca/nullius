@@ -9,6 +9,8 @@ nullius standard set create <benchmark> NAME [--dataset D] (--units FILE | --sea
 nullius standard set update <benchmark> NAME (--add ID... | --remove ID... | --units FILE) [--note TEXT]
 nullius standard set list [<benchmark>] [--json]
 nullius standard set show <benchmark> NAME[@REV] [--json]
+nullius standard set rename <benchmark> NAME NEW
+nullius standard set delete <benchmark> NAME
 nullius standard set import PATH
 nullius standard run <benchmark> <other> --set NAME[@REV] ...
 ```
@@ -19,6 +21,7 @@ nullius standard set create humaneval first-ten --dataset humaneval --units ten.
 nullius standard set create osworld1 chrome-tabs --dataset test_nogdrive --search tab --category domain=chrome
 nullius standard set create humaneval misses --from-job jobs_standard/JOB --outcome failed,infra
 nullius standard set update humaneval misses --remove HumanEval/12 --note "solved upstream"
+nullius standard set rename humaneval misses misses-june
 nullius standard run humaneval reference --model gpt-5-mini --set misses@1 --unsandboxed
 ```
 
@@ -43,7 +46,7 @@ Exit codes: 0 listed (no match included), 2 a usage error or a refusal (an optio
 | Part | Detail |
 | --- | --- |
 | The entry | `sets/<benchmark>/NAME.json` in the user catalogue (`nullius paths`, `NULLIUS_CATALOGUE`): a plain file to copy or keep in git |
-| What it holds | An id made at creation, the name and description, the benchmark, the dataset, and its revisions. An entry holding any other field (an option, a setup) is refused where it is read |
+| What it holds | An id made at creation, the name and description, the benchmark, the dataset, and its revisions. An entry holding any other field is refused where it is read. One of the earlier format, which kept a run's options: delete it and make it again |
 | A revision | Its number, date, note, unit ids and a content hash over the benchmark, the dataset and the sorted ids |
 | A name | Letters, digits, `.`, `_` and `-`, starting with a letter or a digit; no `/`, no `..`. One that exists is refused: `update` changes it |
 | Identity | Two runs ran the same set when their jobs name the same id. Two sets of equal lists stay two sets |
@@ -55,6 +58,8 @@ Exit codes: 0 listed (no match included), 2 a usage error or a refusal (an optio
 | `create --from-job JOB_DIR` | The units a standard job ran, by each trial's full unit id; the job's dataset. `--outcome` takes the trials of those outcomes ([outcome names](../field-guide.md#outcomes), or `passed`, `failed`, `infra`), `--unit` adds the units named; neither takes every unit. A unit is taken when any of its attempts is |
 | `update` | A change of membership adds a revision; the earlier ones stay. The same membership adds none. Removing a unit the set does not hold, or every unit, is refused |
 | `show NAME@REV` | That revision; the latest without `@REV` |
+| `rename NAME NEW` | The same set under another name, its id and revisions kept: a job that ran it finds it by its id and names it by its new name. `NEW` follows the rules of a name |
+| `delete NAME` | The entry removed, an entry of the earlier format included. A job that ran it keeps its record |
 | `import PATH` | An entry's file, or a job that ran a set (its description then empty, the revision dated by the import): merged into the entry of that name here. Refused: another id under that name, or a revision of the same number with another hash |
 | Not checked | The ids, until a run: the driver lists the units then |
 
@@ -78,9 +83,9 @@ Exit codes: 0 done, 2 a usage error or a refusal, 3 no such benchmark, set, revi
 | --- | --- |
 | A benchmark's page, **Task sets** | Its sets (name, dataset, number of tasks, latest revision, date) and a link to each dataset's tasks |
 | A dataset's tasks | A search over id, title and text, each category's values with their counts, 100 tasks a page, under the benchmark's default options. Tick a task, select every match, show the selected, paste ids. **Save as task set** keeps the ticked ids under a name and a description |
-| A set's page | The same page with its members ticked: **Save as a new revision**, with a note, adds a revision only when the membership changed. An earlier revision is read only |
+| A set's page | The same page with its members ticked: **Save as a new revision**, with a note, adds a revision only when the membership changed. An earlier revision is read only. **Rename** and **Delete** ask in place; the delete names the set, its number of tasks and its revisions |
 | A first listing | Never made inside a request. In the cache: shown at once. One that [`driver.list_command`](../standard.md#driver-ops) makes lightly: started by the page, which says what it fetches. One that needs the driver's own environment: not started, the page says what it needs; ids can still be pasted |
 | The builder | Each chosen dataset: all its tasks or one of its sets; Review names the set and its number of tasks |
-| A job's page | The set and revision it ran, linked when the catalogue here holds them. **Save as task set** keeps the units of the trials its outcome filter shows, by their full ids |
+| A job's page | The set, by its name now, and the revision it ran, linked when the catalogue here holds them; a set deleted since, by the name the job recorded, without a link. **Save as task set** keeps the units of the trials its outcome filter shows, by their full ids |
 
-Saving needs a browser on the application host. A name that exists, an empty name or one with a slash is refused on the page.
+Saving, renaming and deleting need a browser on the application host. A name that exists, an empty name or one with a slash is refused on the page.

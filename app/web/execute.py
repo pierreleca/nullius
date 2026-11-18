@@ -231,9 +231,9 @@ def again_offer(job, ex) -> dict | None:
 @app.route("/job/<job_id>/rerun", methods=["POST"])
 def job_rerun(job_id):
     """Run the trials the job page ticked again, in the job, where its run ran: this machine, or the host the
-    run was sent to (``Execution.again``). Same guards as Run. Refused, and nothing started, for a job the page
-    offers no button for (``again_offer``), a trial the job does not hold, a host that no longer holds the job,
-    or a provider whose key is not set here."""
+    run was sent to (``Execution.again``); a task it planned with no result runs there too. Same guards as Run.
+    Refused, and nothing started, for a job the page offers no button for (``again_offer``), a trial the job
+    does not hold, a host that no longer holds the job, or a provider whose key is not set here."""
     shared._require_csrf()
     if not settings_web._local_client():
         abort(403, description="Runs are started from a browser on the application host only.")
@@ -245,7 +245,8 @@ def job_rerun(job_id):
     if offer is None or offer.get("why"):
         return jsonify(ok=False, error=(offer or {}).get("why") or "Only a job of the Nullius standard is run again."), 409
     body = request.get_json(silent=True) or {}
-    held = {t.trial_name for t in j.trials}
+    from . import runs as runs_web
+    held = {t.trial_name for t in j.trials} | {t for w in runs_web.waiting_of(j) for t in w["trials"]}   # and the tasks with no result
     picked = list(dict.fromkeys(t for t in body.get("trials") or [] if isinstance(t, str))) if isinstance(body.get("trials"), list) else []
     if not picked:
         return jsonify(ok=False, error="Tick the tasks to run again."), 400

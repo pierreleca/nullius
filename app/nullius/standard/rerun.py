@@ -9,6 +9,23 @@ the dataset and its attempt. A try that is stopped puts the one before it
 back. Every task named runs again, whatever its result was; the new result
 takes its place, and the tries before it stay readable beside it.
 
+A task the job planned and has no result for is taken the same way
+(:func:`unfinished`). What a job planned is in its live feed
+(``events.jsonl``): the run's ``job.start`` names its units, and a
+``trial.queued`` line names each trial before any begins (:func:`planned`).
+A trial never begun runs as its first try. A trial whose run was killed has
+a folder and no ``result.json``: the folder is kept as the try it was, in
+``retried/``, with ``no-result.json`` in it, and the trial runs again. A
+trial the run's spending cap cut off, or a Stop ended, has a result that says
+so: ``unfinished`` takes it too, since its run was interrupted, not judged.
+A job whose feed does not say what it planned (a merged job keeps none) has
+only its trials to run again.
+
+A job begun on a part of its plan (``run --start-with``) has the rest planned
+with no attempt: :func:`more` takes a further part of them, a number of them
+in the plan's order or those a task set of the job's dataset names, each with
+all its attempts, and ``every_unfinished`` takes all of them.
+
 The settings are the job's own, read from its ``config.json`` and never
 given again; the endpoint and the key come from the environment, as for a
 run. The benchmark and the agent must resolve to the versions the job ran.
@@ -21,13 +38,15 @@ a trial's folder and writes the new try into a new one, and no linked file is
 written.
 
 What is recorded: the try asked for gets ``standard.rerun`` (by hand, when,
-the reason, the result it replaced) and ``standard.retries``, the tries
-before it, as an automatic retry's does. The job's ``result.json`` is
-recomputed from its trials as a merged job's is (``merge.result_of``); its
-start, its end and its ``budget`` stay the first run's, and ``reruns`` lists
-each re-run: when, the reason, the trials, the results replaced, its cap and
-its spend. The live feed gets the re-run's ``job.start``, its trials' events
-and its ``job.end``, numbered on from the file's last line.
+the reason, the result it replaced, or ``begun`` for a task's first try) and
+``standard.retries``, the tries before it, as an automatic retry's does. The
+job's ``result.json`` is recomputed from its trials as a merged job's is
+(``merge.result_of``); its start, its end and its ``budget`` stay the first
+run's, and ``reruns`` lists each re-run: when, the reason, the trials, the
+results replaced, the tasks begun (``begun``), those that had no result
+(``no_result``), its cap and its spend. The live feed gets the re-run's
+``job.start``, its trials' events and its ``job.end``, numbered on from the
+file's last line.
 """
 from __future__ import annotations
 
@@ -35,6 +54,8 @@ import fcntl
 import json
 import os
 import re
+import shutil
+import tempfile
 import time
 from typing import Callable, Dict, List, Optional
 
@@ -42,6 +63,7 @@ from nullius.harbor import feed as live_feed
 from nullius.standard import boat, definitions, job, ledger as ledgers, merge, run
 
 LOCK = "rerun.lock"                          # in the job's .work: held while a re-run of it runs
+NO_RESULT = "no-result.json"                 # in a kept try that ended with no result: when it was found so
 _TAG = re.compile(r"__u(\d{4,})(?:r(\d+))?$")
 
 
@@ -135,28 +157,122 @@ def resolve(cfg: dict, results: List[dict], root: Optional[str] = None) -> tuple
     return bench, other
 
 
-def chosen(job_dir: str, ids: List[str], trials: Dict[str, dict]) -> List[str]:
+def planned(job_dir: str) -> Optional[List[tuple]]:
+    """Each trial the job's run set out to run, (its name, its unit) in the run's order, as its live feed says
+    before the first unit begins: the run's ``job.start`` names its units, then a ``trial.queued`` line names
+    each trial at its place (``run.Run.start``). None when the feed says none: no feed (a merged job keeps
+    none), or one that names no trial."""
+    out, units = [], None
+    try:
+        with open(os.path.join(job_dir, live_feed.FEED), encoding="utf-8") as f:
+            for line in f:
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(e, dict):
+                    continue
+                if units is None:
+                    if e.get("event") == "job.start":
+                        units = [str(u) for u in e.get("tasks") or []] if isinstance(e.get("tasks"), list) else []
+                    continue
+                if e.get("event") != "trial.queued":
+                    break                    # the plan ends where the first unit begins
+                pos, name = e.get("position"), e.get("trial")
+                if not units or not isinstance(name, str) or not isinstance(pos, int) or isinstance(pos, bool) or pos < 0:
+                    return None
+                out.append((name, units[pos % len(units)]))
+    except OSError:
+        return None
+    return out or None
+
+
+def unfinished(job_dir: str, plan: Optional[List[tuple]] = None) -> Dict[str, dict]:
+    """The trials the job planned (:func:`planned`) that have no result, by name: {"unit", "folder"}, ``folder``
+    true when its run began and was killed before it wrote one. {} for a job that does not say what it planned."""
+    out = {}
+    for name, unit in (planned(job_dir) if plan is None else plan) or []:
+        here = os.path.join(job_dir, name)
+        if not os.path.isfile(os.path.join(here, "result.json")):
+            out[name] = {"unit": unit, "folder": os.path.isdir(here) and not os.path.islink(here)}
+    return out
+
+
+def interrupted(res: Optional[dict]) -> bool:
+    """Whether a trial's result is its run's interruption, not a judgement: the run's spending cap cut it off,
+    or a Stop ended it."""
+    return ((res or {}).get("exception_info") or {}).get("exception_type") in (ledgers.ERROR, run.CANCELLED)
+
+
+def _kept(job_dir: str, name: str) -> int:
+    """The last try of ``name`` kept in the job's ``retried/``; 0 when none is."""
+    kept = os.path.join(job_dir, "retried")
+    tries = [int(k[len(name) + 5:]) for k in (os.listdir(kept) if os.path.isdir(kept) else ())
+             if k.startswith(name + ".try-") and k[len(name) + 5:].isdigit()]
+    return max(tries, default=0)
+
+
+def more(job_dir: str, plan: List[tuple], empty: Dict[str, dict], *, count: Optional[int] = None,
+         task_set: Optional[dict] = None, dataset: str = "", noun: tuple = ("task", "tasks")) -> List[str]:
+    """A further part of the planned tasks not yet run (``empty``, :func:`unfinished`): the first ``count`` of them
+    in the plan's order, or those the set ``task_set`` names ({"task_set": its record, "dataset": its dataset});
+    each task with every attempt of it that has no result. Refused for a set of another dataset than the job's
+    (``dataset``), a set naming a task the job did not plan, and a count above the tasks left."""
+    many = lambda n: noun[0] if n == 1 else noun[1]
+    left = list(dict.fromkeys(u for n, u in plan if n in empty))
+    if task_set is not None:
+        rec = task_set["task_set"]
+        if task_set.get("dataset") != dataset:
+            raise run.Refused(f"the task set {rec['name']} is cut from the dataset {task_set.get('dataset')}, and "
+                              f"{os.path.basename(job_dir)} planned {dataset}")
+        planned_units = {u for _, u in plan}
+        outside = [u for u in rec["units"] if u not in planned_units]
+        if outside:
+            raise run.Refused(f"the task set {rec['name']}@{rec['revision']} names {len(outside)} {many(len(outside))} "
+                              f"{os.path.basename(job_dir)} did not plan: " + ", ".join(outside[:5])
+                              + (", ..." if len(outside) > 5 else ""))
+        wanted = set(rec["units"])
+        take = {u for u in left if u in wanted}
+    else:
+        if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+            raise run.Refused(f"--next {count!r}: a whole number of {noun[1]}, at least 1")
+        if count > len(left):
+            raise run.Refused(f"--next {count}: {len(left)} {many(len(left))} of the plan {'is' if len(left) == 1 else 'are'} "
+                              "left to run")
+        take = set(left[:count])
+    return [n for n, u in plan if n in empty and u in take]
+
+
+def chosen(job_dir: str, ids: List[str], trials: Dict[str, dict], empty: Optional[Dict[str, dict]] = None) -> List[str]:
     """The trials ``ids`` name, in the order named, each once: an id is a trial's name, or a unit's id for each
-    of its attempts. Refused for no id, or for ids the job does not hold."""
+    of its attempts; a trial planned with no result (``empty``, :func:`unfinished`) too. Refused for no id, or
+    for ids the job does not hold."""
+    empty = empty or {}
     if not ids:
-        raise run.Refused("no task named: --unit ID (repeatable) or --units FILE")
+        raise run.Refused("no task named: --unit ID (repeatable), --units FILE or --unfinished")
     by_unit: Dict[str, List[str]] = {}
     for name, res in trials.items():
         by_unit.setdefault(str((res.get("standard") or {}).get("unit") or name), []).append(name)
-    unknown = [i for i in ids if i not in trials and i not in by_unit]
+    for name, x in empty.items():
+        by_unit.setdefault(x["unit"], []).append(name)
+    unknown = [i for i in ids if i not in trials and i not in empty and i not in by_unit]
     if unknown:
         raise run.Refused(f"{os.path.basename(job_dir)} holds no trial or unit {', '.join(unknown)}")
-    return list(dict.fromkeys(n for i in ids for n in ([i] if i in trials else by_unit[i])))
+    return list(dict.fromkeys(n for i in ids for n in ([i] if i in trials or i in empty else sorted(by_unit[i]))))
 
 
 def rerun(job_dir: str, ids: List[str], *, reason: str = "", concurrency: Optional[int] = None, retries: int = 0,
           max_usd: Optional[float] = None, env=os.environ, say: Callable[[str], None] = print, licences=None,
-          prices_unreachable: Optional[str] = None, root: Optional[str] = None) -> dict:
+          prices_unreachable: Optional[str] = None, root: Optional[str] = None, every_unfinished: bool = False,
+          count: Optional[int] = None, task_set: Optional[dict] = None) -> dict:
     """Run the trials ``ids`` name (:func:`chosen`) of the ended job ``job_dir`` again, in that job. ``retries``:
     automatic retries of each re-run try, as a run's; ``max_usd``: the re-run's own spending cap; ``concurrency``:
     the job's unless given. ``root``: a catalogue folder to resolve the definitions in (the user's and the
-    bundled ones by default). Returns the record added to the job's ``reruns``; ``run.Refused`` before anything
-    moves."""
+    bundled ones by default). ``every_unfinished``: in place of ``ids``, each trial the job planned that has no
+    result, or whose run its cap or a Stop interrupted (:func:`interrupted`). ``count`` or ``task_set``: in
+    place of ``ids``, a further part of the planned tasks not yet run (:func:`more`). Returns the record added to the
+    job's ``reruns``, or {"job", "trials": []} with nothing written when there is no such trial; ``run.Refused``
+    before anything moves."""
     job_dir = os.path.abspath(job_dir.rstrip("/"))
     cfg, old = merge._read(os.path.join(job_dir, "config.json")), merge._read(os.path.join(job_dir, "result.json"))
     if cfg.get("runner") != "standard" or not isinstance(cfg.get("standard"), dict):
@@ -171,7 +287,25 @@ def rerun(job_dir: str, ids: List[str], *, reason: str = "", concurrency: Option
                           "a trial's settings may not be its config's. Run it again in its shard's job")
     names = merge._trials(job_dir)
     trials = {n: merge._read(os.path.join(job_dir, n, "result.json")) for n in names}
-    picked = chosen(job_dir, ids, trials)
+    plan = planned(job_dir)
+    empty = unfinished(job_dir, plan or [])
+    if (every_unfinished or count is not None or task_set is not None) and plan is None:
+        raise run.Refused(f"{os.path.basename(job_dir)} does not record the tasks it planned (its live feed names "
+                          "none): name its trials with --unit")
+    if every_unfinished:
+        ids = [n for n, _ in plan if n in empty or interrupted(trials.get(n))]
+        if not ids:
+            say(f"nothing to run: every task {os.path.basename(job_dir)} planned has a result")
+            return {"job": job_dir, "trials": []}
+    elif count is not None or task_set is not None:
+        ids = more(job_dir, plan, empty, count=count, task_set=task_set,
+                   dataset=str(((cfg.get("datasets") or [{}])[0] or {}).get("name") or "").partition("/")[2],
+                   noun=tuple(cfg.get("runner_items") or ("task", "tasks"))[:2])
+        if not ids:
+            say(f"nothing to run: every task of the set {task_set['task_set']['name']} {os.path.basename(job_dir)} "
+                "planned has a result")
+            return {"job": job_dir, "trials": []}
+    picked = chosen(job_dir, ids, trials, empty)
     bench, other = resolve(cfg, list(trials.values()), root)
     model = str(((cfg.get("agents") or [{}])[0] or {}).get("model_name") or "")
     dataset = str(((cfg.get("datasets") or [{}])[0] or {}).get("name") or "").partition("/")[2]
@@ -188,29 +322,65 @@ def rerun(job_dir: str, ids: List[str], *, reason: str = "", concurrency: Option
                 prices_unreachable=prices_unreachable, constraints=std.get("constraints") or None,
                 timeouts=std.get("timeouts") or None, max_turns=std.get("max_turns"), max_calls=std.get("max_calls"),
                 served_by=std.get("served_by") or None)
-    # each trial's unit, its place and its attempt, as the runner named it; the try it is run again as
-    work, first_try = [], {}
+    # each trial's unit, its place and its attempt, as the runner named it; the try it is run again as.
+    # ``fresh``: a trial with no folder, begun now as the try after those kept (none, for a task never begun)
+    work, first_try, fresh = [], {}, {}
     for name in picked:
-        unit, tag = str((trials[name].get("standard") or {}).get("unit") or ""), _TAG.search(name)
+        unit = str((trials[name].get("standard") or {}).get("unit") or "") if name in trials else empty[name]["unit"]
+        tag = _TAG.search(name)
         i, a = (int(tag.group(1)), int(tag.group(2) or 1)) if tag else (-1, 1)
         if not tag or r.trial_name(i, unit, a) != name:
             raise run.Refused(f"{name} is not a trial this runner named: it cannot be run again in place")
-        first_try[name] = int((trials[name].get("standard") or {}).get("retries") or 0) + 1
-        if os.path.lexists(os.path.join(job_dir, "retried", f"{name}.try-{first_try[name]}")):
-            raise run.Refused(f"retried/{name}.try-{first_try[name]} is there already, and {name} does not count it: "
-                              "the job's tries do not add up")
+        if name not in trials and os.path.islink(os.path.join(job_dir, name)):
+            raise run.Refused(f"{name} is a symbolic link: use a directory inside the job")
+        if name not in trials and not empty[name]["folder"]:
+            fresh[name] = _kept(job_dir, name)
+        else:
+            # a trial's folder with no result was the try after those kept
+            first_try[name] = (int((trials[name].get("standard") or {}).get("retries") or 0) if name in trials
+                               else _kept(job_dir, name)) + 1
+            if os.path.lexists(os.path.join(job_dir, "retried", f"{name}.try-{first_try[name]}")):
+                raise run.Refused(f"retried/{name}.try-{first_try[name]} is there already, and {name} does not count it: "
+                                  "the job's tries do not add up")
         work.append((i, unit, a))
     held = _hold(job_dir)
     try:
-        return _again(r, job_dir, old, cfg, trials, picked, work, first_try, reason, t0=time.time())
+        if every_unfinished:
+            counts = [sum(name in empty for name in picked)]
+            counts += [sum(said(trials.get(name) or {}).get("error") == error for name in picked)
+                       for error in (ledgers.ERROR, run.CANCELLED)]
+            say(f"unfinished: {counts[0]} no result, {counts[1]} spending cap, {counts[2]} stopped")
+        return _again(r, job_dir, old, cfg, trials, picked, work, first_try, reason, t0=time.time(), fresh=fresh,
+                      empty=empty)
     finally:
         held.close()
 
 
+def _begin(r: "run.Run", name: str, iur: tuple, retry: int, work_unit) -> Optional[dict]:
+    """A trial with no folder, begun: its unit's own run, as the run's first pass does, at try ``retry`` + 1. A
+    try that does not end - not begun, or stopped under it - leaves no folder: the task stands as it was."""
+    here = os.path.join(r.job_dir, name)
+    r.feed.emit("trial.queued", name, agent=r.other["key"], position=0)
+    res = None
+    try:
+        res = work_unit((*iur, retry))
+        if res is not None and r._stopped.is_set() and (res.get("exception_info") or {}).get("exception_type") == run.CANCELLED:
+            res = None
+    finally:
+        if res is None and os.path.lexists(here):
+            gone = here + ".stopped"
+            os.replace(here, gone)
+            shutil.rmtree(gone, ignore_errors=True)
+    return res
+
+
 def _again(r: "run.Run", job_dir: str, old: dict, cfg: dict, trials: Dict[str, dict], picked: List[str], work: list,
-           first_try: Dict[str, int], reason: str, t0: float) -> dict:
+           first_try: Dict[str, int], reason: str, t0: float, fresh: Optional[Dict[str, int]] = None,
+           empty: Optional[Dict[str, dict]] = None) -> dict:
     """The re-run itself, the job held (:func:`rerun`)."""
-    r._tries = dict(first_try)
+    fresh, empty = fresh or {}, empty or {}
+    killed = [name for name in picked if name in empty and name not in fresh]
+    r._tries = dict(first_try, **fresh)
     n = len(old.get("reruns") or []) + 1
     if (r.max_usd is not None or r.unit_max_usd is not None) and r.base:
         # the re-run's own cap, in a ledger of its own: the first run's stays as it was
@@ -222,7 +392,7 @@ def _again(r: "run.Run", job_dir: str, old: dict, cfg: dict, trials: Dict[str, d
     r.ready()                                # refused here, the job reads as it did: nothing has moved
     p.emit("plan", stages="units")           # a further part of the job: its units said after the first's
     r.n_units = len(work)
-    p.emit("units", "start", n=len(work), of=len(trials), noun=r.bench["units"]["nouns"])
+    p.emit("units", "start", n=len(work), of=len(trials) + len(empty), noun=r.bench["units"]["nouns"])
     path = os.path.join(job_dir, live_feed.FEED)
     r.feed = live_feed.Writer(path, r.name)
     r.feed.seq = _last_seq(path)
@@ -234,9 +404,24 @@ def _again(r: "run.Run", job_dir: str, old: dict, cfg: dict, trials: Dict[str, d
 
     def first(iur, work_unit):
         name = r.trial_name(*iur)
-        res = r.try_again(name, iur, first_try[name], work_unit)
+        if name in fresh:
+            res = _begin(r, name, iur, fresh[name], work_unit)
+        else:
+            if name in killed:               # kept as the try it was, marked: it holds no result
+                fd, marker = tempfile.mkstemp(dir=os.path.join(job_dir, name))
+                os.fchmod(fd, 0o644)         # readable as the trial's other files are
+                try:
+                    with os.fdopen(fd, "w") as f:
+                        json.dump({"found_at": mark["at"], "result": None}, f)
+                    os.replace(marker, os.path.join(job_dir, name, NO_RESULT))
+                finally:
+                    if os.path.exists(marker):
+                        os.unlink(marker)
+            res = r.try_again(name, iur, first_try[name], work_unit)
         if res is not None:                  # the try asked for: its record says so, before a retry may move it
-            res["standard"] = dict(res.get("standard") or {}, rerun=dict(mark, replaced=said(trials[name])))
+            how = {"begun": True} if name in fresh else {"replaced": said(trials.get(name) or {})}
+            how.update({"no_result": True} if name in killed else {})
+            res["standard"] = dict(res.get("standard") or {}, rerun=dict(mark, **how))
             job._write(os.path.join(job_dir, name, "result.json"), json.dumps(res, indent=1))
         return res
 
@@ -254,20 +439,24 @@ def _again(r: "run.Run", job_dir: str, old: dict, cfg: dict, trials: Dict[str, d
             who = job.served_total(every, job.served(r.benchmark_calls(), getattr(r, "serving", None)))
             out.pop("served", None)
             out.update({"served": who} if who else {})
-        replaced, costs = [], []
+        replaced, begun, costs = [], [], []
         for name in picked:
-            res, k = now.get(name) or {}, first_try[name]
-            last = int((res.get("standard") or {}).get("retries") or 0)
-            if last < k:
+            res = now.get(name) or {}
+            k, last = fresh.get(name, first_try.get(name)), int((res.get("standard") or {}).get("retries") or 0)
+            if not res or (name not in fresh and last < k):
                 continue                     # not begun, or stopped: the try before is back
-            replaced.append({"trial": name, "unit": str((res.get("standard") or {}).get("unit") or ""), "try": k,
-                             "was": said(trials[name]), "now": said(res)})
+            unit = str((res.get("standard") or {}).get("unit") or "")
+            if name in fresh:                # its first try ran now, and each try after it
+                begun.append({"trial": name, "unit": unit, "now": said(res)})
+            else:
+                replaced.append({"trial": name, "unit": unit, "try": k, "was": said(trials.get(name) or {}), "now": said(res)})
             costs += [_cost(res)] + [_cost(merge._read(os.path.join(job_dir, "retried", f"{name}.try-{t}", "result.json")))
                                      for t in range(k + 1, last + 1)]
         known = [c for c in costs if c is not None]
         spent = budget["spent_usd"] if budget else (round(sum(known), 6) if known else None)
         record.update({"at": job.iso(t0), "finished_at": job.iso(time.time()), **({"reason": reason} if reason else {}),
-                       "trials": list(picked), "replaced": replaced, "max_usd": r.max_usd, "spent_usd": spent,
+                       "trials": list(picked), "replaced": replaced, **({"begun": begun} if fresh else {}),
+                       **({"no_result": list(killed)} if killed else {}), "max_usd": r.max_usd, "spent_usd": spent,
                        **({"stopped": True} if r._stopped.is_set() or (budget or {}).get("stopped") else {})})
         out["reruns"] = list(old.get("reruns") or []) + [dict(record)]
         job._write(os.path.join(job_dir, "result.json"), json.dumps(out, indent=1))
@@ -278,8 +467,13 @@ def _again(r: "run.Run", job_dir: str, old: dict, cfg: dict, trials: Dict[str, d
     if budget and budget.get("max_usd") is not None:
         r.say(f"spent {ledgers.usd(budget['spent_usd'] or 0)} of the {ledgers.usd(budget['max_usd'])} USD cap"
               + (": stopped there" if budget.get("stopped") else ""))
-    r.say(f"ran again: {len(record['replaced'])} of {len(picked)} replaced"
-          + "".join(f"; {x['trial']}: {_word(x['was'])} -> {_word(x['now'])}" for x in record["replaced"]))
+    if fresh:
+        r.say(f"run: {len(record['begun'])} of {len(fresh)} begun"
+              + "".join(f"; {x['trial']}: {_word(x['now'])}" for x in record["begun"]))
+    if len(picked) > len(fresh):
+        r.say(f"ran again: {len(record['replaced'])} of {len(picked) - len(fresh)} replaced"
+              + "".join(f"; {x['trial']}: {'no result' if x['trial'] in killed else _word(x['was'])} -> {_word(x['now'])}"
+                        for x in record["replaced"]))
     return dict(record, job=job_dir)
 
 

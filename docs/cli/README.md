@@ -23,7 +23,7 @@ also works.
 | [Conform an agent or a capability](conform.md) | `nullius standard conform` |
 | [Fidelity](fidelity.md) | `nullius standard fidelity` |
 | [Shard and merge](shard-and-merge.md) | `nullius standard run --shard`, `merge` |
-| [Task sets](task-sets.md) | `nullius standard units`; `set create`, `update`, `list`, `show`, `import`; `run --set` |
+| [Task sets](task-sets.md) | `nullius standard units`; `set create`, `update`, `list`, `show`, `rename`, `delete`, `import`; `run --set` |
 | [Run tasks again](rerun.md) | `nullius standard rerun` |
 | [Storage](../settings/README.md#storage) | `nullius paths [--json]` |
 | [Model prices](../settings/model-prices.md) | `nullius prices [list\|update\|set\|remove]` |
