@@ -589,6 +589,7 @@ def fold(events: list[Event], now: datetime | None = None, notices: list[str] | 
                 board.agents = list(d.get("agents") or [])
         elif e.event == "job.start":
             board.started_at = e.ts
+            board.finished_at = None           # a job begun again after its end (chosen tasks run again) runs until its next end
             board.n_total = _num(d.get("n_total"), int)
             board.n_concurrent = _num(d.get("n_concurrent"), int)
             board.wall_sec = _num(d.get("wall_sec"))

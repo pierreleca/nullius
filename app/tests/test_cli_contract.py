@@ -240,6 +240,41 @@ class CommandLine(Scratch):
         self.assertEqual([r["job_id"] for r in listed], ["failed-job"])
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "out")))
 
+    def test_running_tasks_again_documents_its_help_and_refuses_on_one_line(self):
+        """Human help and machine-readable results are tested, including empty
+        inputs, invalid arguments, unavailable resources, failed jobs and
+        authorization failures: here for running chosen tasks of a job again,
+        whose refusals write nothing and leave stdout empty."""
+        out = self.sh("standard.cli", "rerun", "--help")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        for line in ("usage:", "rerun", "JOB_DIR", "examples:", "exit codes:"):
+            self.assertIn(line, out.stdout)
+        self.assertEqual(out.stderr, "")
+        job = Path(self.tmp, "job")
+        write_json(job / "config.json", {"job_name": "job", "runner": "standard",
+                                         "standard": {"benchmark": "humaneval", "plugged": "nop", "kind": "control"}})
+        write_json(job / "result.json", {"id": "job", "n_total_trials": 1, "stats": {}})
+        write_json(job / "a__u0000" / "result.json", {"trial_name": "a__u0000", "standard": {"unit": "a"}})
+        Path(self.tmp, "ids.txt").write_text("a\n")
+        before = tree_digest(job)
+        cases = [
+            (["rerun", os.path.join(self.tmp, "nowhere"), "--unit", "a"], 3, "no such directory"),
+            (["rerun", str(job)], 2, "refused: no task named"),
+            (["rerun", str(job), "--unit", "nosuch"], 2, "refused: job holds no trial or unit nosuch"),
+            (["rerun", str(job), "--unit", "a", "--units", os.path.join(self.tmp, "ids.txt")], 2, "usage:"),
+            (["rerun", str(job), "--unit", "a", "--retries", "x"], 2, "usage:"),
+        ]
+        for args, code, said in cases:
+            with self.subTest(args=args[2:]):
+                out = self.sh("standard.cli", *args)
+                self.assertEqual(out.returncode, code, out.stderr)
+                self.assertIn(said, out.stderr)
+                self.assertEqual(out.stdout, "", "a failure leaves stdout empty")
+                if said.startswith("refused"):
+                    self.assertEqual(len(out.stderr.strip().splitlines()), 1)
+        self.assertEqual(tree_digest(job), before)
+        self.assertTmpHolds("job", "ids.txt")
+
     def test_documented_exit_codes_no_secrets_and_no_unintended_writes(self):
         """Commands work non-interactively with documented exit codes and no
         secrets in output; read/preview checks produce no unintended writes,

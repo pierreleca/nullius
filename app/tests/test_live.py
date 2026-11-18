@@ -246,6 +246,32 @@ class Fold(unittest.TestCase):
         self.assertEqual(b.totals()["cost_usd"], 0.2)   # the attempt before was paid for: the board's cost counts it
         self.assertIsNone(b.tokens_per_sec())          # one report of the attempt's own: no baseline, no rate
 
+    def test_a_job_begun_again_after_its_end_runs_until_its_next_end(self):
+        # chosen tasks of an ended job run again in it (the standard's rerun): a second job.start over the job's
+        # whole count, the task's next attempt, a second job.end
+        start = datetime(2026, 11, 18, 9, 0, 0, tzinfo=timezone.utc)
+        def at(sec): return (start + timedelta(seconds=sec)).isoformat().replace("+00:00", "Z")
+        lines = [ev(1, "job.start", trial=None, ts=at(0), n_total=2, n_concurrent=2),
+                 ev(2, "trial.phase", trial="a", ts=at(0), phase="agent_run"),
+                 ev(3, "trial.phase", trial="b", ts=at(0), phase="agent_run"),
+                 ev(4, "trial.end", trial="a", ts=at(10), outcome="resolved", reward=1.0),
+                 ev(5, "trial.end", trial="b", ts=at(12), outcome="unresolved", reward=0.0, cost_usd=0.2),
+                 ev(6, "job.end", trial=None, ts=at(13)),
+                 ev(7, "job.start", trial=None, ts=at(500), n_total=2, n_concurrent=1),
+                 ev(8, "trial.queued", trial="b", ts=at(500), position=0),
+                 ev(9, "trial.phase", trial="b", ts=at(501), phase="agent_run")]
+        b = board_of(*lines, now=start + timedelta(seconds=510))
+        self.assertEqual(b.state, "running")
+        c = b.counts()
+        self.assertEqual((c["total"], c["running"], c["completed"], c["pending"]), (2, 1, 1, 0))
+        card = next(t for t in b.snapshot()["trials"] if t["trial"] == "b")
+        self.assertEqual((card["state"], card["attempt"], card["retried"]), ("running", 2, ["unresolved"]))
+        lines += [ev(10, "trial.end", trial="b", ts=at(520), outcome="resolved", reward=1.0, cost_usd=0.1),
+                  ev(11, "job.end", trial=None, ts=at(521))]
+        b = board_of(*lines, now=start + timedelta(seconds=600))
+        self.assertEqual((b.state, b.counts()["completed"]), ("finished", 2))
+        self.assertAlmostEqual(b.totals()["cost_usd"], 0.3)             # both attempts paid for
+
     def test_eta_counts_down_while_a_trial_runs(self):
         # the same median, read later: a running trial's time so far comes off its share, so the ETA moves
         start = datetime(2026, 9, 12, 18, 0, 0, tzinfo=timezone.utc)

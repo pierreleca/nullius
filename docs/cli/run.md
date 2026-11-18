@@ -114,7 +114,7 @@ Each phase of a unit has a time limit. `--timeout PHASE=SECONDS` (repeatable) fo
 | Wrong key, spent credit | No; three in a row stop the run |
 | A setup this machine lacks, a missing secret, a cap reached, Stop, failed task | No |
 
-`conform` and `prove` retry a rate limit once.
+`conform` and `prove` retry a rate limit once. Chosen tasks of an ended job run again by hand: [Run tasks again](rerun.md).
 
 ## A list of units
 

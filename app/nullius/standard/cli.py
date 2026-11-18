@@ -12,6 +12,7 @@
     PYTHONPATH=app python3 -m nullius.standard.cli prove BENCHMARK[@VERSION] [--dataset D] [--limit N]
     PYTHONPATH=app python3 -m nullius.standard.cli run ... --shard I/N [--launch ID]
     PYTHONPATH=app python3 -m nullius.standard.cli merge JOB_DIR... -o OUT [--force]
+    PYTHONPATH=app python3 -m nullius.standard.cli rerun JOB_DIR (--unit ID ... | --units FILE) [--reason TEXT] [-j N] [--retries N] [--max-usd USD]
     PYTHONPATH=app python3 -m nullius.standard.cli fidelity AGENT --model M [--provider P] [--option NAME=VALUE ...] [--passes N] --unsandboxed
 
 An agent runs commands as you on the local backend, which is not a sandbox:
@@ -43,7 +44,9 @@ shard of the dataset's units (``standard/shard.py``: by the unit id's hash, then
 ``--limit``), the job recording its shard and its launch (``--launch``); ``--units FILE``
 runs only the units a file lists (``run.units_file``: one id a line), read on
 the machine the command runs on, ``--from-run`` or not; ``merge``
-puts a launch's shard jobs together into one job (``standard/merge.py``). ``--option``
+puts a launch's shard jobs together into one job (``standard/merge.py``); ``rerun`` runs
+chosen tasks of an ended job again in that job, with its settings, each earlier
+try kept (``standard/rerun.py``). ``--option``
 sets one of the agent's or capability's options (``options`` in its definition);
 the rest keep the vendor's defaults, and the job's config records them all.
 ``--served-by [MODEL=]SLUG[,SLUG...]`` lets only those serving providers answer
@@ -81,7 +84,7 @@ from nullius import constraints as limits, paths, prices as price_list, progress
 if __name__ == "__main__" and "--from-run" not in sys.argv[1:]:
     settings.load(paths.settings_file())
 
-from nullius.standard import boat, conform, definitions, fidelity, job, match, merge, pins, ports, prove, run, shard
+from nullius.standard import boat, conform, definitions, fidelity, job, match, merge, pins, ports, prove, rerun, run, shard
 
 ENV_FILE = paths.settings_file()
 
@@ -620,6 +623,51 @@ def cmd_merge(a):
     return 0
 
 
+RERUN_EPILOG = """examples:
+  nullius standard rerun jobs_standard/JOB --unit HumanEval/12 --reason "the provider failed"
+  nullius standard rerun jobs_standard/JOB --units again.txt --max-usd 2
+
+exit codes:
+  0  the tasks ran again (a refusal on stderr otherwise)
+  2  refused before anything moved, or a bad flag
+  3  no such job directory"""
+
+
+def cmd_rerun(a):
+    if not os.path.isdir(a.job):
+        print(f"no such directory: {a.job}", file=sys.stderr)
+        return 3
+    try:
+        ids = list(a.unit or []) + (run.units_file(a.units)["units"] if a.units is not None else [])
+        with open(os.path.join(a.job, "config.json"), encoding="utf-8") as f:
+            given = (json.load(f).get("standard") or {}).get("constraints") or {}
+    except run.Refused as e:
+        print("refused:", e, file=sys.stderr)
+        return 2
+    except (OSError, ValueError, AttributeError):
+        given = {}
+    if isinstance(given, dict) and given.get("cpu_set") is not None:
+        try:
+            limits.confine(given)                # before any thread, as for its run
+        except OSError as e:
+            print(f"refused: constraints: cpu_set: {e.strerror or e}", file=sys.stderr)
+            return 2
+    unreachable = None
+    if a.max_usd is not None:
+        try:
+            price_list.update()
+        except ValueError as e:
+            unreachable = str(e)
+    try:
+        got = rerun.rerun(a.job, ids, reason=a.reason or "", concurrency=a.concurrency, retries=a.retries,
+                          max_usd=a.max_usd, prices_unreachable=unreachable)
+    except run.Refused as e:
+        print("refused:", e, file=sys.stderr)
+        return 2
+    print(got["job"])
+    return 0
+
+
 def cmd_fidelity(a):
     o = definitions.get("agent", a.other)
     if not o:
@@ -771,6 +819,18 @@ def main(argv=None):
     g.add_argument("jobs", nargs="+", metavar="JOB_DIR")
     g.add_argument("-o", "--out", required=True, help="the merged job's directory (its name is the job's)")
     g.add_argument("--force", action="store_true", help="merge shards of different launches, versions, models or agents")
+    rr = sub.add_parser("rerun", help="run chosen tasks of an ended job again in that job, each earlier try kept",
+                        formatter_class=argparse.RawDescriptionHelpFormatter, epilog=RERUN_EPILOG)
+    rr.add_argument("job", metavar="JOB_DIR", help="a job of the standard that has ended")
+    named = rr.add_mutually_exclusive_group()
+    named.add_argument("--unit", action="append", metavar="ID",
+                       help="a trial's name, or a unit's id for each of its attempts (repeatable): run again whatever its result")
+    named.add_argument("--units", metavar="FILE", help="the ids a file lists, one a line (# starts a comment)")
+    rr.add_argument("--reason", help="why, kept in the job's record of the re-run")
+    rr.add_argument("-j", "--concurrency", type=int, help="units at once (default: the job's)")
+    rr.add_argument("--retries", type=_retries, default=RETRIES, metavar="N",
+                    help=f"run a failed try again, up to N times, as a run's --retries; 0 to {MAX_RETRIES}, default {RETRIES}")
+    rr.add_argument("--max-usd", type=float, metavar="USD", help="the re-run's own spending cap, as a run's --max-usd")
     tr = sub.add_parser("traces", help="give past standard trials a trace, from the files they kept")
     tr.add_argument("root", metavar="DIR", help="a job, or a folder of jobs")
     tr.add_argument("--dry-run", action="store_true", help="say what it would write, and write nothing")
@@ -781,13 +841,13 @@ def main(argv=None):
     for parser in (ap, *sub.choices.values()):
         parser.allow_abbrev = False
     a = ap.parse_args(argv)
-    if a.cmd in ("run", "prove", "conform", "fidelity"):
+    if a.cmd in ("run", "prove", "conform", "fidelity", "rerun"):
         _exit_on_term()
         progress.ECHO = sys.stderr           # each stage as a line (nullius/progress.py): stdout stays the job and its units
     if not getattr(a, "from_run", False):
         settings.load(ENV_FILE)
     return {"list": cmd_list, "check": cmd_check, "fit": cmd_fit, "pins": cmd_pins, "new": cmd_new, "conform": cmd_conform, "run": cmd_run,
-            "fidelity": cmd_fidelity, "prove": cmd_prove, "merge": cmd_merge, "traces": cmd_traces}[a.cmd](a)
+            "fidelity": cmd_fidelity, "prove": cmd_prove, "merge": cmd_merge, "rerun": cmd_rerun, "traces": cmd_traces}[a.cmd](a)
 
 
 if __name__ == "__main__":
