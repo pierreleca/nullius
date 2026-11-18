@@ -54,6 +54,7 @@ An acting call's image, and `step`'s with `screenshot` true, is the observation 
 
 ## Known limits
 
+- Inside the desktop, the agent's code can read and write wherever the desktop's user can and can create links outside `folder`; `folder` bounds the names of paths passed to `upload` and `files`, and the benchmark's records hold the code of every step action and `prepare` call.
 - An action's code may start a process that goes on after its step, as an OSWorld action may. The agent learns what it did from a later step's answer alone.
 - In the window the desktop already holds the task's files and windows. An agent that guessed its task from them could work there; the benchmark's records list every `prepare` call's code.
 - An agent that is not sandboxed (the local backend) could reach the machine beside the port. A comparison that has to be trusted runs on the container backend.
