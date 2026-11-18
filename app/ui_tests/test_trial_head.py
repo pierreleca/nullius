@@ -127,6 +127,39 @@ class TrialHead(unittest.TestCase):
         said, _ = self.head(parse.parse_job(root), "t1")
         self.assertTrue(said.endswith(f"Steps {items}"), said)
 
+    def test_what_ended_the_work_is_beside_the_outcome_on_the_trial_and_the_jobs_table(self):
+        """The record's cut, else the score's own end: by its name beside the outcome, on the trial's page and in
+        its row of the job's table; nothing for a trial that says neither."""
+        root = os.path.join(self.tmp.name, "parts-arm")
+        shutil.copytree(NATIVE / "parts-arm", root)
+        path = os.path.join(root, "t1", "result.json")
+        with open(path) as f:
+            res = json.load(f)
+        with open(os.path.join(root, "t1", "verifier", "score.json"), "w") as f:
+            json.dump({"reward": 1.0, "detail": {"steps": 60, "steps_limit": 60, "ended": "steps"}}, f)
+        for cut, label in ((None, "Step limit"), ("time", "Time limit"), ("calls", "Call cap")):
+            with self.subTest(cut=cut):
+                with open(path, "w") as f:
+                    json.dump(dict(res, standard=dict(res.get("standard") or {}, **({"cut": cut} if cut else {}))), f)
+                job = parse.parse_job(root)
+                with patch.object(web.shared, "_jobs_for_request", return_value=[job]):
+                    trial = self.client.get(f"/trial/{job.job_id}/t1")
+                    table = self.client.get(f"/job/{job.job_id}")
+                self.addCleanup(trial.close)
+                self.addCleanup(table.close)
+                title = trial.get_data(as_text=True).split('<div class="page-title trial-title">', 1)[1].split("</div>", 1)[0]
+                self.assertIn(f'title="What ended the agent\'s work">{label}</span>', unescape(title))
+                row = table.get_data(as_text=True).split('data-trial="t1"', 1)[1].split("</tr>", 1)[0]
+                self.assertIn(f'<span class="badge ended-by" title="What ended the agent\'s work">{label}</span>', unescape(row))
+        os.remove(os.path.join(root, "t1", "verifier", "score.json"))
+        with open(path, "w") as f:
+            json.dump(dict(res, standard=dict(res.get("standard") or {})), f)
+        job = parse.parse_job(root)
+        with patch.object(web.shared, "_jobs_for_request", return_value=[job]):
+            trial = self.client.get(f"/trial/{job.job_id}/t1")
+        self.addCleanup(trial.close)
+        self.assertNotIn("ended-by", trial.get_data(as_text=True))
+
 
 class RecordDownload(unittest.TestCase):
     def setUp(self):

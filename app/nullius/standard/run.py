@@ -2435,7 +2435,8 @@ class Run:
 
     def scored_cuts(self) -> frozenset:
         """The cuts after which a unit an agent ran is still scored, as its benchmark declares them
-        (``limits.scored_cuts``): none for any other participant, nor for a benchmark that declares none."""
+        (``limits.scored_cuts``): none for any other participant, nor for a benchmark that declares none. Only an
+        agent over a session is cut (:meth:`drive_agent`); one started as a command keeps the errors."""
         if self.other.get("_kind") != "agent":
             return frozenset()
         return frozenset((self.bench.get("limits") or {}).get("scored_cuts") or ())
@@ -2524,7 +2525,7 @@ class Run:
                 for _ in range(self.max_turns if opened else 0):
                     transcript.append({"role": "user", "text": prompt})
                     try:
-                        turn = c.prompt(sid, prompt, timeout=left(), cut=watch.event if watch is not None else None)
+                        turn = c.prompt(sid, prompt, timeout=left(), **({"cut": watch.event} if watch is not None else {}))
                     except acp.Timeout as e:     # said as the whole work's limit, not the seconds this turn had left
                         raise acp.Timeout(f"the agent did not end its work in {int(limit)} s", e.events) from e
                     answer = turn.text

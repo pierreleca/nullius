@@ -88,7 +88,7 @@ Each phase of a unit has a time limit. `--timeout PHASE=SECONDS` (repeatable) fo
 
 ## A unit cut at a limit
 
-A benchmark whose loop can be ended from outside may score an agent's unit that a limit cut short, as OSWorld scores a task at its step limit: `limits.scored_cuts` in its [definition](../standard.md#driver-ops) names the cuts (OSWorld1: all three). Elsewhere each stays the error above.
+A benchmark whose loop can be ended from outside may score an agent's unit that a limit cut short, as OSWorld scores a task at its step limit: `limits.scored_cuts` in its [definition](../standard.md#driver-ops) names the cuts (OSWorld1: all three). Elsewhere each stays the error above, as it does for an agent started as a command rather than over a session.
 
 | Cut | When | Then |
 | --- | --- | --- |
@@ -99,7 +99,7 @@ A benchmark whose loop can be ended from outside may score an agent's unit that 
 | Rule | Detail |
 | --- | --- |
 | Still errors | A time run out while the provider refused the agent's last call (the unit is tried again); a unit where nothing moved, no model call answered and no step counted |
-| An action in flight | On the computer port the action running at the cut ends; the rest of its step and any call not yet taken are not run |
+| An action in flight | On the computer port, a call the agent made before the cut runs on until the benchmark is told the turn ended, seconds later, at its score; what is left of it then is not run, nor is any call after |
 | The record | `standard.cut` in the trial's `result.json`; the job page, the trial page and `nullius runs show` say what ended the work: the agent, the benchmark (`done`, `fail`, its steps), the time or the cap. A unit no limit cut is written as before |
 | Not here yet | A run with no time limit; telling the agent its time or its cap of model calls |
 
