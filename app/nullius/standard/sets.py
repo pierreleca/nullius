@@ -230,6 +230,17 @@ def entries(benchmark: Optional[str] = None, root: Optional[str] = None) -> Tupl
     return got, bad
 
 
+def rows(benchmark: str, root: Optional[str] = None) -> List[dict]:
+    """The readable entries of ``benchmark`` as a page lists them, by name: {name, description, dataset, revision,
+    units, date}, the revision the latest, ``units`` its number of ids, ``date`` its date."""
+    out = []
+    for e in entries(benchmark, root)[0]:
+        last = revision(e)
+        out.append({"name": e["name"], "description": e.get("description") or "", "dataset": e["dataset"],
+                    "revision": last["revision"], "units": len(last["units"]), "date": last["date"]})
+    return out
+
+
 def write(entry: dict, root: Optional[str] = None) -> str:
     """The entry written whole, in place of the old file at once."""
     path = path_of(entry["benchmark"], entry["name"], root)

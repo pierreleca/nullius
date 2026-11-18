@@ -199,12 +199,24 @@ def _cached(destination: Path, marker: str, files: dict) -> bool:
     return True
 
 
-def build(cache: str, *, package: Path | None = None, catalogue: str | None = None) -> tuple[str, str]:
+def recipe_sets(recipe: dict) -> list[tuple[str, str]]:
+    """The task sets a standard recipe runs (``task_sets``), as (benchmark, name): what its snapshot carries."""
+    asked = (recipe or {}).get("task_sets")
+    bench = str((recipe or {}).get("benchmark") or "").partition("@")[0]
+    if not isinstance(asked, dict) or not bench:
+        return []
+    return sorted({(bench, str(ref).partition("@")[0]) for ref in asked.values() if isinstance(ref, str) and ref})
+
+
+def build(cache: str, *, package: Path | None = None, catalogue: str | None = None,
+          sets: list[tuple[str, str]] | None = None) -> tuple[str, str]:
     """Return (content ID, snapshot root), with ``app/nullius`` below it.
 
     A user entry replaces the whole bundled entry, as the normal catalogue
     loader does. Nothing is created in either input tree. The staged tree is
     replaced atomically, and the address covers the exact bytes being sent.
+    ``sets``: the task sets of the user catalogue the run reads, each
+    (benchmark, name), carried at ``catalogue/sets/<benchmark>/<name>.json``.
     """
     package = Path(package) if package is not None else PACKAGE
     if package.is_symlink():
@@ -241,6 +253,11 @@ def build(cache: str, *, package: Path | None = None, catalogue: str | None = No
             except json.JSONDecodeError:
                 continue  # Unfinished JSON drafts are not runnable catalogue entries.
             files.update({f"catalogue/{kind}/{name}/{r}": value for r, value in contents.items()})
+    for bench, name in sets or ():
+        relative = f"sets/{bench}/{name}.json"
+        if not _KEY.fullmatch(bench) or "/" in name or not (user / relative).is_file():
+            raise ValueError(f"the task set {name} of {bench} is not in the catalogue")
+        files[f"catalogue/{relative}"] = _read(user, relative)
     kits = package / "standard" / "kits"
     if kits.is_dir():
         if kits.is_symlink():
