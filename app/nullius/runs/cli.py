@@ -6,6 +6,7 @@
     PYTHONPATH=app python3 -m nullius.runs.cli show <root> <job id> --json
     PYTHONPATH=app python3 -m nullius.runs.cli show <root> <job id> <trial>   # one trial: what /trial/<job>/<trial> shows
     PYTHONPATH=app python3 -m nullius.runs.cli show <root> <job id> <trial> --json
+    PYTHONPATH=app python3 -m nullius.runs.cli show <root> <job id> <trial> --call N --request   # call N's request, rebuilt
 
 ``<root>`` is anything ``app.py`` accepts as a job root: a Harbor job
 directory, a parent of several, or a tree the import CLI has already
@@ -16,7 +17,11 @@ With a trial name, ``show`` reads that trial the way the trial page does —
 the outcome and checks, the usage and cost, the exception, and the steps of
 ``agent/trajectory.json`` through ``traces.trajectory`` (already redacted on
 the way in; the calls' arguments and observations, which can be the whole
-patch, are left to the page's conversation browser).
+patch, are left to the page's conversation browser). With ``--call N
+--request`` it prints the request the trial's agent sent in its call N, put
+back together from the relay's store of its exchanges
+(``standard/exchanges.py``) as the bytes sent, unredacted, and says on stderr
+whether their sha256 is the one recorded.
 
 Reading only: nothing is written, anywhere, and no socket is opened. The
 exit codes are the contract in ``docs/cli.md``, shared by every CLI here.
@@ -31,6 +36,7 @@ from dataclasses import asdict
 from datetime import datetime
 
 from nullius.runs import parse
+from nullius.standard import exchanges
 from nullius.traces import trajectory
 
 # Exit codes — docs/cli.md is the contract; the other two CLIs use the same
@@ -38,6 +44,7 @@ from nullius.traces import trajectory
 # its traceback is the report.
 EXIT_OK = 0
 EXIT_NOT_FOUND = 3
+EXIT_FAILED = 4
 
 EPILOG = """\
 examples:
@@ -45,13 +52,14 @@ examples:
   PYTHONPATH=app python3 -m nullius.runs.cli list jobs jobs_imported --json
   PYTHONPATH=app python3 -m nullius.runs.cli show jobs 2026-09-12__22-53-55 --json
   PYTHONPATH=app python3 -m nullius.runs.cli show jobs 2026-09-12__22-53-55 astropy__astropy-8707__agWFDYq
+  PYTHONPATH=app python3 -m nullius.runs.cli show jobs 2026-09-12__22-53-55 astropy__astropy-8707__agWFDYq --call 3 --request
 
 exit codes:
   0  done
   1  unexpected error (a traceback: report it)
   2  usage: a bad flag, a missing argument
-  3  input not found: no such root, no job under it, no job of that id, no trial of that name
-  4  the operation could not be completed
+  3  input not found: no such root, no job under it, no job of that id, no trial of that name, no such call
+  4  the operation could not be completed: a request that does not rebuild to its recorded sha256
 With --json, stdout is exactly one JSON document; everything else goes to stderr.
 """
 
@@ -208,6 +216,32 @@ def _print_trial(job: parse.Job, trial: parse.Trial) -> None:
         print(f"    {s['step_id']:>{width}} {s['source']:<6} {body}{dur}")
 
 
+def _request(trial: parse.Trial, n: int) -> int:
+    """Call ``n`` of the trial's agent route rebuilt from its store: the bytes on stdout, the verdict on stderr."""
+    folder = os.path.join(trial.dir, ".work", "relay", exchanges.FOLDER)
+    routes = exchanges.tags(folder)
+    tag = trial.trial_name.rsplit("__", 1)[-1]
+    tag = tag if tag in routes else routes[0] if len(routes) == 1 else None
+    if tag is None:
+        print(f"{trial.trial_name} kept no exchanges (a run before them, or --exchanges off)" if not routes
+              else f"{trial.trial_name} holds the exchanges of several routes: {', '.join(routes)}", file=sys.stderr)
+        return EXIT_NOT_FOUND
+    try:
+        got = exchanges.check(folder, tag, n)
+    except exchanges.Missing as e:
+        print(str(e), file=sys.stderr)
+        return EXIT_NOT_FOUND
+    if got["request"] is not None:
+        sys.stdout.buffer.write(got["request"] + b"\n")
+        sys.stdout.flush()
+    if got["same"]:
+        print(f"call {n}: sha256 {got['sha256']}, the recorded sent_sha256", file=sys.stderr)
+        return EXIT_OK
+    print(f"call {n}: " + (f"sha256 {got['sha256']}, not the recorded sent_sha256 {got['sent_sha256']}: " if got["sha256"] else "")
+          + got["why"], file=sys.stderr)
+    return EXIT_FAILED
+
+
 def _emit(doc) -> None:
     json.dump(doc, sys.stdout, ensure_ascii=False, indent=1, default=_stamp)
     sys.stdout.write("\n")
@@ -255,6 +289,8 @@ def _show(args) -> int:
             print(f"no trial named {args.trial_name!r} in {job.job_id} (trials there: {known})",
                   file=sys.stderr)
             return EXIT_NOT_FOUND
+        if args.call is not None:
+            return _request(trial, args.call)
         if args.json:
             _emit(trial_detail(job, trial))
         else:
@@ -308,10 +344,18 @@ def main(argv=None) -> int:
                          "checks, usage, exception and steps, as /trial/<job>/<trial> shows them")
     sh.add_argument("--json", action="store_true",
                     help="the whole parsed job (or the one trial, with its steps) as one JSON document")
+    sh.add_argument("--call", type=int, metavar="N",
+                    help="with --request and a trial: its agent's call N, as the call record numbers it (n)")
+    sh.add_argument("--request", action="store_true",
+                    help="with --call: print the request that call sent, rebuilt from the trial's exchanges, and say "
+                         "on stderr whether its sha256 is the recorded one")
     sh.set_defaults(run=_show)
     args = ap.parse_args(argv)
     if not args.command:
         ap.error("a command is required: list or show")
+    if args.command == "show" and (args.call is not None or args.request) and not (args.call is not None and args.request
+                                                                                   and args.trial_name and not args.json):
+        sh.error("--call N and --request go together, with a trial, without --json")
     return args.run(args)
 
 

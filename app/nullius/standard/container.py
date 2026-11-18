@@ -127,7 +127,7 @@ from secrets import compare_digest, token_hex
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from nullius import constraints, paths
-from nullius.standard import definitions, install
+from nullius.standard import definitions, exchanges as exchange_store, install
 
 def _runs_podman(path: str) -> bool:
     """Whether the program at ``path`` is podman under another name: a link to
@@ -725,7 +725,7 @@ def relay_argv(image: str, *, name: str, job: str, app: str, record: str, key_fi
                model: Optional[str], routes: Dict[str, str], prices: Optional[dict] = None, side_models=(),
                key_header: str = "authorization", hosts: Optional[Dict[str, str]] = None,
                ledger: Optional[str] = None, serving: Optional[Dict[str, List[str]]] = None,
-               max_calls: Optional[int] = None) -> List[str]:
+               max_calls: Optional[int] = None, exchanges: str = "off", exchanges_max_mb: int = exchange_store.MAX_MB) -> List[str]:
     """``docker run`` for a unit's relay: on the default bridge (its way to the
     provider), its port published on 127.0.0.1 only. The key is never given:
     ``key_file``, its file, is mounted read-only at ``RELAY_KEY_IN`` with
@@ -735,7 +735,9 @@ def relay_argv(image: str, *, name: str, job: str, app: str, record: str, key_fi
     ``ledger``: the file of the run's spending cap, its folder mounted so
     this relay books its calls where every other relay of the job does.
     ``serving``: by model, the serving providers that may answer it, as the
-    unit's own relay is given them (``relay.Relay``)."""
+    unit's own relay is given them (``relay.Relay``). ``exchanges`` and
+    ``exchanges_max_mb``: whether its calls are kept whole in its record
+    folder, and the bound, always said."""
     a = [DOCKER, "run", "-d", "--name", name, "--label", f"{LABEL}={job}", *way_out(), *_userns(), "--user", _user(),
          "--cap-drop", "ALL", *_security_opt(), "--init", *capped(),
          *[w for n, ip in sorted((hosts or {}).items()) for w in ("--add-host", f"{n}:{ip}")],
@@ -755,6 +757,7 @@ def relay_argv(image: str, *, name: str, job: str, app: str, record: str, key_fi
         a += ["--ledger", ledger]
     if max_calls:
         a += ["--max-calls", str(max_calls)]
+    a += ["--exchanges", exchanges, "--exchanges-max-mb", str(exchanges_max_mb)]
     for m in side_models:
         a += ["--side-model", m]
     # the pins of the models this relay sends; the run's other models (an option's embeddings) are another relay's
@@ -1025,9 +1028,11 @@ class Unit:
                  side_models=(), key_header: str = "authorization", servers: Iterable[str] = (),
                  doors: Iterable[Tuple[str, int, str]] = (), hosts: Optional[Dict[str, str]] = None,
                  ledger: Optional[str] = None, network_probe: Optional[str] = None, probe_now: bool = True,
-                 serving: Optional[Dict[str, List[str]]] = None, max_calls: Optional[int] = None):
+                 serving: Optional[Dict[str, List[str]]] = None, max_calls: Optional[int] = None,
+                 exchanges: str = "off", exchanges_max_mb: int = exchange_store.MAX_MB):
         self.job, self.tag, self.dir, self.image, self.app = job, tag, record_dir, image, app
         self.max_calls = max_calls               # the run's cap on its agent's model calls, when it has one
+        self.exchanges, self.exchanges_max_mb = exchanges, exchanges_max_mb    # its calls kept whole, and the bound
         self.ledger = ledger                     # the file of the run's spending cap, when it has one
         self.serving = dict(serving or {})       # by model, the serving providers that may answer it
         self.servers = list(servers)             # licence servers, host:port each: a forwarder apiece
@@ -1055,7 +1060,8 @@ class Unit:
             argv = relay_argv(self.image, name=self.names["relay"], job=self.job, app=self.app, record=self.dir,
                               key_file=self._key_file(), base=self.base, model=self.model, routes=self.routes,
                               prices=self.prices, side_models=self.side_models, key_header=self.key_header,
-                              hosts=self.hosts, ledger=self.ledger, serving=self.serving, max_calls=self.max_calls)
+                              hosts=self.hosts, ledger=self.ledger, serving=self.serving, max_calls=self.max_calls,
+                              exchanges=self.exchanges, exchanges_max_mb=self.exchanges_max_mb)
             self.started.append(self.names["relay"])
             _docker(argv[1:])
             _docker(["network", "connect", "--alias", RELAY_ALIAS, self.names["network"], self.names["relay"]])
