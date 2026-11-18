@@ -7,6 +7,7 @@
     PYTHONPATH=app python3 -m nullius.runs.cli show <root> <job id> <trial>   # one trial: what /trial/<job>/<trial> shows
     PYTHONPATH=app python3 -m nullius.runs.cli show <root> <job id> <trial> --json
     PYTHONPATH=app python3 -m nullius.runs.cli show <root> <job id> <trial> --call N --request   # call N's request, rebuilt
+    PYTHONPATH=app python3 -m nullius.runs.cli show <root> <job id> <trial> --calls   # the conversation by model call
 
 ``<root>`` is anything ``app.py`` accepts as a job root: a Harbor job
 directory, a parent of several, or a tree the import CLI has already
@@ -21,7 +22,10 @@ patch, are left to the page's conversation browser). With ``--call N
 --request`` it prints the request the trial's agent sent in its call N, put
 back together from the relay's store of its exchanges
 (``standard/exchanges.py``) as the bytes sent, unredacted, and says on stderr
-whether their sha256 is the one recorded.
+whether their sha256 is the one recorded. With ``--calls`` it prints the
+trial's model calls as the Conversation tab shows them (``traces.calls``):
+what each sent that the call before had not, its answer whole, the steps
+under it; redacted, pictures by their hash.
 
 Reading only: nothing is written, anywhere, and no socket is opened. The
 exit codes are the contract in ``docs/cli.md``, shared by every CLI here.
@@ -37,7 +41,7 @@ from datetime import datetime
 
 from nullius.runs import parse
 from nullius.standard import exchanges
-from nullius.traces import trajectory
+from nullius.traces import calls as by_call, trajectory
 
 # Exit codes — docs/cli.md is the contract; the other two CLIs use the same
 # numbers. 1 is left to Python itself: an uncaught exception is a bug, and
@@ -53,6 +57,7 @@ examples:
   PYTHONPATH=app python3 -m nullius.runs.cli show jobs 2026-09-12__22-53-55 --json
   PYTHONPATH=app python3 -m nullius.runs.cli show jobs 2026-09-12__22-53-55 astropy__astropy-8707__agWFDYq
   PYTHONPATH=app python3 -m nullius.runs.cli show jobs 2026-09-12__22-53-55 astropy__astropy-8707__agWFDYq --call 3 --request
+  PYTHONPATH=app python3 -m nullius.runs.cli show jobs 2026-09-12__22-53-55 astropy__astropy-8707__agWFDYq --calls
 
 exit codes:
   0  done
@@ -289,6 +294,10 @@ def _show(args) -> int:
             return EXIT_NOT_FOUND
         if args.call is not None:
             return _request(trial, args.call)
+        if args.calls:
+            traj = trajectory.load(trial.trajectory_path) if trial.has_trajectory else None
+            _emit(by_call.document(by_call.view(trial.dir, traj)))
+            return EXIT_OK
         if args.json:
             _emit(trial_detail(job, trial))
         else:
@@ -343,6 +352,8 @@ def main(argv=None) -> int:
     sh.add_argument("--request", action="store_true",
                     help="with --call: print the request that call sent, rebuilt from the trial's exchanges, and say "
                          "on stderr whether its sha256 is the recorded one")
+    sh.add_argument("--calls", action="store_true",
+                    help="with a trial: its model calls as one JSON document, as the Conversation tab shows them")
     sh.set_defaults(run=_show)
     args = ap.parse_args(argv)
     if not args.command:
@@ -350,6 +361,8 @@ def main(argv=None) -> int:
     if args.command == "show" and (args.call is not None or args.request) and not (args.call is not None and args.request
                                                                                    and args.trial_name and not args.json):
         sh.error("--call N and --request go together, with a trial, without --json")
+    if args.command == "show" and args.calls and (not args.trial_name or args.call is not None):
+        sh.error("--calls goes with a trial, without --call")
     return args.run(args)
 
 
