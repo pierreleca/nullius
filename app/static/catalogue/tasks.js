@@ -98,14 +98,19 @@
     pager(); chosenLine();
   }
 
+  function setShowing(showing) {
+    st.showing = showing;
+    $('tasks-show').setAttribute('aria-pressed', String(showing));
+    $('tasks-show').textContent = showing ? 'Show all' : 'Show selected';
+  }
   let typing = null;
-  $('tasks-q').addEventListener('input', e => { clearTimeout(typing); typing = setTimeout(() => { st.q = e.target.value.trim(); st.page = 1; load(); }, 250); });
+  $('tasks-q').addEventListener('input', e => { clearTimeout(typing); typing = setTimeout(() => { st.q = e.target.value.trim(); setShowing(false); st.page = 1; load(); }, 250); });
   $('tasks-cats').addEventListener('click', e => {
     const b = e.target.closest('[data-field]'); if (!b) return;
     const f = b.dataset.field, v = b.dataset.value, vs = st.cats[f] || [];
     st.cats[f] = vs.includes(v) ? vs.filter(x => x !== v) : [...vs, v];
     if (!st.cats[f].length) delete st.cats[f];
-    st.page = 1; load();
+    setShowing(false); st.page = 1; load();
   });
   $('tasks-rows').addEventListener('change', e => {
     const box = e.target.closest('input[type=checkbox]'); if (!box) return;
@@ -117,8 +122,7 @@
     st.page += b.dataset.page === 'next' ? 1 : -1; load();
   });
   $('tasks-show').addEventListener('click', () => {
-    st.showing = !st.showing; $('tasks-show').setAttribute('aria-pressed', String(st.showing));
-    $('tasks-show').textContent = st.showing ? 'Show all' : 'Show selected'; load();
+    setShowing(!st.showing); load();
   });
   $('tasks-match')?.addEventListener('click', async () => {
     const got = await (await nulliusFetch(query({ids: 1}))).json();
@@ -158,7 +162,7 @@
     const field = form?.querySelector('input'); if (!field) return;
     e.preventDefault(); form.scrollIntoView({block: 'nearest'}); field.focus({preventScroll: true});
   });
-  if (st.showing) { $('tasks-show').setAttribute('aria-pressed', 'true'); $('tasks-show').textContent = 'Show all'; }
+  setShowing(st.showing);
   chosenLine();
   load();
 })();

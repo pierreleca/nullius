@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -79,6 +80,76 @@ class Case(unittest.TestCase):
 
     def starts(self) -> int:
         return len(self.started.read_text().splitlines()) if self.started.exists() else 0
+
+
+class TheTaskFilters(unittest.TestCase):
+    def filtered(self, action):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node is required for the task filters")
+        script = Path(__file__).resolve().parents[1] / "static/catalogue/tasks.js"
+        program = r"""
+const assert = require('node:assert/strict'), elements = new Map();
+function element(id) {
+  if (!elements.has(id)) elements.set(id, {
+    dataset: {}, textContent: '', innerHTML: '', listeners: {}, attributes: {},
+    classList: {toggle() {}},
+    addEventListener(event, callback) { this.listeners[event] = callback; },
+    setAttribute(key, value) { this.attributes[key] = value; },
+    querySelector(selector) { return element(id + selector); }
+  });
+  return elements.get(id);
+}
+element('tasks-page').dataset = {set: 'dev', writable: 'true', listing: '/listing', rows: '/rows'};
+element('tasks-chosen-ids').textContent = '["alpha","beta"]';
+const tasks = ['alpha', 'beta'].map(id => ({id, title: id, categories: {kind: id}}));
+const requests = [];
+async function request(url) {
+  requests.push(url);
+  const query = new URL(url, 'http://localhost').searchParams;
+  const found = query.has('q') ? [] : query.has('cat') ? tasks.slice(1) : tasks;
+  return {json: async () => url === '/rows' ? {tasks, unknown: []}
+    : {ok: true, ready: true, total: found.length, of: 2, pages: 1, page: 1,
+       categories: {}, described: true, tasks: found}};
+}
+require('node:vm').runInNewContext(require('node:fs').readFileSync(process.argv[1], 'utf8'), {
+  document: {getElementById: element, querySelectorAll: () => [], querySelector: () => null},
+  URLSearchParams, nulliusFetch: request, setTimeout: callback => { callback(); return 1; }, clearTimeout() {}
+});
+async function flush() { for (let n = 0; n < 20; n++) await Promise.resolve(); }
+(async () => {
+  await flush();
+  assert.equal(element('tasks-show').attributes['aria-pressed'], 'true');
+  assert.equal(element('tasks-show').textContent, 'Show all');
+  const before = requests.length;
+  if (process.argv[2] === 'search') {
+    element('tasks-q').listeners.input({target: {value: 'absent'}});
+  } else {
+    element('tasks-cats').listeners.click({target: {closest: () => ({dataset: {field: 'kind', value: 'beta'}})}});
+  }
+  await flush();
+  assert.equal(requests.slice(before).some(url => url === '/rows'), false);
+  assert.equal(element('tasks-show').attributes['aria-pressed'], 'false');
+  assert.equal(element('tasks-show').textContent, 'Show selected');
+  assert.equal(element('tasks-chosen').textContent, '2 chosen');
+  const rows = element('tasks-rows').innerHTML;
+  if (process.argv[2] === 'search') assert.equal(rows, '');
+  else { assert.ok(rows.includes('data-id="beta"')); assert.ok(!rows.includes('data-id="alpha"')); }
+  element('tasks-show').listeners.click();
+  await flush();
+  assert.equal(element('tasks-show').attributes['aria-pressed'], 'true');
+  assert.ok(element('tasks-rows').innerHTML.includes('data-id="alpha"'));
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        got = subprocess.run([node, "-e", program, str(script), action], stdin=subprocess.DEVNULL,
+                             capture_output=True, text=True, timeout=10)
+        self.assertEqual(got.returncode, 0, got.stderr)
+
+    def test_search_leaves_selected_mode_and_keeps_the_selection(self):
+        self.filtered("search")
+
+    def test_a_category_leaves_selected_mode_and_keeps_the_selection(self):
+        self.filtered("category")
 
 
 class TheTasksPagesData(Case):
