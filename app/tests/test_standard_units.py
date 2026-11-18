@@ -243,9 +243,10 @@ class Listed(unittest.TestCase):
         self.assertEqual(self.trials(job), ["good__u0000", "model__u0003", "slow__u0002", "wrong__u0001"])
         self.assertEqual(self.started(job), DATASET)
         cfg = read(os.path.join(job, "config.json"))
-        # the keys a control's run recorded before there were lists, the retries every run now records, and no other
-        self.assertEqual(sorted(cfg["standard"]), ["backend", "benchmark", "control", "kind", "needs", "permissions_granted",
-                                                   "plugged", "provider", "retries", "unsandboxed"])
+        # the keys a control's run recorded before there were lists, the retries and the exchange record every run now
+        # records, and no other
+        self.assertEqual(sorted(cfg["standard"]), ["backend", "benchmark", "control", "exchanges", "exchanges_max_mb", "kind", "needs",
+                                                   "permissions_granted", "plugged", "provider", "retries", "unsandboxed"])
         self.assertEqual(cfg["datasets"], [{"name": "fakebench/all", "n_tasks": 4}])
         limited = self.go(limit=2, name="limited")
         self.assertEqual(self.trials(limited), ["good__u0000", "wrong__u0001"])
