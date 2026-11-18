@@ -164,6 +164,12 @@
       go.textContent = n && c.every(first) ? 'Run selected' : 'Run selected again'; };
     ticks.forEach(x => x.addEventListener('change', recount));
     $('#pick-shown').addEventListener('click', () => { rows.forEach(r => { const x = $('.pick-row', r); if (x && r.matched) x.checked = true; }); recount(); });
+    // the rest, or a set's tasks not yet run: those rows ticked alone, then the same question
+    $$('#rerun-pick [data-pick]').forEach(b => b.addEventListener('click', () => {
+      const want = new Set(b.dataset.pick.split(' ')); ticks.forEach(x => { x.checked = want.has(x.value); });
+      const menu = b.closest('details'); if (menu) menu.open = false;
+      recount(); go.click();
+    }));
     go.addEventListener('click', () => {
       const picked = chosen(), fresh = picked.filter(first).length;
       const words = 'Run ' + tasks(picked.length) + (!fresh ? ' again' : fresh < picked.length ? ', ' + (picked.length - fresh) + ' again' : '');

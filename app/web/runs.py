@@ -548,24 +548,60 @@ def job(job_id):
     board = _live_board_state(j)
     again = ex.again_of(job_id) if ex is not None else None
     j, running_again = _until_again(j, (again or {}).get("trials") or [])
+    waiting = waiting_of(j, (again or {}).get("trials") or [])
     return render_template("runs/job.html", job=j, live_board=board, view=_view_of(board, j),
                            execution=ex, csrf=shared._csrf_token(), set_link=_set_link(j), set_saving=_set_saving(j),
                            judgement=judge.job_summary(j) if j.trials else None,
                            control=feasibility.summary_of(j), ended=execution.ended_for(job_id), own=own, deletable=_deletable(job_id, ex),
                            trial_rows=attempts.grouped(j), pass_k=attempts.for_job(j),
                            again=execute.again_offer(j, ex), running_again=running_again, rerunning=again is not None,
-                           waiting=waiting_of(j, (again or {}).get("trials") or []))
+                           waiting=waiting, plan_sets=plan_sets(j, waiting))
 
 
 def waiting_of(j, running=()) -> list:
     """The tasks a standard job planned that have no result (``rerun.unfinished``), each {trial, unit, folder,
-    running}: never begun, or begun and ended with none (``folder``); ``running``, one of the trials ``running``
-    names, those a re-run under way runs. Its feed is read only for a job with fewer trials than it planned: []
-    for every other job."""
+    running, outcome}: never begun, or begun and ended with none (``folder``); ``running``, one of the trials
+    ``running`` names, those a re-run under way runs. ``outcome``: ``not_run`` for a task never begun of a job
+    begun on a part of its plan (``start_with``), ``no_result`` otherwise. Its feed is read only for a job with
+    fewer trials than it planned: [] for every other job."""
     if not j.standard or len(j.trials) >= j.n_planned:
         return []
     from nullius.standard import rerun
-    return [dict(x, trial=name, running=name in running) for name, x in rerun.unfinished(j.dir).items()]
+    return [dict(x, trial=name, running=name in running,
+                 outcome="not_run" if j.start_with and not x["folder"] else "no_result")
+            for name, x in rerun.unfinished(j.dir).items()]
+
+
+def plan_sets(j, waiting: list) -> list:
+    """The task sets of the job's benchmark and dataset that name planned tasks with no result, at their latest
+    revision: [{name, revision, trials, tasks}], ``trials`` those of ``waiting`` (:func:`waiting_of`) the set names and no
+    re-run is running. What the job page's "Run a set" offers; [] when no set names one."""
+    if not waiting:
+        return []
+    try:
+        with open(os.path.join(j.dir, "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+        bench = (cfg.get("standard") or {}).get("benchmark")
+        dataset = str(((cfg.get("datasets") or [{}])[0] or {}).get("name") or "").partition("/")[2]
+    except (OSError, ValueError, AttributeError):
+        return []
+    if not isinstance(bench, str) or not bench:
+        return []
+    try:
+        entries, _ = task_sets.entries(bench)
+    except task_sets.Refused:
+        return []
+    out = []
+    for e in entries:
+        if e.get("dataset") != dataset:
+            continue
+        last = task_sets.revision(e)
+        wanted = set(last["units"])
+        trials = [w["trial"] for w in waiting if w["unit"] in wanted and not w["running"]]
+        if trials:
+            out.append({"name": e["name"], "revision": last["revision"], "trials": trials,
+                        "tasks": len({w["unit"] for w in waiting if w["trial"] in trials})})
+    return out
 
 
 def _until_again(j, names):
