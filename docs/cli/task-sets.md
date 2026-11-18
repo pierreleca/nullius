@@ -22,7 +22,7 @@ nullius standard run humaneval reference --model gpt-5-mini --set misses@1 --uns
 | Part | Detail |
 | --- | --- |
 | The entry | `sets/<benchmark>/NAME.json` in the user catalogue (`nullius paths`, `NULLIUS_CATALOGUE`): a plain file to copy or keep in git |
-| What it holds | An id made at creation, the name and description, the benchmark and version, the dataset, the benchmark options not at their default, the setup, and its revisions |
+| What it holds | An id made at creation, the name and description, the benchmark and version, the dataset, the effective benchmark options including defaults, the setup, and its revisions |
 | A revision | Its number, date, note, unit ids and a content hash over the benchmark, the dataset, the options, the setup and the sorted ids |
 | A name | Letters, digits, `.`, `_` and `-`, starting with a letter or a digit; no `/`, no `..`. One that exists is refused: `update` changes it |
 | Identity | Two runs ran the same set when their jobs name the same id. Two sets of equal lists stay two sets |

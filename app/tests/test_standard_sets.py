@@ -80,14 +80,14 @@ class Hash(Scratch):
                          sets.content_hash("fakebench", "all", {}, "yours", ["model", "good"]))
 
     def test_it_changes_with_an_id_the_dataset_or_a_listing_option(self):
-        base = sets.content_hash("fakebench", "all", {}, "yours", ["good", "model"])
-        for other in (sets.content_hash("fakebench", "all", {}, "yours", ["good", "slow"]),
-                      sets.content_hash("fakebench", "responding", {}, "yours", ["good", "model"]),
+        base = sets.content_hash("fakebench", "all", {"mode": "plain"}, "yours", ["good", "model"])
+        for other in (sets.content_hash("fakebench", "all", {"mode": "plain"}, "yours", ["good", "slow"]),
+                      sets.content_hash("fakebench", "responding", {"mode": "plain"}, "yours", ["good", "model"]),
                       sets.content_hash("fakebench", "all", {"mode": "hard"}, "yours", ["good", "model"])):
             self.assertNotEqual(base, other)
         hard = self.make("hard", "good\nmodel\n", "--bench-option", "mode=hard")
-        plain = self.make("plain", "good\nmodel\n", "--bench-option", "mode=plain")   # at its default: says nothing
-        self.assertEqual((hard["benchmark_options"], plain["benchmark_options"]), ({"mode": "hard"}, {}))
+        plain = self.make("plain", "good\nmodel\n", "--bench-option", "mode=plain")
+        self.assertEqual((hard["benchmark_options"], plain["benchmark_options"]), ({"mode": "hard"}, {"mode": "plain"}))
         self.assertNotEqual(sets.revision(hard)["hash"], sets.revision(plain)["hash"])
         self.assertEqual(sets.revision(plain)["hash"], base)
 
@@ -264,7 +264,7 @@ class Import(Scratch):
         # here, the same id with a revision 2 of another list
         other = read(exported)
         other["revisions"][1]["units"] = ["good", "wrong"]
-        other["revisions"][1]["hash"] = sets.content_hash("fakebench", "all", {}, "yours", ["good", "wrong"])
+        other["revisions"][1]["hash"] = sets.content_hash("fakebench", "all", other["benchmark_options"], "yours", ["good", "wrong"])
         with open(exported, "w") as f:
             json.dump(other, f)
         code, out, err = self.cli("set", "import", exported)
@@ -318,6 +318,23 @@ class Running(Scratch):
                 self.assertFalse(os.path.exists(self.jobs))           # no job was begun
         code, out, err = self.run_cli("--set", "dev", "--dataset", "all", "--bench-option", "mode=hard", "--name", "agrees")
         self.assertEqual(code, 0, out + err)
+
+    def test_default_listing_options_are_recorded_hashed_and_cannot_be_contradicted(self):
+        for name, args in (("implicit", []), ("explicit", ["--bench-option", "mode=plain"])):
+            with self.subTest(name=name):
+                entry = self.make(name, "good\n", *args)
+                self.assertEqual(entry["benchmark_options"], {"mode": "plain"})
+                self.assertEqual(sets.revision(entry)["hash"],
+                                 sets.content_hash("fakebench", "all", {"mode": "plain"}, "yours", ["good"]))
+                code, out, err = self.run_cli("--set", name, "--bench-option", "mode=hard")
+                self.assertEqual(code, 2, out + err)
+                self.assertIn("was made under mode=plain", out)
+                self.assertFalse(os.path.exists(self.jobs))
+        self.b["options"] = {"mode": dict(MODE["mode"], default="hard")}
+        code, out, err = self.run_cli("--set", "implicit", "--name", "pinned")
+        self.assertEqual(code, 0, out + err)
+        cfg = read(os.path.join(self.jobs, "pinned", "config.json"))
+        self.assertEqual(cfg["standard"]["benchmark_options"], {"mode": "plain"})
 
     def test_an_id_the_driver_does_not_list_is_refused_before_any_unit(self):
         self.make("dev", "good\nnope\n")

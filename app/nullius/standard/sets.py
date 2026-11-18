@@ -4,7 +4,7 @@ An entry is ``sets/<benchmark>/<name>.json`` under the user catalogue
 (``paths.catalogue_dir``, ``NULLIUS_CATALOGUE``): a plain file to copy or keep
 in git. It holds an id minted when it is made, its name and description, the
 benchmark and version, the dataset it is cut from, the benchmark options it
-was made under that are not at their default, the setup it was made under
+was made under, including defaults, the setup it was made under
 (``yours``, or a setup of the benchmark), and its revisions. A revision is one
 membership: its number, its date, a note, the unit ids and a content hash over
 the benchmark, the dataset, those options, the setup and the sorted ids. Two
@@ -244,13 +244,12 @@ def write(entry: dict, root: Optional[str] = None) -> str:
 
 def listing_options(bench: dict, dataset: str, given: Optional[dict], setup: str = "yours",
                     kind: Optional[str] = "agent") -> Dict[str, str]:
-    """The benchmark options a list was made under that are not at their default, as words: what a set
-    records and its hash covers. An option at its default says nothing, however it was given."""
+    """The effective benchmark options a list was made under, including defaults, as words.
+    A set records these values and its hash covers them."""
     values, bad = definitions.bench_options_of(bench, dataset, given, setup, kind=kind)
     if bad:
         raise Refused("; ".join(bad))
-    defaults, _ = definitions.bench_options_of(bench, dataset, {}, setup, kind=kind)
-    return {n: str(v) for n, v in sorted(values.items()) if str(v) != str(defaults.get(n))}
+    return _options(values)
 
 
 def _dataset(bench: dict, dataset: Optional[str]) -> str:
