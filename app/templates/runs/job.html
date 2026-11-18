@@ -541,7 +541,7 @@
 <div class="more">
   {%- if job.reruns %}
   <details id="reruns" open>
-    <summary><span class="tw"></span>Run again by hand<span class="end"><span>{{ job.reruns|length }}</span></span></summary>
+    <summary><span class="tw"></span>Run later<span class="end"><span>{{ job.reruns|length }}</span></span></summary>
     <dl class="gl reruns">
       {% for r in job.reruns|reverse %}
       <dt>{{ r.at[:16]|replace('T', ' ') }}{{ 'Z' if r.at.endswith('+00:00') }}{% if r.stopped %} <span class="faint">stopped</span>{% endif %}</dt>

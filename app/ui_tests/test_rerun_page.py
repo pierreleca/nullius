@@ -248,7 +248,7 @@ tick().then(() => process.stdout.write(JSON.stringify(destination)));
         self.open(d.parent)
         html = self.page("/job/r1?view=results")
         self.assertEqual(text(html, r'<details id="reruns" open>.*?</details>'),
-                         "Run again by hand 1 2026-11-18 15:40Z the provider failed t-1 reward 0.0 → reward 1.0 try 1 "
+                         "Run later 1 2026-11-18 15:40Z the provider failed t-1 reward 0.0 → reward 1.0 try 1 "
                          "1 task · $0.0012 spent of a $0.50 cap")
         self.assertIn('<th scope="col" class="num">Retries</th>', html)
         cells = re.findall(r'<td class="num run-retries">(.*?)</td>', html)
@@ -316,7 +316,7 @@ tick().then(() => process.stdout.write(JSON.stringify(destination)));
         self.open(d.parent)
         html = self.page("/job/r1?view=results")
         self.assertEqual(text(html, r'<details id="reruns" open>.*?</details>'),
-                         "Run again by hand 1 2026-11-18 15:40Z t-1 no result → reward 1.0 try 1 t-3 first run → reward 0.0 "
+                         "Run later 1 2026-11-18 15:40Z t-1 no result → reward 1.0 try 1 t-3 first run → reward 0.0 "
                          "2 tasks · $0.0012 spent")
 
     def test_a_job_never_run_again_shows_none_of_it(self):
