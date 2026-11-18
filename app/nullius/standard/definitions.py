@@ -1306,6 +1306,8 @@ def problems(d: dict, kind: str) -> List[str]:
             if "list_command" in drv:
                 # a listing's start: the standard library and the dataset's files, never the driver's install
                 bad += _command("driver.list_command", drv["list_command"], {"here"})
+            if "task_given" in drv and not isinstance(drv["task_given"], bool):
+                bad.append("driver.task_given: true or false - whether the driver is told when the agent is given its task")
         bad += _mcp_servers(d.get("mcp_servers"), isinstance(drv, dict) and "install" in drv)
         ds = d.get("datasets")
         if not isinstance(ds, list) or not ds:

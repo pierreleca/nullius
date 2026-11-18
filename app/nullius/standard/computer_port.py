@@ -1,9 +1,18 @@
-"""The computer port, ``agent.computer/v1``, as a desktop benchmark's runner serves it (``docs/ports/agent-computer-v1.md``).
+"""The computer port, ``agent.computer/v1`` and ``agent.computer/v2``, as a desktop benchmark's runner serves it
+(``docs/ports/agent-computer-v1.md``, ``docs/ports/agent-computer-v2.md``).
 
 A desktop benchmark's runner serves one MCP server, ``computer``, to the agent's session; its tools are the desktop's
 basic operations, and the agent is a client alone. The benchmark's own loop runs as it is: it is handed a ``Bridge``,
 which has the loop's ``reset`` and ``predict``. Standard library alone, so that a runner in the upstream's own Python
 imports it with the package's folder on its path.
+
+The bridge serves the version its benchmark names; the two share everything but what version 2 changes. In version 2,
+once the agent is given its task, the desktop is reached through acting calls alone: no ``python`` and no ``read``;
+``screenshot`` returns the observation the last step fixed (``Bridge.seen``), taken from the benchmark's loop or, for a
+loop that hands none, as a picture when the step's last pause has passed; a ``step`` names the files of the agent's
+folder it wants back, read once its actions and pauses have run. Before the task, in a window that the benchmark's
+side closes when the run gives it (``Bridge.close_window``), ``upload`` writes inside that folder and ``prepare`` runs
+actions there and reads files back, neither a step; an acting call is refused until the task is given.
 
 - ``Desktop``: the five operations an entry or a kit gives over its desktop.
 - The tools: one table (``tools``) gives both what ``tools/list`` says and what ``checked`` accepts. A call is checked
@@ -59,6 +68,8 @@ LAST_SECONDS = 0.5                                   # what the last resort give
 TURN_END = b"turn-end"                               # the lifeline's one message: the agent's turn has ended
 APPEND = ("import os\ntry:\n    s = open({part!r}, 'rb'); d = open({path!r}, 'ab'); d.write(s.read()); d.close(); "
           "s.close()\nfinally:\n    os.remove({part!r})\nprint(os.path.getsize({path!r}))")
+MAKE_FOLDER = ("import os, shutil\np = {folder!r}\nif os.path.islink(p) or (os.path.lexists(p) and not os.path.isdir(p)):\n"
+               "    os.remove(p)\nshutil.rmtree(p, ignore_errors=True)\nos.makedirs(p, 0o700)\nprint('made')")
 
 
 class Desktop(Protocol):
@@ -81,10 +92,20 @@ class Desktop(Protocol):
     def password(self) -> str:
         """The desktop user's password."""
 
+    # Version 2 also asks, when the desktop has it: observation() -> bytes, the screenshot the benchmark's own loop took
+    # when the step it just ran ended (for a loop that keeps one). Without it, the bridge takes a picture by capture().
+
 
 # -- the tools: one table for what tools/list says and what a call may hold ------------------------------------------
 NAMES = ["info", "screenshot", "read", "python", "upload", "click", "move", "drag", "scroll", "type", "key", "wait",
          "step", "done", "fail"]
+VERSIONS = (1, 2)
+NAMES_2 = ["info", "screenshot", "upload", "prepare", "click", "move", "drag", "scroll", "type", "key", "wait", "step",
+           "done", "fail"]
+WINDOW = ("upload", "prepare")                       # version 2: the tools of the window before the task
+FILES_ROOM = LINE_BYTES - 64 * 1024                  # of an answer, what its files and image may take
+TASK_GIVEN = b"task-given"                           # the lifeline's message: the agent is being given its task
+PREPARE = "import pyautogui\nimport time\npyautogui.FAILSAFE = False\n{code}"   # a prepare's action, as a step's is
 SCREEN_TOOLS = ("click", "move", "drag", "scroll", "type", "key", "wait")   # answered with the screen after the pause
 ACTING = SCREEN_TOOLS + ("step", "done", "fail")
 FINAL = {"done": "DONE", "fail": "FAIL"}
@@ -103,9 +124,19 @@ REFUSALS = {("scroll", "arguments", "anyOf"): "dy or dx is not 0",
 PATTERN_WORDS = {NOT_BLANK: "is not blank", SHA256: "is 64 lowercase hexadecimal digits", BASE64: "is base64"}
 
 
+def names(version=1) -> list:
+    """The tools of ``version``, by name."""
+    return NAMES if version == 1 else NAMES_2
+
+
 @functools.lru_cache(maxsize=8)
-def tools(screen):
-    """The tools for a screen of ``screen`` (width, height) pixels: [(name, description, input schema)]."""
+def tools(screen, version=1):
+    """The tools of ``version`` for a screen of ``screen`` (width, height) pixels: [(name, description, input
+    schema)]. Version 2's are version 1's but for what it changes (``_version_2``)."""
+    if version not in VERSIONS:
+        raise ValueError(f"no version {version!r} of the computer port")
+    if version != 1:
+        return _version_2(tools(screen))
     w, h = screen
     x = {"type": "integer", "minimum": 0, "maximum": w - 1,
          "description": "Pixels of the screenshot at the screen's size, from its left edge"}
@@ -176,8 +207,67 @@ def tools(screen):
     ]
 
 
-def listed(screen) -> list:
-    return [{"name": n, "description": d, "inputSchema": s} for n, d, s in tools(tuple(screen))]
+V2_TEXTS = {
+    "info": "The screen's size, the steps in all and left, the pause after each action in seconds, the desktop user's "
+            "password, and folder: a folder of the desktop that is yours, empty at the start, for upload and for the "
+            "files a step returns.",
+    "screenshot": "The observation of the last step, as a PNG image: the screen as the benchmark took it when that "
+                  "step ended, or at the start before the first step. It takes no new picture; wait is the way to look "
+                  "again. Look at it before the first pointing action.",
+    "upload": "Before the task alone, in the window between the session's start and the task: writes data to a file "
+              "inside folder (see info) and returns the file's size so far. Not a step. data is base64, at most 4 MiB "
+              "a call; append false starts the file, true adds to it. sha256, optional, is the whole file's: when the "
+              "run already holds a file of that sha256, it may be given with no data, and it starts the file.",
+    "prepare": "Before the task alone, in the window between the session's start and the task: runs actions in the "
+               "desktop, each a line of Python with pyautogui and time imported as a step's are, with no pause after "
+               "them, then reads files, any number of paths inside folder. Returns {files}: each in base64, null when "
+               "there is no such file. Not a step.",
+    "step": "One step of several actions, run in order: each is a line of Python run in the desktop with pyautogui and "
+            "time imported, or WAIT. An empty list is a step with no action. With end, done or fail, the actions run "
+            "and then the task ends, in this one step. files, any number of paths inside folder, are read once the "
+            "actions and their pauses have run: the answer's files holds each in base64, null when there is no such "
+            "file. Returns the step's observation as a PNG image when screenshot is true.",
+}
+FILES = {"type": "array",
+         "items": {"type": "string", "minLength": 1, "description": "A path inside folder"}}
+
+
+def _version_2(table):
+    """Version 2's tools from version 1's: no python and no read; prepare after upload; info, screenshot, upload and
+    step said anew, and step with files."""
+    out = []
+    for name, text, schema in table:
+        if name not in NAMES_2:
+            continue
+        if name == "step":
+            schema = dict(schema, properties=dict(schema["properties"], files=FILES))
+        out.append((name, V2_TEXTS.get(name, text), schema))
+        if name == "upload":
+            step = next(s for n, _, s in table if n == "step")
+            out.append(("prepare", V2_TEXTS["prepare"], {
+                "type": "object", "additionalProperties": False, "required": ["actions"],
+                "properties": {"actions": step["properties"]["actions"], "files": FILES}}))
+    return out
+
+
+def listed(screen, version=1) -> list:
+    return [{"name": n, "description": d, "inputSchema": s} for n, d, s in tools(tuple(screen), version)]
+
+
+def _framed(named, got):
+    """The bytes one file takes in an answer: its entry in the files object, framed once more as the JSON text of the
+    answer's content (each quote and backslash escaped)."""
+    text = json.dumps({named: got})
+    return len(text) + text.count('"') + text.count("\\")
+
+
+def inside(folder, path, name):
+    """``path``, a path of the desktop inside ``folder`` (absolute, or relative to the folder), as an absolute path;
+    refused when it is not one, or not written in its plain form."""
+    full = path if path.startswith("/") else posixpath.join(folder, path)
+    if "\x00" in full or posixpath.normpath(full) != full or not full.startswith(folder.rstrip("/") + "/"):
+        raise Refused(f"{name} is a path inside {folder}, with no . or .. part")
+    return full
 
 
 class Refused(Exception):
@@ -259,6 +349,7 @@ class Call:
         self.start = time.time()
         self.clean, self.actions, self.response, self.screen, self.data = {}, [], "", False, None
         self.end = None
+        self.files = None                            # version 2: a step's files, [(as named, the desktop's path)]
         self.answered = False
         self.on_answer = None                        # called once the call is answered (the bridge's count of it)
         self._lock = threading.Lock()
@@ -275,12 +366,19 @@ class Call:
                 self.on_answer()
 
 
-def checked(call, screen) -> None:
+def checked(call, screen, version=1, folder=None) -> None:
     """The call checked against its tool's schema, in full and before it is queued; for an acting call, the actions
     it stands for (Python lines run with pyautogui and time imported, or WAIT, DONE, FAIL). Refused when it does not
-    hold: the call is then answered at once, takes no step and never reaches the desktop."""
-    schema = next(s for n, _, s in tools(tuple(screen)) if n == call.tool)
+    hold: the call is then answered at once, takes no step and never reaches the desktop. In version 2, an upload's
+    path and a step's files are also checked to be inside ``folder``, the agent's."""
+    schema = next(s for n, _, s in tools(tuple(screen), version) if n == call.tool)
     a = call.clean = _valid(call.args, schema, call.tool, "arguments")
+    if version != 1 and call.tool == "upload":
+        a["path"] = inside(folder, a["path"], "path")
+    if version != 1 and call.tool in ("step", "prepare") and "files" in a:
+        call.files = [(p, inside(folder, p, f"files[{i}]")) for i, p in enumerate(a["files"])]
+    if call.tool == "prepare":
+        call.actions = list(a["actions"])
     tool, button = call.tool, repr(a.get("button", "left"))
     if tool == "click":
         call.actions = [f"pyautogui.click({a['x']}, {a['y']}, clicks={a.get('count', 1)}, button={button})"]
@@ -362,12 +460,27 @@ class Bridge:
     ``progress``, when given, is the path of the progress file: ``{steps, steps_limit, ended, open}``, the steps
     taken, the budget, what ended the loop (empty while it runs, ``done``, ``fail``, ``steps`` or ``turn``) and the
     calls taken in and not yet answered, which wait at the desktop. It is rewritten whole at each change, so that a
-    reader sees one state or the next, never part of one."""
+    reader sees one state or the next, never part of one.
+    ``version`` is the port's version the benchmark names; version 2 takes ``folder``, the agent's own folder in the
+    desktop (an absolute path), made empty at the loop's first ``predict``. Version 2 opens the window before the task
+    when ``window`` is true (the benchmark's side is told when the task is given, and calls ``close_window``); with
+    no window, upload and prepare are refused from the start. ``prepared``, a file, gets one JSON line per prepare
+    call: its actions and the files it names, before they run."""
 
-    def __init__(self, desktop, steps, pause, screen, python_seconds, on_first=None, held=None, progress=None):
+    def __init__(self, desktop, steps, pause, screen, python_seconds, on_first=None, held=None, progress=None, version=1,
+                 folder=None, window=False, prepared=None):
         self.desktop, self.steps, self.pause = desktop, int(steps), pause
         self.screen, self.python_seconds = (int(screen[0]), int(screen[1])), python_seconds
         self.on_first, self.held = on_first, held
+        if version not in VERSIONS:
+            raise ValueError(f"no version {version!r} of the computer port")
+        if version != 1 and not (isinstance(folder, str) and folder.startswith("/") and len(folder) > 1
+                                 and posixpath.normpath(folder) == folder):
+            raise ValueError(f"version {version} needs the agent's folder, an absolute path in its plain form")
+        self.version, self.folder = version, folder
+        self.window, self.prepared = version != 1 and bool(window), prepared   # version 2: the window before the task
+        self.preparing = False
+        self.seen, self.unseen = None, "no step has ended"   # version 2: the observation, or why there is none
         self.password = desktop.password()
         self.used = 0                                # acting calls handed to the loop: its steps
         self.booked = 0                              # acting calls taken in, handed or waiting
@@ -393,8 +506,12 @@ class Bridge:
         Once the turn has ended, no action, but for a done or fail taken before it."""
         if self.first:
             self.first = False
+            if self.version != 1:
+                self._begin(obs)
             if self.on_first:
                 self.on_first()
+        elif self.version != 1:
+            self._handed(obs)
         while True:
             call = self._next()
             if call is None:
@@ -406,6 +523,94 @@ class Bridge:
                 call.answer({"steps_left": self.steps - self.used, "done": True})
                 return call.response, list(call.actions)
             return call.response, self._run(call)
+
+    # -- version 2: the agent's folder and the observation ---------------------------------------------------------
+    def _begin(self, obs):
+        """The loop's first predict: the agent's folder made empty, and the first observation, the one the loop
+        hands or, when it hands none, a picture taken now."""
+        reply = self.desktop.python(MAKE_FOLDER.format(folder=self.folder))
+        if not isinstance(reply, dict) or str(reply.get("output", "")).strip() != "made":
+            raise RuntimeError(f"the agent's folder {self.folder} could not be made: {json.dumps(reply)[:300]}")
+        if not self._handed(obs):
+            self.seen = self.desktop.capture()
+
+    def _handed(self, obs):
+        """The screenshot of the observation the loop hands its agent, kept when there is one."""
+        shot = obs.get("screenshot") if isinstance(obs, dict) else None
+        if isinstance(shot, (bytes, bytearray)) and shot:
+            self.seen, self.unseen = bytes(shot), ""
+            return True
+        return False
+
+    def _observe(self):
+        """The observation of a step that ran an action, fixed as it ends: the benchmark's own when its desktop keeps
+        one (``observation``), else a picture taken now, the step's last pause passed."""
+        look = getattr(self.desktop, "observation", None)
+        shot = look() if look is not None else self.desktop.capture()
+        if not shot:
+            raise RuntimeError("the benchmark gave no observation")
+        return bytes(shot)
+
+    def _step_end(self, call):
+        """In the loop's thread, once the step's actions and their pauses have run: its observation fixed, when it
+        ran an action, and the files it names read. The files' answer, or None when it names none."""
+        if call.actions:
+            try:
+                self.seen, self.unseen = self._observe(), ""
+            except Exception as e:                   # the step was run all the same
+                self.seen, self.unseen = None, f"{type(e).__name__}: {e}"
+        if call.files is None:
+            return None
+        return self._files(call.files, self.seen if call.screen else None)
+
+    def _files(self, named_paths, image=None):
+        """Each file read, in order, as long as the answer holds it: one that would take the answer past LINE_BYTES,
+        with ``image`` in it, is an error, and the files after it are still tried."""
+        room, out = FILES_ROOM - (4 * -(-len(image) // 3) if image else 0), {}
+        for named, path in named_paths:
+            got = self._file(path)
+            if isinstance(got, str) and _framed(named, got) > room:
+                got = {"error": f"the answer would pass {LINE_BYTES} bytes with this file"}
+            room -= _framed(named, got)
+            out[named] = got
+        return out
+
+    def _file(self, path):
+        try:
+            data = self.desktop.read(path)
+        except Refused as e:
+            return {"error": str(e)}
+        except Exception as e:                       # that file alone: the step has run
+            return {"error": f"the desktop could not read it: {type(e).__name__}: {e}"}
+        if data is None:
+            return None
+        if len(data) > READ_BYTES:
+            return {"error": f"over {READ_BYTES} bytes"}
+        return base64.b64encode(data).decode()
+
+    def _prepare(self, call):
+        """A prepare call, in the loop's thread: its record written, its actions run one at a time with no pause (WAIT
+        does nothing), then its files read. An action the desktop did not end in time stops it."""
+        if self.prepared:
+            with open(self.prepared, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"start": time.time(), "actions": call.actions,
+                                    "files": [named for named, _ in call.files or []]}) + "\n")
+        for i, code in enumerate(call.actions):
+            if code.strip() != "WAIT" and self.desktop.python(PREPARE.format(code=code)) is None:
+                raise Refused(f"the desktop did not end actions[{i}] in time; the actions after it were not run")
+        return {"files": self._files(call.files or [])}
+
+    def close_window(self):
+        """Close version 2's window, refuse waiting preparation and wait for active preparation to end."""
+        with self.change:
+            self.window = False
+            refused = [c for c in self.calls if self.version != 1 and c.tool in WINDOW]
+            self.calls = collections.deque(c for c in self.calls if c not in refused)
+        for call in refused:
+            call.answer(error=f"the task has been given: {call.tool} is taken only before it")
+        with self.change:
+            while self.preparing:
+                self.change.wait()
 
     def _next(self):
         refused = []
@@ -445,6 +650,7 @@ class Bridge:
             yield FINAL[call.end]
 
     def _ran(self, call, ran):
+        files = self._step_end(call) if self.version != 1 and ran and not self.turn_ended else None
         with self.change:
             self.running = None
             if ran and call.end:                     # the task has ended, as after done or fail
@@ -460,6 +666,13 @@ class Bridge:
             turn_ended = self.turn_ended
         if not ran:
             call.answer(error="the agent's turn has ended" if turn_ended else "the step was not run to its end")
+        elif self.version != 1:
+            if files is not None:
+                value["files"] = files
+            if call.screen and not turn_ended and self.seen is None:
+                call.answer(error=f"the step was run; the screen could not be taken: {self.unseen}")
+            else:
+                call.answer(value, self.seen if call.screen and not turn_ended else None)
         else:
             try:
                 call.answer(value, self.desktop.capture() if call.screen and not turn_ended else None)
@@ -469,17 +682,34 @@ class Bridge:
             c.answer(error=self.ended)
 
     def _serve(self, call):
+        preparing = False
         try:
+            if self.version != 1 and call.tool in WINDOW:
+                with self.change:
+                    if not self.window:
+                        raise Refused(f"the task has been given: {call.tool} is taken only before it")
+                    self.preparing = preparing = True
             call.answer(**self._reading(call))
         except Refused as e:
             call.answer(error=str(e))
         except Exception as e:                       # the desktop failed it: its words, and the agent may call again
             call.answer(error=f"the desktop failed {call.tool}: {type(e).__name__}: {e}")
+        finally:
+            if preparing:
+                with self.change:
+                    self.preparing = False
+                    self.change.notify_all()
 
     def _reading(self, call):
         a = call.clean
+        if call.tool == "screenshot" and self.version != 1:
+            if self.seen is None:
+                raise Refused(f"there is no observation: {self.unseen}")
+            return {"image": self.seen}
         if call.tool == "screenshot":
             return {"image": self.desktop.capture()}
+        if call.tool == "prepare":
+            return {"value": self._prepare(call)}
         if call.tool == "read":
             data = self.desktop.read(a["path"])
             if data is not None and len(data) > READ_BYTES:
@@ -552,7 +782,12 @@ class Bridge:
         call once every step is taken."""
         with self.change:
             refusal = self.ended
-            if refusal is None and call.tool in ACTING:
+            if refusal is None and self.version != 1 and self.window and call.tool in ACTING:
+                refusal = ("the task has not been given yet: before it, the desktop takes info, screenshot, upload "
+                           "and prepare, and no step")
+            elif refusal is None and self.version != 1 and not self.window and call.tool in WINDOW:
+                refusal = f"the task has been given: {call.tool} is taken only before it"
+            elif refusal is None and call.tool in ACTING:
                 if self.booked >= self.steps:
                     refusal = "the steps are used up"
                 else:
@@ -573,11 +808,30 @@ class Bridge:
     def info(self):
         with self.change:
             left = self.steps - self.used
+        if self.version != 1:
+            return {"screen": list(self.screen), "steps": self.steps, "steps_left": left, "pause": self.pause,
+                    "password": self.password, "folder": self.folder}
         return {"screen": list(self.screen), "steps": self.steps, "steps_left": left, "pause": self.pause,
                 "python_seconds": self.python_seconds, "password": self.password}
 
     def instructions(self):
         w, h = self.screen
+        if self.version != 1:
+            return (f"A desktop seen in screenshots and driven by pointer and keyboard actions. The screen is {w} by "
+                    f"{h} pixels. Points use x and y in screenshot pixels at the screen's size, from its top left "
+                    f"corner. Look at a screenshot before the first pointing action. Each call of click, move, drag, "
+                    f"scroll, type, key, wait, step, done or fail is one step, and the desktop is reached through "
+                    f"these calls alone. After the actions and their {self.pause:g} s pauses, click, move, drag, "
+                    f"scroll, type, key and wait return the step's observation, the screen as a PNG image; step does "
+                    f"when screenshot is true, and returns the files of folder it names. screenshot returns the last "
+                    f"step's observation and takes no new picture: wait is the way to look again. Before the task is "
+                    f"given, in the window from the session's start, upload and prepare work inside folder "
+                    f"({self.folder}) and take no step, and no acting call is taken; once it is given, upload and "
+                    f"prepare are refused. done and fail answer before "
+                    f"they run, with no image. A step with end, done or fail, runs its actions and then ends the "
+                    f"task, in that one step. There are {self.steps} steps in all, and steps_left in each acting "
+                    f"answer. Once they are used up, every call but info is refused. A turn that ends with neither "
+                    f"done nor fail ends the task as the desktop then is.")
         return (f"A desktop seen in screenshots and driven by pointer and keyboard actions. The screen is {w} by {h} "
                 f"pixels. Points use x and y in screenshot pixels at the screen's size, from its top left corner. "
                 f"Look at a screenshot before the first pointing action. Each call of click, move, drag, scroll, "
@@ -869,9 +1123,10 @@ class Server:
             return None
         if method == "initialize":
             result = {"protocolVersion": params.get("protocolVersion") or PROTOCOL, "capabilities": {"tools": {}},
-                      "serverInfo": {"name": "computer", "version": "1"}, "instructions": self.bridge.instructions()}
+                      "serverInfo": {"name": "computer", "version": str(self.bridge.version)},
+                      "instructions": self.bridge.instructions()}
         elif method == "tools/list":
-            result = {"tools": listed(self.bridge.screen)}
+            result = {"tools": listed(self.bridge.screen, self.bridge.version)}
         elif method == "tools/call":
             self.call(rid, params, wire)
             return None
@@ -885,7 +1140,7 @@ class Server:
 
     def call(self, rid, params, wire):
         name = params.get("name")
-        if not isinstance(name, str) or name not in NAMES:
+        if not isinstance(name, str) or name not in names(self.bridge.version):
             self.record({"tool": None, "start": time.time(), "end": time.time(), "isError": True})
             wire.send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32602, "message": f"no tool {str(name)[:100]!r}"}})
             return
@@ -908,7 +1163,7 @@ class Server:
         wire.opened()
         call = Call(name, params.get("arguments", {}), reply)
         try:
-            checked(call, self.bridge.screen)
+            checked(call, self.bridge.screen, self.bridge.version, self.bridge.folder)
             if name == "info":
                 call.answer(self.bridge.info())
                 return
@@ -939,9 +1194,10 @@ def ready(path, **fields):
 
 
 def lifeline(fd, bridge=None):
-    """The read end of a pipe from the driver. A line TURN_END ends the agent's turn (``bridge.end_turn``); any other
-    line is ignored. Once the driver's end closes (the driver ended, was killed, or let the unit go), the runner stops
-    as on SIGTERM. Run it in a thread of its own."""
+    """The read end of a pipe from the driver. A line TURN_END ends the agent's turn (``bridge.end_turn``); a line
+    TASK_GIVEN closes version 2's window before the task (``bridge.close_window``); any other line is ignored. Once
+    the driver's end closes (the driver ended, was killed, or let the unit go), the runner stops as on SIGTERM. Run it
+    in a thread of its own."""
     buf = b""
     try:
         while True:
@@ -953,6 +1209,8 @@ def lifeline(fd, bridge=None):
                 line, _, buf = buf.partition(b"\n")
                 if line.strip() == TURN_END and bridge is not None:
                     bridge.end_turn()
+                elif line.strip() == TASK_GIVEN and bridge is not None:
+                    bridge.close_window()
             buf = buf[-4096:]
     except OSError:
         pass

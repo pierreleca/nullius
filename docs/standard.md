@@ -32,6 +32,7 @@ A pair is an **agent benchmark** × an **agent**, or a **capability benchmark** 
 | `agent.search/v1` | Search an HTTP collection with the agent's own tools, retrieve a source and answer with evidence | Find a source, choose the current one, follow a reference (3 checks) |
 | `agent.browser/v1` | A browser, through an MCP server Nullius starts | Defined; its kit comes with the first browser benchmark |
 | `agent.computer/v1` | A desktop seen in screenshots and driven by mouse and keyboard actions, through [the tools of an MCP server the benchmark's runner serves](ports/agent-computer-v1.md) | Four basic checks, four skills on a small desktop in a container ([the kit](ports/agent-computer-v1.md#the-kit)) |
+| `agent.computer/v2` | The same desktop, reached through steps alone once the task is given: each step's answer holds what the agent learns of it ([its page](ports/agent-computer-v2.md)) | Version 1's eight checks on a version 2 server, and a button that appears late ([the kit](ports/agent-computer-v2.md#the-kit)) |
 | `cap.memory/v1` | `add {session}` then `recall {question}` → `{memory}`; a session is `{id, date, turns: [{role, text}], text}` | Recall a place and an exact name among distractors (2 checks); nothing it stores is a credential |
 
 - **The last message** follows ACP `messageId` boundaries and other events (a tool call, a notice). Without IDs, session metadata parts messages but never erases the final answer.
@@ -436,6 +437,7 @@ use the source folders and repository checks.
 | `score` | `unit, dir, transcript, answer`, `setup`, `verified` for an own image, `judge: {model, base_url, key}` when judged | `{reward, detail}`, and `passed` when the benchmark passes or fails; `parts: {n, by, parts}` when the reward is a mean over several parts (a conversation's questions), so the job's mean weighs it by `n` and breaks it down by `by`; `detail.steps` and `detail.steps_limit`, whole numbers, the unit's steps by the benchmark's own count and its limit, shown on the trial's page; `detail.ended`, what ended its loop (`done`, `fail`, `steps`, or `turn` when the agent's turn ended first), read as what ended the work |
 | `oracle` | `{unit, dir}` | `{answer}`, the reference; a workspace benchmark also writes it into `dir` |
 | `end` | `{unit, dir}`, with `driver.unit_end`, once a unit an agent ran has ended, also after a stop, when its `setup` was sent and the driver still runs with no request left unanswered | `{}` |
+| `task_given` | `{unit, dir}`, with `driver.task_given`, just before an agent is sent its task: its first prompt, or its command | `{}` once the benchmark's side has taken it; a failure ends the unit before the task is sent |
 
 | Field in `standard.json` | Meaning |
 | --- | --- |
@@ -449,6 +451,7 @@ use the source folders and repository checks.
 | `driver.unit_end` | `true`: the driver is sent `end` (`unit`, `dir`) once each unit an agent ran has ended, scored or not, so that what its setup started for the agent ends with the unit. Only a unit whose `setup` was sent gets it, and only while that driver still runs: a driver closed after a request got no reply in its time is not asked, nor is one whose request a stop left unanswered. A control's or a setup's unit gets none, nor does any other driver |
 | `driver.describe` | `true`: the driver answers `describe`. Without it a listing gives ids alone |
 | `driver.list_command` | A second start of the driver's code for a listing alone (`units`, and `describe` with `driver.describe`): Python's standard library and the dataset's files, `{here}` its one slot. The listing then prepares the upstream and the dataset and never the driver's environment; a run still checks its ids with `driver.command` |
+| `driver.task_given` | `true`: the driver is sent `task_given` before each agent is given its task, and the task waits for its answer: [the computer port's version 2](ports/agent-computer-v2.md) closes its window before the task there. A control's or a setup's unit gets none |
 | `limits.attempts` | How the upstream tells attempts apart; the driver is then sent `attempt` with `setup`, `turn` and `answer` |
 | `limits.scored_cuts` | The cuts after which a unit an agent ran over a session is still scored, for a driver whose `score` ends its loop from outside: `time`, the agent's time; `calls`, the run's `--max-calls`; `end`, the turn going on 60 s after the progress file's `ended`. The agent's turn is cancelled and the unit goes on to `score` ([a unit cut at a limit](cli/run.md#a-unit-cut-at-a-limit)). Without it each cut stays an error |
 | `units.redistribute` | `false` when the data may not be redistributed: `cli prove` then records no unit id |
