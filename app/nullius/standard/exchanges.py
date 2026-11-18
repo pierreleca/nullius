@@ -119,10 +119,15 @@ def _lift(v, found: dict, text_only: bool = False):
     return v
 
 
+def secret_keys(keys):
+    """The keys to cut, longest first. A keyless provider's placeholder is not a secret."""
+    return tuple(sorted({k for k in keys if k and k != settings.MODEL_KEY_PLACEHOLDER}, key=len, reverse=True))
+
+
 def _cut_key(v, keys):
     """``v`` with each of ``keys`` cut out of every string, a mapping's keys too."""
     if isinstance(v, str):
-        for k in keys:
+        for k in secret_keys(keys):
             v = v.replace(k, "[REDACTED]")
         return v
     if isinstance(v, list):
@@ -183,8 +188,7 @@ class Store:
         if isinstance(max_mb, bool) or not isinstance(max_mb, int) or max_mb < 1:
             raise ValueError(f"exchanges_max_mb {max_mb!r}: a whole number of MB, at least 1")
         self.dir, self.mode, self.max_mb, self.bound = os.path.join(record_dir, FOLDER), mode, max_mb, max_mb * 10 ** 6
-        # the placeholder a provider without a key is sent is no secret, and a common word
-        self.keys = tuple(sorted({k for k in keys if k and k != settings.MODEL_KEY_PLACEHOLDER}, key=len, reverse=True))
+        self.keys = secret_keys(keys)
         self.parts: set = set()
         self.blobs: set = set()
         self.size = 0                            # bytes written so far

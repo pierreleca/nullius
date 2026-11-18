@@ -365,9 +365,8 @@ def _clean(value, secrets=()):
     if isinstance(value, list):
         return [_clean(v, secrets) for v in value]
     if isinstance(value, str):
-        for s in secrets:
-            if s:
-                value = value.replace(s, "[REDACTED]")
+        for s in exchange_store.secret_keys(secrets):
+            value = value.replace(s, "[REDACTED]")
         return redact(value)
     return value
 
@@ -746,7 +745,7 @@ class Relay:
         quotes a header value it refuses (a key with a stray CR, a BOM), so
         the key itself is cut out of the text whatever else it says."""
         text = f"{type(e).__name__}: {e}"
-        for k in {self.key, self.key.strip()} - {""}:
+        for k in exchange_store.secret_keys((self.key, self.key.strip())):
             text = text.replace(k, "[REDACTED]")
         return redact(text)[:200]
 

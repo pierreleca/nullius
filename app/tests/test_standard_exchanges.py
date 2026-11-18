@@ -204,6 +204,42 @@ class StoreFiles(unittest.TestCase):
     def keep(self, store, req, n=1, headers=None):
         store.write("u0001", n, 1.0, "/messages", req, json.dumps(req).encode(), headers or {}, 200, False, b"{}")
 
+    def test_only_real_keys_are_cut_from_nested_values_and_names(self):
+        _, placeholder = run.provider_endpoint("custom", {"MODEL_API_URL": "http://localhost:8000/v1"})
+        value = {"localhost": ["local-model", {KEY: "localhost " + KEY}]}
+        expected = {"localhost": ["local-model", {"[REDACTED]": "localhost [REDACTED]"}]}
+        for clean in (exchanges._cut_key, relay._clean):
+            with self.subTest(clean=clean.__name__):
+                self.assertEqual(clean(value, ("", placeholder, KEY)), expected)
+
+    def test_a_keyless_relay_keeps_localhost_in_records_and_messages(self):
+        base, key = run.provider_endpoint("custom", {"MODEL_API_URL": "http://localhost:8000/v1"})
+        req = {"model": "local-model", "messages": [{"role": "user", "content": "localhost"}],
+               "provider": {"order": ["local-asked"]}}
+        body = json.dumps(dict(CHAT, provider="localhost", error={"message": "localhost unavailable"})).encode()
+        for mode in exchanges.MODES:
+            with self.subTest(mode=mode):
+                r = relay.Relay(base, key, str(self.root / mode), exchanges=mode, serving={"local-model": ["localhost"]})
+                self.addCleanup(r.stop)
+                response = mock.Mock(status=200, headers={"Content-Type": "application/json"})
+                response.getheader.return_value = "application/json"
+                response.read.return_value = body
+                raw = json.dumps(req).encode()
+                h = mock.Mock(path="/u0001/v1/chat/completions", command="POST",
+                              headers={"Content-Length": str(len(raw))}, rfile=io.BytesIO(raw), wfile=io.BytesIO())
+                with mock.patch.object(r.pool, "send", return_value=(mock.Mock(), response)), mock.patch.object(r.pool, "give"):
+                    r._forward(h)
+                self.assertEqual(h.wfile.getvalue(), body)
+                call, = r.calls("u0001")
+                self.assertEqual(call["request"]["routing"], relay.routing(["localhost"]))
+                self.assertEqual(call["request"]["routing_asked"], req["provider"])
+                self.assertEqual(call["reply"]["served_by"], "localhost")
+                self.assertEqual(call["reply"]["error"]["message"], "localhost unavailable")
+                self.assertEqual(r._said(OSError("localhost unavailable")), "OSError: localhost unavailable")
+                for p in Path(r.dir).rglob("*"):
+                    if p.is_file():
+                        self.assertNotIn(b"[REDACTED]", p.read_bytes())
+
     def test_empty_and_placeholder_keys_leave_exchanges_unchanged(self):
         env = {"MODEL_API_URL": "http://localhost:8000/v1"}
         _, placeholder = run.provider_endpoint("custom", env)

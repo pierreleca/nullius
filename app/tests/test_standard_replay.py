@@ -140,6 +140,50 @@ class ReplayCase(unittest.TestCase):
         return replay.send(prep, times, max_usd, os.path.join(self.tmp, "out", str(len(Upstream.seen))), env=self.env, **kw)
 
 
+class KeylessCase(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.job = self.root / "local-job"
+        self.env = {"MODEL_API_URL": "http://localhost:8000/v1"}
+        self.trial = "local-task__u0001"
+        self.request = dict(messages_request(1), model="local-model", system="localhost")
+        self.body = json.dumps(dict(reply_of("localhost"), provider="localhost")).encode()
+        store = exchanges.Store(str(self.job / self.trial / ".work" / "relay"))
+        store.write("u0001", 1, 1.0, "/messages", self.request, json.dumps(self.request).encode(), {}, 200, False, self.body)
+        (self.job / "config.json").write_text(json.dumps({"standard": {"provider": "custom",
+            "prices": {"models": {"local-model": {"input": 1.0, "output": 2.0}}}}}))
+        self.prep = replay.prepare(replay.source(str(self.job), self.trial, 1), [], env=self.env)
+        self.enterContext(mock.patch.object(relay.Relay, "start", lambda r: r))
+        self.post = self.enterContext(mock.patch.object(replay, "post", side_effect=lambda r, p, tag: (
+            dict(replay.answer(p.source.path, 200, self.body, False), route=tag, refused=None,
+                 sent_sha256=p.sha256, cost_usd=0.001), {})))
+
+    def assert_no_redaction(self, out, doc, log):
+        self.assertNotIn("[REDACTED]", json.dumps(doc) + "".join(log))
+        self.assertTrue(log[-1].startswith(str(out) + ": "))
+        for p in out.rglob("*"):
+            if p.is_file():
+                self.assertNotIn(b"[REDACTED]", p.read_bytes())
+
+
+class Keyless(KeylessCase):
+    def test_a_keyless_replay_keeps_localhost_in_files_labels_and_messages(self):
+        out, log = self.root / "local-replay", []
+        doc = replay.send(self.prep, 1, 1.0, str(out), env=self.env, say=log.append,
+                          rule=lambda a: json.loads(a["tool_calls"][0]["arguments"])["x"])
+        self.assert_no_redaction(out, doc, log)
+        self.assertEqual(doc["request"]["endpoint"], self.env["MODEL_API_URL"])
+        self.assertEqual(doc["request"]["model"], "local-model")
+        self.assertEqual(doc["recorded_answer"], "localhost")
+        self.assertEqual(doc["counts"], [{"label": "localhost", "count": 1, "recorded": True}])
+        row = json.loads((out / "answers.jsonl").read_text())
+        self.assertEqual((row["body"], row["served_by"], row["label"]), (self.body.decode(), "localhost", "localhost"))
+        self.assertEqual((out / "request.json").read_bytes(), self.prep.raw)
+        self.assertEqual(self.post.call_args.args[0].base, self.env["MODEL_API_URL"])
+
+
 class Rebuilt(ReplayCase):
     def test_source_links_cannot_escape_the_job_or_trial(self):
         trial = Path(self.job, "task-a__u0001")

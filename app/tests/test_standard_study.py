@@ -17,7 +17,7 @@ from pathlib import Path
 from unittest import mock
 
 from nullius.standard import cli as standard_cli, replay, study
-from tests.test_standard_replay import APP, KEY, ReplayCase, Upstream, reply_of, tree
+from tests.test_standard_replay import APP, KEY, KeylessCase, ReplayCase, Upstream, reply_of, tree
 
 TWO = replay.replace_text("one tool call", "one or two tool calls")     # the second arm's change
 
@@ -67,6 +67,25 @@ class StudyCase(ReplayCase):
     def run_study(self, *arms, out=None, **kw):
         kw = {"times": 2, "max_usd": 1.0, "endpoint": self.base, "env": self.env, **kw}
         return study.study(out or self.out, kw.pop("targets", self.targets), list(arms) or [study.Arm("two", [TWO])], **kw)
+
+
+class Keyless(KeylessCase):
+    def test_a_keyless_study_keeps_localhost_in_files_labels_and_messages(self):
+        out, log = self.root / "local-study", []
+        target = study.Target(str(self.job), self.trial, 1)
+        doc = study.study(str(out), [target], [study.Arm("local-arm", [])], times=1, max_usd=1.0,
+                          env=self.env, say=log.append, rule=lambda a: json.loads(a["tool_calls"][0]["arguments"])["x"])
+        self.assert_no_redaction(out, doc, log)
+        self.assertEqual(doc["state"], "done")
+        self.assertEqual(doc["plan"]["targets"][0]["trial"], self.trial)
+        self.assertEqual([r["model"] for r in doc["plan"]["requests"][0]], ["local-model"] * 2)
+        self.assertEqual(doc["counts"][0]["arms"], {name: [{"label": "localhost", "count": 1, "recorded": True}]
+                                                   for name in ("recorded", "local-arm")})
+        self.assertEqual(json.loads((out / "targets.jsonl").read_text())["reply"]["body"], self.body.decode())
+        rows = [json.loads(line) for line in (out / "completed.jsonl").read_text().splitlines()]
+        self.assertEqual([r["body"] for r in rows], [self.body.decode()] * 2)
+        self.assertEqual(self.post.call_count, 2)
+        self.assertEqual(self.post.call_args.args[0].base, self.env["MODEL_API_URL"])
 
 
 class SignTest(unittest.TestCase):
