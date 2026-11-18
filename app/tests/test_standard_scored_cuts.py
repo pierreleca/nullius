@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -211,6 +213,40 @@ class EndedByTest(unittest.TestCase):
     def test_a_trial_that_says_nothing_of_it_has_none(self):
         self.assertEqual(self.trial(ended="done", standard=False).ended_by, "")
         self.assertEqual(self.trial(scored=False).ended_by, "")
+
+    def test_score_links_are_not_followed(self):
+        for part in ("score", "verifier", "trial"):
+            with self.subTest(part=part):
+                t = self.trial(ended="done")
+                path = {"score": os.path.join(t.dir, "verifier", "score.json"),
+                        "verifier": os.path.join(t.dir, "verifier"), "trial": t.dir}[part]
+                target = path + "-outside"
+                os.rename(path, target)
+                if part == "trial":
+                    self.addCleanup(shutil.rmtree, target, ignore_errors=True)
+                    self.addCleanup(os.unlink, path)
+                os.symlink(target, path)
+                self.assertEqual(parse.parse_trial("j", t.dir).ended_by, "")
+
+    def test_a_score_pipe_does_not_wait_for_a_writer(self):
+        t = self.trial(ended="done")
+        path = os.path.join(t.dir, "verifier", "score.json")
+        os.unlink(path)
+        os.mkfifo(path)
+        result = subprocess.run([sys.executable, "-c", "from nullius.runs import parse; import sys; "
+                                 "assert parse.parse_trial('j', sys.argv[1]).ended_by == ''", t.dir],
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=3)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_score_size_is_bounded(self):
+        t = self.trial(ended="done")
+        path = os.path.join(t.dir, "verifier", "score.json")
+        raw = b'{"detail": {"ended": "done"}}'
+        for size, expected in ((1024 * 1024, "done"), (1024 * 1024 + 1, "")):
+            with self.subTest(size=size):
+                with open(path, "wb") as f:
+                    f.write(raw + b" " * (size - len(raw)))
+                self.assertEqual(parse.parse_trial("j", t.dir).ended_by, expected)
 
 
 if __name__ == "__main__":

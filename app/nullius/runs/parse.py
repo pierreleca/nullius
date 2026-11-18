@@ -7,9 +7,12 @@ and redact on the way in.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
+import stat
+from contextlib import ExitStack
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 
@@ -78,6 +81,27 @@ def _retries_of(res: dict) -> int:
 # What ended an agent's work on a standard trial (`Trial.ended_by`), by its name
 ENDED_LABELS = {"agent": "Agent", "done": "Done", "fail": "Fail", "steps": "Step limit", "time": "Time limit",
                 "calls": "Call cap", "end": "Task end"}
+SCORE_BYTES = 1024 * 1024
+
+
+def _read_score(trial_dir: str):
+    """Read at most SCORE_BYTES from a regular score file without following links inside the trial."""
+    try:
+        with ExitStack() as opened:
+            flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            trial = os.open(trial_dir, flags)
+            opened.callback(os.close, trial)
+            folder = os.open("verifier", flags, dir_fd=trial)
+            opened.callback(os.close, folder)
+            fd = os.open("score.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=folder)
+            opened.callback(os.close, fd)
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_size > SCORE_BYTES:
+                return None
+            raw = os.read(fd, SCORE_BYTES + 1)
+        return json.loads(raw) if 0 < len(raw) <= SCORE_BYTES else None
+    except (OSError, ValueError):
+        return None
 
 
 def _ended_by(res: dict, trial_dir: str) -> str:
@@ -92,7 +116,7 @@ def _ended_by(res: dict, trial_dir: str) -> str:
     cut = std.get("cut")
     if cut in ("time", "calls"):
         return cut
-    said = verifier._read_json(os.path.join(trial_dir, "verifier", "score.json"))
+    said = _read_score(trial_dir)
     detail = said.get("detail") if isinstance(said, dict) else None
     ended = detail.get("ended") if isinstance(detail, dict) else None
     if ended in ("done", "fail", "steps"):
