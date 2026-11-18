@@ -561,7 +561,6 @@ class CredentialChecks(ReplayCase):
 class ReadingPage(unittest.TestCase):
     def test_the_documented_reader_consumes_the_parsed_answer(self):
         page = (APP.parent / "docs" / "cli" / "replay.md").read_text()
-        self.assertIn("no release used the earlier form", page)
         script = re.search(r'```python title="read_action.py"\n(.*?)```', page, re.S).group(1)
         body = json.dumps({"choices": [{"message": {"content": '{"action":"click"}'}}]}).encode()
         answer = replay.answer("/chat/completions", 200, body, False)

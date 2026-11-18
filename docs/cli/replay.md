@@ -45,7 +45,7 @@ A command given to `--through` or `--read` runs without any provider key in its 
 
 ## Answers
 
-A reading command receives the parsed answer (`status`, `text`, `reasoning`, `tool_calls`) with the raw reply in `body`; no release used the earlier form that supplied only the raw reply.
+A reading command receives the parsed answer (`status`, `text`, `reasoning`, `tool_calls`) with the raw reply in `body`.
 
 | Item | Detail |
 | --- | --- |
