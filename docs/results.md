@@ -36,6 +36,11 @@ On a job of the Nullius standard that has ended: tick the rows, or **Select the 
 then **Run selected again**. A task the job planned with no result (never run, or its run killed) is a row of its own,
 outcome **No result**, ticked the same way; it is run, not run again.
 
+A job [begun on a part of its plan](cli/run.md#plan-the-whole-begin-with-a-part) says how many of its planned tasks have run, in its head and beside
+the rates, which are over the tasks run. Each planned task not run yet is a row with no attempt, outcome **Not run**.
+**Run the rest** ticks every task with no result; **Run a set** ticks those a task set of its dataset names; either opens
+the same question. The runs list counts its solves over the trials run and says how many of the plan have run.
+
 | Step | Detail |
 | --- | --- |
 | Ask | A reason (optional), a spending cap (optional), the number of tasks |
