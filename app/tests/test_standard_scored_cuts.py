@@ -182,6 +182,27 @@ class ScoredCutsTest(unittest.TestCase):
         self.assertEqual((trials["quick"].reward, trials["quick"].ended_by), (1.0, "agent"))
 
 
+class CutWatchTest(unittest.TestCase):
+    def test_cancellation_waits_for_the_end_grace(self):
+        with tempfile.TemporaryDirectory() as trial:
+            with open(os.path.join(trial, "progress.json"), "w") as f:
+                json.dump({"ended": "done"}, f)
+            watch = run.CutWatch(["end"], trial, None, "progress.json")
+            times = iter((100.0, 159.999, 160.001))
+            with mock.patch.object(run.time, "monotonic") as now:
+                def tick(seconds):
+                    self.assertFalse(watch.event.is_set())
+                    self.assertIsNone(watch.by)
+                    now.return_value = next(times)
+                    return False
+
+                with mock.patch.object(watch.done, "wait", side_effect=tick) as wait:
+                    watch._run()
+                self.assertEqual(wait.call_count, 3)
+            self.assertTrue(watch.event.is_set())
+            self.assertEqual(watch.by, "end")
+
+
 class EndedByTest(unittest.TestCase):
     """What the reader says ended a trial's work, for each way one ends: from the record's cut first, then the
     benchmark's own detail."""
