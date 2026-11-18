@@ -313,6 +313,27 @@ class Unreadable(Base):
 
 
 class Pictures(Base):
+    def test_inline_encodings_are_picture_metadata_in_every_display(self):
+        encoded = base64.b64encode(P1).decode()
+        variants = [encoded + "\n", encoded[:40] + " \n" + encoded[40:], encoded.rstrip("="),
+                    base64.urlsafe_b64encode(P1).decode()]
+        for i, value in enumerate(variants):
+            for source in (False, True):
+                with self.subTest(variant=i, source=source):
+                    image = ({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": value}}
+                             if source else {"type": "image_url", "image_url": {"url": "data:image/png;base64," + value}})
+                    req = {"messages": [{"role": "user", "content": [image]}],
+                           "tools": [{"name": "look", "input_schema": {"default": image}}]}
+                    folder = self.trial([{"req": req, "body": chat_reply(json.dumps(image))}], name=f"inline-{i}-{source}__u0001")
+                    v = load(folder)
+                    for item in v["calls"][0]["sent"]["items"]:
+                        self.assertEqual(item["pictures"], [{"sha256": sha(P1), "type": "image/png",
+                                                            "bytes": len(P1), "stored": False}])
+                    for shown in (v, calls.document(v), calls.page(v, section="sent-0"),
+                                  calls.page(v, section="sent-1"), calls.page(v, section="text")):
+                        self.assertNotIn(value[:40], json.dumps(shown))
+                    self.assertTrue(exchanges.check(calls.store_folder(folder), "u0001", 1)["same"])
+
     def test_a_listed_picture_is_given_with_its_type_and_any_other_is_refused(self):
         v = load(self.trial(history()))
         self.assertEqual(calls.picture(v, sha(P2)), (P2, "image/png"))
@@ -390,7 +411,9 @@ class TheCommand(Base):
             json.dump({"agents": [{"name": "a", "model_name": "m"}], "datasets": [{"name": "d", "n_tasks": 1}]}, f)
         with open(os.path.join(job, "result.json"), "w") as f:
             json.dump({"stats": {"n_trials": 1}}, f)
-        trial = write_trial(os.path.join(job, "task__u0001"), history(), steps=[("agent", T0 + 11, "looking")])
+        kept = history()
+        kept[0]["req"]["messages"][1]["content"][1]["image_url"]["url"] += "\n"
+        trial = write_trial(os.path.join(job, "task__u0001"), kept, steps=[("agent", T0 + 11, "looking")])
         with open(os.path.join(trial, "result.json"), "w") as f:
             json.dump({"task_name": "d/task", "trial_name": "task__u0001", "source": "d"}, f)
         (j,) = parse.load_all([root])
@@ -399,6 +422,7 @@ class TheCommand(Base):
             code = runs_cli.main(["show", root, j.job_id, "task__u0001", "--calls"])
         self.assertEqual(code, 0, err.getvalue())
         doc = json.loads(out.getvalue())
+        self.assertNotIn(base64.b64encode(P1).decode()[:40], out.getvalue())
         self.assertEqual((doc["record"], [c["number"] for c in doc["calls"]], doc["calls"][0]["steps"]), ("exchanges", [1, 2, 3, 4], [1]))
         self.assertEqual(doc["calls"][1]["sent"]["items"][0]["pictures"][0]["sha256"], sha(P2))
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as usage:

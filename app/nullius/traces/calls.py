@@ -163,11 +163,18 @@ def _marks(v, found: Dict[str, str]) -> None:
             _marks(x, found)
 
 
-def _walk(v, texts: List[str], pictures: List[dict], check) -> None:
+def _walk(v, texts: List[str], pictures: List[dict], check, media=None) -> None:
     """A part's text and its pictures, in order. ``check(mark)``: the picture as a view holds it; it raises
     ``exchanges.Missing`` for a mark that names no digest."""
     if isinstance(v, str):
-        texts.append(v)
+        inline = exchanges._picture(v, media, text_only=True)
+        if inline:
+            kind, raw, _ = inline
+            h = hashlib.sha256(raw).hexdigest()
+            pictures.append({"sha256": h, "type": kind, "bytes": len(raw), "stored": False})
+            texts.append(f"[picture {h[:12]}]")
+        else:
+            texts.append(v)
     elif isinstance(v, list):
         for x in v:
             _walk(x, texts, pictures, check)
@@ -178,9 +185,10 @@ def _walk(v, texts: List[str], pictures: List[dict], check) -> None:
             pictures.append(check(v))
             texts.append(f"[picture {str(v.get('blob'))[:12]}]")
             return
+        media = v.get("media_type") if v.get("type") == "base64" and isinstance(v.get("media_type"), str) else None
         for k, x in v.items():
             if k not in _NOT_TEXT:
-                _walk(x, texts, pictures, check)
+                _walk(x, texts, pictures, check, media if k == "data" else None)
 
 
 def _kind(field: str, part) -> str:
@@ -251,7 +259,7 @@ class _Reader:
         if kind == "tools":
             name = _tool_name(part)
             _walk(part, [], pictures, self.picture)
-            text = json.dumps(part, indent=1, ensure_ascii=False)
+            text = exchanges._text_body(json.dumps(part, indent=1, ensure_ascii=False))
             return {"kind": kind, "sha256": h, "names": [name] if name else [], "text": text, "pictures": pictures}
         _walk(part, texts, pictures, self.picture)
         out = {"kind": kind, "sha256": h, "text": "\n".join(t for t in texts if t), "pictures": pictures}
@@ -324,7 +332,7 @@ def _answer_of_record(rec: dict) -> dict:
 
 def _redacted(v):
     if isinstance(v, str):
-        return redact(v)
+        return redact(exchanges._text_body(v))
     if isinstance(v, list):
         return [_redacted(x) for x in v]
     if isinstance(v, dict):
