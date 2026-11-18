@@ -462,6 +462,13 @@ def through(command: str, env=None) -> Change:
 Rule = Callable[[dict], str]
 
 
+def _read_rule(rule: Rule, a: dict, keys) -> str:
+    try:
+        return exchanges._cut_key(rule(exchanges._cut_key(a, keys)), keys)
+    except Exception as e:
+        raise Refused("reading rule failed: " + exchanges._cut_key(str(e), keys)) from None
+
+
 def answer(path: str, status: int, body: bytes, streamed: bool) -> dict:
     """A reply read whole: text, reasoning, tool calls with their arguments, usage, who served it, how it ended,
     an error; ``status`` as it came."""
@@ -756,12 +763,12 @@ def send(prep: Prepared, times: int, max_usd: float, out: str, *, rule: Optional
     os.makedirs(os.path.join(out, "ledger"), exist_ok=True)
     with open(os.path.join(out, "request.json"), "wb") as f:
         f.write(prep.raw)
-    recorded = rule(answer(prep.source.path, int(prep.source.reply.get("status") or 0),
-                           str(prep.source.reply.get("body") or "").encode("utf-8"), bool(prep.source.reply.get("streamed"))))
+    recorded = _read_rule(rule, answer_of(prep.source.path, prep.source.reply), (key,))
     doc = {"schema": SCHEMA, **prep.summary(times, cap), "request_file": "request.json", "concurrency": concurrency,
            "rule": dict(getattr(rule, "rule", None) or {"name": getattr(rule, "__name__", "rule")}),
            "recorded_answer": recorded, "state": "sending", "started": _now()}
     doc["request"].pop("fields", None)
+    doc = exchanges._cut_key(doc, (key,))
     _write_json(os.path.join(out, "replay.json"), doc)  # the rule is kept before the first send
     led = ledgers.Ledger.create(os.path.join(out, "ledger", "ledger.json"), cap)
     rl = relay.Relay(prep.endpoint, key, os.path.join(out, "relay"), prices={prep.model: prep.price}, model=prep.model,
@@ -773,6 +780,7 @@ def send(prep: Prepared, times: int, max_usd: float, out: str, *, rule: Optional
         if stop.is_set():
             return None
         a, rec = post(rl, prep, f"r{i + 1:0{width}d}")
+        a, rec = exchanges._cut_key([a, rec], (key,))
         a["send"] = i + 1
         if a["refused"]:
             stop.set()
@@ -781,7 +789,7 @@ def send(prep: Prepared, times: int, max_usd: float, out: str, *, rule: Optional
             stop.set()
             why.append(f"send {i + 1}: the provider refused the key (HTTP {a['status']})")
         else:
-            a["label"] = rule(a)
+            a["label"] = _read_rule(rule, a, (key,))
         return a
 
     try:
@@ -810,7 +818,8 @@ def send(prep: Prepared, times: int, max_usd: float, out: str, *, rule: Optional
                 "same_as_recorded": sum(1 for x in labels if x == recorded)})
     _write_json(os.path.join(out, "replay.json"), doc)
     if say:
-        say(f"{out}: {doc['sends']['answered']} of {times} answered, {ledgers.usd(spend.get('spent_usd') or 0.0)} USD spent")
+        say(exchanges._cut_key(f"{out}: {doc['sends']['answered']} of {times} answered, "
+                              f"{ledgers.usd(spend.get('spent_usd') or 0.0)} USD spent", (key,)))
     doc["out"] = out
     return doc
 

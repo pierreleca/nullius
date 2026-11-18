@@ -908,7 +908,7 @@ class Relay:
                 rec = {"n": number, **rec}
             with self.lock:
                 with open(os.path.join(self.dir, tag + ".jsonl"), "a") as f:
-                    f.write(json.dumps(rec) + "\n")
+                    f.write(json.dumps(exchange_store._cut_key(rec, (self.key, self.key.strip()))) + "\n")
             if number is not None:               # the exchange whole, after its record: it never raises
                 self.exchanges.write(tag, number, t0, rest, req if dumped else None, raw,
                                      {k: v for k, v in sent_headers.items() if not _CREDENTIAL.search(k)}, status, streamed, body)
@@ -1002,7 +1002,7 @@ class Relay:
             rec = {"n": number, **rec}
         with self.lock:
             with open(os.path.join(self.dir, tag + ".jsonl"), "a") as f:
-                f.write(json.dumps(rec) + "\n")
+                f.write(json.dumps(exchange_store._cut_key(rec, (self.key, self.key.strip()))) + "\n")
         body = json.dumps({"type": "error", "error": {"type": "call_cap" if by == "calls" else "spending_cap",
                                                       "code": {"unit": "unit_spending_cap", "price": "unpriced_model", "ledger": "ledger_unavailable",
                                                                "calls": "unit_call_cap"}.get(by, "spending_cap"),

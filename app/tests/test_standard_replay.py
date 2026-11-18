@@ -305,6 +305,20 @@ class Changes(ReplayCase):
 
 
 class Sends(ReplayCase):
+    def test_echoed_credentials_are_removed_from_answers_and_labels(self):
+        secret = "active-credential-without-a-provider-prefix"
+        self.env["OPENROUTER_API_KEY"] = secret
+        Upstream.plan = [secret]
+        log = []
+        doc = self.send(self.prepared(), times=1, rule=lambda a: secret + a["body"], say=log.append)
+        self.assertNotIn(secret, json.dumps(doc) + "".join(log))
+        for p in Path(doc["out"]).rglob("*"):
+            if p.is_file():
+                self.assertNotIn(secret.encode(), p.read_bytes())
+        with self.assertRaises(replay.Refused) as caught:
+            replay._read_rule(lambda a: (_ for _ in ()).throw(ValueError(secret)), {}, (secret,))
+        self.assertNotIn(secret, str(caught.exception))
+
     def test_k_sends_their_counts_and_the_spend_recorded(self):
         """K sends, the counts of the distinct answers, and the spend recorded."""
         Upstream.plan = [3, 4, 3, None, 3]

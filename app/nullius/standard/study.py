@@ -372,12 +372,12 @@ def study(out: str, targets: Sequence[Target], arms: Sequence[Arm] = (), times: 
             for i, row in enumerate(preps, 1):
                 src = row[0].source
                 f.write(json.dumps(dict(plan["targets"][i - 1], target=f"t{i}", route=src.route, path=src.path,
-                                        reply=src.reply, cost_usd=src.record.get("cost_usd")), ensure_ascii=False) + "\n")
+                                        reply=exchanges._cut_key(src.reply, keys.values()), cost_usd=src.record.get("cost_usd")), ensure_ascii=False) + "\n")
         kept = {"schema": SCHEMA, "plan": plan, "max_usd": cap, "state": "sending", "created": _now(), "starts": []}
         _write(out, kept)                        # the plan and its rule, kept before the first send
         led = ledgers.Ledger.create(led.path, cap)
     doc = kept
-    recorded = [rule(rp.answer_of(row[0].source.path, row[0].source.reply)) for row in preps]
+    recorded = [rp._read_rule(rule, rp.answer_of(row[0].source.path, row[0].source.reply), keys.values()) for row in preps]
     if todo:
         _send(out, doc, preps, names, todo, keys, led, times, rule, concurrency, stop_after, say)
     answered = _answered(out)
@@ -389,10 +389,11 @@ def study(out: str, targets: Sequence[Target], arms: Sequence[Arm] = (), times: 
     left = len(targets) * len(arms) * times - len(answered)
     doc.update({"state": "done" if not left else "stopped", "left": left, "spend": spend,
                 **tally(plan, recorded, list(answered.values()), yes, compare, rule is rp.first_tool_call)})
+    doc = exchanges._cut_key(doc, keys.values())
     _write(out, doc)
     if say:
-        say(f"{out}: {len(answered)} of {len(targets) * len(arms) * times} answered, "
-            f"{ledgers.usd(spend.get('spent_usd') or 0.0)} USD spent of {ledgers.usd(cap)}")
+        say(exchanges._cut_key(f"{out}: {len(answered)} of {len(targets) * len(arms) * times} answered, "
+                              f"{ledgers.usd(spend.get('spent_usd') or 0.0)} USD spent of {ledgers.usd(cap)}", keys.values()))
     return dict(doc, out=out)
 
 
@@ -429,6 +430,7 @@ def _send(out, doc, preps, names, todo, keys, led, times, rule, concurrency, sto
             begun[0] += 1
         rl = group_of[(i, j)]
         a, rec = rp.post(rl, preps[i - 1][j], f"t{i:0{wi}d}a{j + 1}k{k:0{wk}d}")
+        a, rec = exchanges._cut_key([a, rec], keys.values())
         a.update({"target": i, "arm": names[j], "k": k, "start": start, "relay": os.path.relpath(rl.dir, out)})
         if a["refused"]:
             stop.set()
@@ -437,7 +439,7 @@ def _send(out, doc, preps, names, todo, keys, led, times, rule, concurrency, sto
             stop.set()
             why.append(f"t{i} {names[j]} send {k}: the provider refused the key (HTTP {a['status']})")
         elif a["status"] == 200:
-            a["label"] = rule(a)
+            a["label"] = rp._read_rule(rule, a, keys.values())
         with lock:
             with open(os.path.join(out, "answers.jsonl"), "a", encoding="utf-8") as f:
                 f.write(json.dumps({x: v for x, v in a.items() if x != "body"}, ensure_ascii=False) + "\n")

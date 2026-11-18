@@ -80,6 +80,18 @@ class SignTest(unittest.TestCase):
 
 
 class Studies(StudyCase):
+    def test_echoed_credentials_are_removed_before_files_and_progress(self):
+        secret = "active-credential-without-a-provider-prefix"
+        self.env["OPENROUTER_API_KEY"] = secret
+        Model.answers = {}
+        Upstream.plan = [secret]
+        log = []
+        doc = self.run_study(times=1, targets=self.targets[:1], rule=lambda a: secret + a["body"], say=log.append)
+        self.assertNotIn(secret, json.dumps(doc) + "".join(log))
+        for p in Path(self.out).rglob("*"):
+            if p.is_file():
+                self.assertNotIn(secret.encode(), p.read_bytes())
+
     def test_three_targets_two_arms_the_counts_the_table_and_the_sign_test(self):
         """A study of three targets and two arms: the counts, the table, and the sign test: t1 and t2 up, t3 a tie,
         p = 2 * (1/2)^2 = 0.5."""
