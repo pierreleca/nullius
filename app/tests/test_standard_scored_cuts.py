@@ -163,9 +163,8 @@ class ScoredCutsTest(unittest.TestCase):
         self.assertEqual((trials["ended"].exception_type, trials["ended"].reward), ("AgentTimeoutError", None))
 
     def test_a_unit_no_limit_cut_is_written_as_without_the_declaration(self):
-        """The agent ends its turn by itself: no cut in its record, which is the same field for field as the one a
-        benchmark without the declaration writes, but for the times and the job's name; the reader says the agent
-        ended its work."""
+        """The agent ends its turn by itself. With or without the declaration, its record matches the base
+        except for the times and the job's name. The reader says the agent ended its work."""
         def plain(rec):
             out = json.loads(json.dumps(rec))
             for k in ("started_at", "finished_at"):
@@ -177,7 +176,11 @@ class ScoredCutsTest(unittest.TestCase):
             return out
         trials, cut_records = self.go(self.bench(["quick"], cuts=["time", "calls", "end"]), max_calls=5)
         _, base_records = self.go(self.bench(["quick"]), max_calls=5)
-        self.assertEqual(plain(cut_records["quick"]), plain(base_records["quick"]))
+        # Captured from base commit 7d32581 with write_trial and the quick unit's inputs.
+        with open(os.path.join(os.path.dirname(__file__), "fixtures", "standard", "uncut-record.json")) as f:
+            expected = json.load(f)
+        self.assertEqual(plain(cut_records["quick"]), expected)
+        self.assertEqual(plain(base_records["quick"]), expected)
         self.assertNotIn("cut", cut_records["quick"]["standard"])
         self.assertEqual((trials["quick"].reward, trials["quick"].ended_by), (1.0, "agent"))
 
