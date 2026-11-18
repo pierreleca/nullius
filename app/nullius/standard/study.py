@@ -26,12 +26,15 @@ from __future__ import annotations
 import concurrent.futures
 import datetime
 import hashlib
+import inspect
 import json
+import marshal
 import math
 import os
 import re
 import shlex
 import threading
+import types
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence
 
@@ -132,6 +135,32 @@ def _pattern(text: str, what: str):
         raise Refused(f"{what} {text!r} is not a regular expression: {e}")
 
 
+def _function_fingerprint(rule: rp.Rule) -> Optional[str]:
+    def describe(value):
+        if isinstance(value, types.FunctionType):
+            return {"code": marshal.dumps(value.__code__).hex(), "defaults": describe(value.__defaults__),
+                    "keywords": describe(value.__kwdefaults__),
+                    "closure": [describe(c.cell_contents) for c in value.__closure__ or ()],
+                    "globals": describe(inspect.getclosurevars(value).globals)}
+        if isinstance(value, types.ModuleType):
+            return {"module": value.__name__}
+        if isinstance(value, dict):
+            return {k: describe(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [describe(v) for v in value]
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        raise TypeError("the rule captures a value without a stable fingerprint")
+
+    try:
+        if not isinstance(rule, types.FunctionType):
+            return None
+        raw = json.dumps(describe(rule), sort_keys=True, allow_nan=False).encode()
+        return hashlib.sha256(raw).hexdigest()
+    except (TypeError, ValueError, RecursionError):
+        return None
+
+
 def rule_record(rule: rp.Rule) -> dict:
     """What the plan keeps of a rule: its description and, for a command, the sha256 of each file the command
     names (a reading script changed since the first start is another rule)."""
@@ -153,6 +182,8 @@ def rule_record(rule: rp.Rule) -> dict:
                 continue
         if files:
             out["files"] = files
+    else:
+        out["fingerprint"] = _function_fingerprint(rule)
     return out
 
 
@@ -284,7 +315,7 @@ def study(out: str, targets: Sequence[Target], arms: Sequence[Arm] = (), times: 
           rule: Optional[rp.Rule] = None, yes: Optional[str] = None, compare: Optional[Sequence[str]] = None,
           prices: Optional[Dict[str, dict]] = None, endpoint: Optional[str] = None, concurrency: int = 1,
           stop_after: Optional[int] = None, dry_run: bool = False, env=None,
-          say: Optional[Callable[[str], None]] = None) -> dict:
+          say: Optional[Callable[[str], None]] = None, same_rule: bool = False) -> dict:
     """``targets``, each sent ``times`` times as recorded and under each of ``arms``, under one spending cap of
     ``max_usd`` for the whole study, everything kept in the folder ``out``. ``rule`` reads each answer
     (``replay.first_tool_call`` by default); ``yes``, a regular expression a label must match to read yes (by
@@ -292,7 +323,7 @@ def study(out: str, targets: Sequence[Target], arms: Sequence[Arm] = (), times: 
     default). ``stop_after``: at most this many sends in this start. ``dry_run``: what would be sent and its
     estimate, nothing sent or written. On a folder that holds the study already, it goes on: only what was not
     answered is sent; another plan or cap is refused. Returns the document written to ``study.json``, with
-    ``out``; the dry run, its own."""
+    ``out``; the dry run, its own. ``same_rule`` confirms an uncheckable function is unchanged on a restart."""
     from nullius.standard import run as runs                # its key and endpoint checks, as a run makes them
     env = os.environ if env is None else env
     targets, arms = list(targets), [Arm(RECORDED, [])] + list(arms)
@@ -334,6 +365,11 @@ def study(out: str, targets: Sequence[Target], arms: Sequence[Arm] = (), times: 
     if kept is not None:
         if kept.get("schema") != SCHEMA or not isinstance(kept.get("plan"), dict):
             raise Refused(f"{out}/study.json is not a study's")
+        if not plan["rule"].get("command") and (not plan["rule"].get("fingerprint")
+                                              or not kept["plan"].get("rule", {}).get("fingerprint")):
+            if not same_rule:
+                raise Refused("the reading rule cannot be fingerprinted: pass same_rule=True only if it is unchanged")
+            plan["rule"] = kept["plan"]["rule"]
         what = _differs(kept["plan"], plan)
         if what:
             raise Refused(f"the study in {out} began with other {what}: it goes on only as it began (a new folder starts another)")

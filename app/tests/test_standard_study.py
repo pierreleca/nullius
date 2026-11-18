@@ -80,6 +80,33 @@ class SignTest(unittest.TestCase):
 
 
 class Studies(StudyCase):
+    def test_changed_function_code_and_captured_configuration_are_refused(self):
+        old = lambda a: "old"
+        new = lambda a: "new"
+        self.run_study(rule=old, stop_after=1)
+        with self.assertRaisesRegex(study.Refused, "reading rule"):
+            self.run_study(rule=new)
+        self.assertEqual(len(Upstream.seen), 1)
+
+        def configured(label):
+            return lambda a: label
+
+        self.assertNotEqual(study.rule_record(configured("old")), study.rule_record(configured("new")))
+        self.assertEqual(study.rule_record(configured("old")), study.rule_record(configured("old")))
+
+    def test_uncheckable_rules_need_confirmation_on_restart(self):
+        class Reader:
+            def __call__(self, a):
+                return "read"
+
+        rule = Reader()
+        self.run_study(rule=rule, stop_after=1)
+        with self.assertRaisesRegex(study.Refused, "same_rule=True"):
+            self.run_study(rule=rule)
+        self.assertEqual(len(Upstream.seen), 1)
+        doc = self.run_study(rule=rule, same_rule=True)
+        self.assertEqual((doc["state"], len(Upstream.seen)), ("done", 12))
+
     def test_a_reader_failure_keeps_the_answer_and_resume_reads_it_without_resending(self):
         def reader(a):
             if "route" in a:
@@ -183,7 +210,8 @@ class Studies(StudyCase):
         """The rule and the plan are in study.json before the first request reaches the model."""
         Model.watch = self.out
         self.run_study(times=1)
-        self.assertEqual(Model.frozen[0], {"name": "first tool call", "reads": replay.first_tool_call.rule["reads"]})
+        self.assertEqual(Model.frozen[0], study.rule_record(replay.first_tool_call))
+        self.assertIsNotNone(Model.frozen[0]["fingerprint"])
         self.assertEqual(len(Model.frozen), 6)
 
     def test_one_cap_for_the_whole_study_counted_from_its_ledger_when_it_goes_on(self):

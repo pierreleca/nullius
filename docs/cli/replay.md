@@ -139,6 +139,8 @@ study.recount("studies/one-action", rule=replay.command_rule("python3 read_kind.
 
 Called again with the same arguments, `study()` goes on; `study.sign_test(higher, lower)` is the test alone.
 
+A function's code and captured values are fingerprinted in the plan; if they cannot be fingerprinted, a restart requires `same_rule=True` to confirm the rule is unchanged.
+
 <div class="grid cards" markdown>
 
 - [Run a benchmark](run.md#the-exchange-record)
