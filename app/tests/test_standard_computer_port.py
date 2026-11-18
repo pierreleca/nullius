@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import contextlib
 import hashlib
+import io
 import json
 import os
 import select
@@ -190,14 +191,16 @@ class Port(unittest.TestCase):
     """A unit: a fake desktop, the bridge over it, the server at a socket of the test's and the stand-in loop in a
     thread, as a runner holds them."""
 
-    def start(self, steps=3, pause=0.05, held=None, go=True):
+    def start(self, steps=3, pause=0.05, held=None, go=True, progress=False):
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp, True)
         root = os.path.join(self.tmp, "desktop")
         os.mkdir(root)
         self.desktop = FakeDesktop(root)
         self.first = threading.Event()
-        self.bridge = cp.Bridge(self.desktop, steps, pause, (1920, 1080), 30, on_first=self.first.set, held=held)
+        self.progress = os.path.join(self.tmp, "progress.json") if progress else None
+        self.bridge = cp.Bridge(self.desktop, steps, pause, (1920, 1080), 30, on_first=self.first.set, held=held,
+                                progress=self.progress)
         folder = os.path.join(self.tmp, "socket")
         os.mkdir(folder, 0o700)
         self.socket, self.log = os.path.join(folder, "s"), os.path.join(self.tmp, "calls.jsonl")
@@ -456,6 +459,104 @@ class TurnEnd(Port):
         os.close(read)
         self.assertFalse(reader.is_alive())
         kill.assert_called_once_with(os.getpid(), signal.SIGTERM)
+
+
+class Progress(Port):
+    """The progress file the bridge keeps: the steps taken, the budget, what ended the loop and the calls waiting at
+    the desktop. An answer is written to the client before the file follows it, so each state is waited for."""
+
+    def count(self):
+        with open(self.progress) as f:
+            return json.load(f)
+
+    def says(self, steps, limit, ended="", open_=0):
+        want = {"steps": steps, "steps_limit": limit, "ended": ended, "open": open_}
+        self.assertTrue(until(lambda: self.count() == want), f"{self.count()} is not {want}")
+
+    def test_the_file_says_each_state_from_setup_to_done(self):
+        c = self.start(steps=4, go=False, progress=True)
+        self.assertEqual(self.count(), {"steps": 0, "steps_limit": 4, "ended": "", "open": 0})   # after setup
+        shot = c.start("screenshot")                             # waits for the desktop to be ready
+        self.says(0, 4, open_=1)
+        self.go.set()
+        c.result(shot)
+        self.says(0, 4)
+        c.call("click", x=1, y=1)
+        self.says(1, 4)
+        self.desktop.gate.clear()                                # the next step is held in the loop
+        held = c.start("click", x=2, y=2)
+        self.says(2, 4, open_=1)
+        self.desktop.gate.set()
+        c.result(held)
+        self.says(2, 4)
+        c.call("done")
+        self.says(3, 4, "done")
+        self.evaluated()
+        self.says(3, 4, "done")
+
+    def test_the_file_says_what_ended_the_loop(self):
+        for ended, calls in (("fail", [("fail", {})]),
+                             ("done", [("step", {"actions": ["WAIT"], "end": "done"})]),
+                             ("fail", [("click", {"x": 1, "y": 1}), ("step", {"actions": [], "end": "fail"})]),
+                             ("steps", [("click", {"x": 1, "y": 1}), ("step", {"actions": ["WAIT"]})])):
+            with self.subTest(ended=ended, calls=[tool for tool, _ in calls]):
+                c = self.start(steps=2, progress=True)
+                for tool, args in calls:
+                    self.assertFalse(c.call(tool, **args)["isError"])
+                self.evaluated()
+                self.says(len(calls), 2, ended)
+
+    def test_a_turn_that_ended_with_no_stop_is_said(self):
+        c = self.start(steps=5, progress=True)
+        c.call("click", x=1, y=1)
+        self.bridge.end_turn()
+        self.assertEqual(self.evaluated(), 5)
+        self.says(1, 5, "turn")
+        self.assertEqual(error(c.call("click", x=1, y=1)), "the agent's turn has ended")
+        self.says(1, 5, "turn")
+
+    def test_a_done_taken_before_the_turns_end_is_what_ended_the_loop(self):
+        c = self.start(steps=5, go=False, progress=True)
+        final = c.start("done")
+        self.says(0, 5, open_=1)
+        self.bridge.end_turn()
+        self.go.set()
+        self.assertEqual(value(c.result(final))["done"], True)
+        self.evaluated()
+        self.says(1, 5, "done")
+
+    def test_a_reader_in_a_loop_never_reads_part_of_the_file(self):
+        c = self.start(steps=60, pause=0, progress=True)
+        seen, failures, stop = [], [], threading.Event()
+
+        def read():
+            while not stop.is_set():
+                try:
+                    with open(self.progress) as f:
+                        seen.append(json.load(f))
+                except (OSError, ValueError) as e:
+                    failures.append(repr(e))
+
+        reader = threading.Thread(target=read, daemon=True)
+        reader.start()
+        try:
+            for i in range(59):
+                c.call("click", x=i, y=i)
+            c.call("done")
+            self.evaluated()
+        finally:
+            stop.set()
+            reader.join(5)
+        self.assertEqual(failures, [])
+        self.assertTrue(all(set(s) == {"steps", "steps_limit", "ended", "open"} for s in seen))
+        self.assertGreater(len({s["steps"] for s in seen}), 10)
+        self.says(60, 60, "done")
+
+    def test_a_bridge_given_no_path_writes_no_file(self):
+        c = self.start(steps=2)
+        c.call("done")
+        self.evaluated()
+        self.assertEqual(sorted(os.listdir(self.tmp)), ["calls.jsonl", "desktop", "socket"])
 
 
 class Errors(Port):
@@ -1061,6 +1162,18 @@ class StepEnd(Bare):
         self.assertEqual(list(actions), [])
         self.assertEqual(call.answers, [(None, None, "the agent's turn has ended")])
         self.assertEqual(b.predict("", {}), ("", []))
+
+    def test_a_progress_file_that_cannot_be_written_leaves_the_task_as_it_is(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        with mock.patch.object(cp.sys, "stderr", io.StringIO()) as said:
+            b = cp.Bridge(FakeDesktop(tmp), 3, 0, (100, 100), 30, progress=os.path.join(tmp, "no-such", "progress.json"))
+            self.addCleanup(b.finish)
+            call = self.call(b, "click", x=1, y=1)
+            _, actions = b.predict("", {})
+            self.assertEqual(len(list(actions)), 1)
+        self.assertEqual(call.answers[0][0], {"steps_left": 2, "done": False})
+        self.assertEqual(said.getvalue().count("the progress file was not written"), 1)
 
     def test_a_step_with_no_end_hands_no_end(self):
         b = self.bridge()

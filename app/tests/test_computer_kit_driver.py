@@ -447,7 +447,27 @@ class Wiring(FakeUnits):
                 scored = driver.score("type", ws, [], "")
                 self.assertTrue(scored["passed"], scored)
                 self.assertEqual((scored["detail"]["steps_used"], scored["detail"]["actions"]), (1, 3))
+                self.assertEqual(scored["detail"]["ended"], end)
                 self.assertEqual(u.final, "typed")
+
+    def test_setup_names_the_progress_file_and_score_says_the_count(self):
+        for unit, clicks, ended in (("click", 1, "turn"), ("limit", 2, "steps")):
+            with self.subTest(unit=unit):
+                ws, s = self.unit(unit)
+                u = driver.OPEN[unit]
+                self.assertEqual(s["progress"], os.path.join("verifier", "computer-progress.json"))
+                path = os.path.join(os.path.dirname(ws), s["progress"])
+                with open(path) as f:
+                    self.assertEqual(json.load(f), {"steps": 0, "steps_limit": u.steps, "ended": "", "open": 0})
+                c = driver.Client(s["mcp"][0]["args"][0])
+                for label in checks.ORDER[:clicks] if unit == "limit" else [u.expected["target"]]:
+                    self.assertFalse(c.call("click", dict(zip("xy", driver.centre(u.boxes[label]))))[0])
+                c.close()
+                got = driver.score(unit, ws, [], "done")
+                self.assertEqual((got["detail"]["steps_used"], got["detail"]["steps"], got["detail"]["ended"]),
+                                 (clicks, u.steps, ended))
+                with open(path) as f:
+                    self.assertEqual(json.load(f), {"steps": clicks, "steps_limit": u.steps, "ended": ended, "open": 0})
 
     def test_a_client_that_types_through_python_fails(self):
         ws, s = self.unit("type")

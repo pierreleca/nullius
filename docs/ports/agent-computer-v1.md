@@ -63,8 +63,9 @@ The shared code is `app/nullius/standard/computer_port.py`, with the standard li
 | Piece | What the runner gives or does |
 | --- | --- |
 | `Desktop` | Five methods over its desktop: `python(code)`, `upload(path, data)`, `read(path)`, `capture()`, `password()` |
-| `Bridge` | Handed to the benchmark's own loop as its agent: `reset` does nothing, and each `predict` returns the actions of the agent's next acting call. Given the loop's step budget and pause, the screen's size and `python_seconds`; `finish` once the loop has returned |
+| `Bridge` | Handed to the benchmark's own loop as its agent: `reset` does nothing, and each `predict` returns the actions of the agent's next acting call. Given the loop's step budget and pause, the screen's size, `python_seconds` and the path of the progress file; `finish` once the loop has returned |
 | `Server` | The MCP server at a Unix socket in a folder of the user's alone, with the path of the call log |
+| The progress file | `{steps, steps_limit, ended, open}` in the runner's folder, rewritten whole at each change. `ended` is empty while the loop runs, then `done`, `fail`, `steps` or `turn`; `open` counts the calls waiting at the desktop. Setup's reply names it as `progress`, a path inside the trial; the score says the first three |
 | `Held` | The run's folder for files sent once, when the runner keeps one. A file is kept through a temporary file of its own, and read only when it is no link |
 | The session's server | Setup's `mcp` entry runs `computer_pipe.py SOCKET`, which joins the session's stdio to the socket |
 | `ready`, `lifeline`, `Stop` | The ready file, written at the loop's first `predict`; the lifeline from the driver, whose line `turn-end` is the turn's end and whose close is a stop; the one stop, whose last resort gives its own callback half a second before it exits |
