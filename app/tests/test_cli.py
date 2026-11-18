@@ -211,6 +211,31 @@ class Runs(Scratch):
         self.assertEqual(doc["counts"]["api_error"], 1)
         self.assertEqual(doc["n_infra"], 1)
         self.assertIsNone(doc["adjusted_solve_rate"])
+        self.assertEqual((doc["identity"], doc["mean_score"], doc["mean_score_planned"]), ({}, None, None))   # Harbor's: none
+        self.assertNotIn("mean score", out.stdout)
+
+    def test_a_standard_job_s_document_holds_what_identifies_it_and_both_means_and_the_rest_as_before(self):
+        from dataclasses import asdict
+        from tests.test_parse import IDENTITY, SCORED, standard_job
+        standard_job(self.tmp, "scored", [1.0, 0.5, 0.0, None], bench=SCORED)
+        out = self.sh("runs.cli", "show", self.tmp, "scored", "--json")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertNotIn(SECRET, out.stdout + out.stderr)                     # the option filed under a credential's name
+        doc = json.loads(out.stdout)
+        self.assertEqual(doc["identity"], dict(IDENTITY, served={"calls": {"DeepInfra": 4}, "unnamed": 0, "held": {"m-1": True}}))
+        self.assertEqual((doc["mean_score"], doc["mean_score_planned"]), (0.5, 0.375))
+        # Every earlier field keeps the parsed value, including each trial's details.
+        job = parse.load_all([self.tmp])[0]
+        before = asdict(job)
+        del before["identity"]
+        before.update(runs_cli.job_row(job), harbor_label=job.harbor_label)
+        for trial, raw in zip(job.trials, before["trials"]):
+            raw.update(outcome_label=trial.outcome_label, is_infra=trial.is_infra,
+                       is_regression=trial.is_regression, has_trace=trial.has_trace)
+        before = json.loads(json.dumps(before, default=lambda value: value.isoformat()))
+        self.assertEqual({k: v for k, v in doc.items() if k not in {"identity", "mean_score", "mean_score_planned"}}, before)
+        self.assertIn("  mean score 0.50 over the trials scored · 0.38 over the 4 planned\n",
+                      self.sh("runs.cli", "show", self.tmp, "scored").stdout)
 
 
 # ------------------------------------------------------- the coverage gaps

@@ -332,6 +332,11 @@ tr.tone-good .jbar .fill { background: #4cc26a; } tr.tone-warn .jbar .fill { bac
 .run-meta > span { min-width: 0; overflow-wrap: anywhere; }
 .run-meta > span + span::before { content: "·"; color: var(--text-faint); margin-right: 14px; }
 .run-meta > .mono { color: var(--text); }
+.run-facts { display: flex; flex-wrap: wrap; gap: 4px 24px; margin: 0; font-size: 13px; line-height: 1.6; color: var(--text-dim); }
+.run-facts > div { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.run-facts dt { color: var(--text-faint); white-space: nowrap; }
+.run-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.run-facts .mono { color: var(--text); }
 .run-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .run-actions .btn { min-height: 36px; font-size: 13px; padding: 8px 13px; white-space: normal; text-align: center; }
 @media(max-width:640px){.run-meta > span + span::before{display:none}.run-header{gap:14px;margin-bottom:24px}.run-meta{font-size:13px}.run-actions{gap:8px}}
