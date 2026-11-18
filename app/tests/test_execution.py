@@ -5,6 +5,7 @@ import json
 import shlex
 import os
 import shutil
+import subprocess
 import threading
 import time
 import unittest
@@ -887,6 +888,36 @@ class StandardOnHost(HostBase):
         self.assertNotIn("OPENROUTER=", launches["other"])
         self.assertNotIn("OPENROUTER=", launches["bad"])
         self.assertNotIn("sk-not-a-setting-name", launches["bad"])
+
+    def launched_environment(self, ambient=None):
+        argv, stdin = next((c, s) for c, s in self.calls if c[0] == "ssh" and "setsid nohup" in c[-1])
+        prefix, marker, _ = argv[-1].partition("if ! command -v setsid")
+        self.assertTrue(marker)
+        home = self.tmp / "remote"
+        (home / ".nullius" / "runs" / self.plan.name).mkdir(parents=True, exist_ok=True)
+        # Run the launcher's exports without starting a detached process.
+        command = prefix + shlex.join([execution.sys.executable, "-c",
+                                      "import json, os; print(json.dumps(dict(os.environ)))"])
+        done = subprocess.run(["bash", "-c", command], input=stdin, capture_output=True, text=True, timeout=10,
+                              env={"PATH": os.defpath, "HOME": str(home), **(ambient or {})})
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_only_the_validated_record_is_exported_after_duplicate_members(self):
+        record = '{"endpoints": {"messages": "/messages"}}'
+        for label, value in (
+            ("endpoint", '{"endpoints":{"messages":"/messages?token=discarded-token","messages":"/messages"}}'),
+            ("record", '{"endpoints":{"messages":"/messages?token=discarded-token"},"endpoints":{"messages":"/messages"}}'),
+        ):
+            with self.subTest(label=label):
+                self.calls.clear(); self.polls = 0
+                self.plan.name, self.plan.recipe = f"std-duplicate-{label}", {"provider": "openrouter"}
+                self.assertIsNone(providers.record_problem("OPENROUTER", value))
+                with patch.dict(os.environ, {"OPENROUTER": value}):
+                    ex = self.run_it()
+                self.assertEqual((ex.state, ex.exit_code), ("done", 0), ex.lines)
+                self.assertEqual(self.launched_environment()["OPENROUTER"], record)
+                self.assertNotIn("discarded-token", str(self.calls))
 
     def test_what_it_does_is_said_in_stages_its_own_and_the_cli_s(self):
         """Getting the host ready is said stage by stage in the run's log, and

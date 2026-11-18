@@ -381,7 +381,7 @@ def provider_record(plan: Plan, env=os.environ) -> Tuple[str, str]:
         return "", ""
     name = providers.setting_of(provider)
     value = env.get(name, "") if name else ""
-    return (name, value) if value and not providers.record_problem(name, value) else ("", "")
+    return (name, json.dumps(json.loads(value))) if value and not providers.record_problem(name, value) else ("", "")
 
 
 class Execution:
