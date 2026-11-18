@@ -95,6 +95,7 @@ Each unit's relay keeps every call of its agent whole, its side calls included: 
 | Rule | Detail |
 | --- | --- |
 | Where | The trial's `.work/relay/exchanges/`: a line per call (`<unit>.jsonl`), each distinct message, tool or system text once (`parts.jsonl`), each distinct inline picture once (`blobs/`: PNG, JPEG, WebP, GIF) |
+| Its version | Each `.jsonl` file's first line names its format, `{"schema": "nullius.exchanges/v1"}`; a file without it is version 1. A later version is refused, never guessed: the message names both, and a later Nullius reads it |
 | What a call keeps | The request after the relay's changes (the model it sends, a pin) and its sha256, the headers sent without the credentials, the reply's status and body. `agent/calls.jsonl` numbers the same calls (`n`) |
 | Stored as sent | Prompts and pictures are not redacted: a secret the agent typed or a screenshot showed is in the job's folder. Only the relay's key is cut out; a request that held it no longer rebuilds to its hash |
 | `text` | The same without the pictures' bytes: their hash, type and size |

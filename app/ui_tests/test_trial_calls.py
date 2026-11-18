@@ -56,6 +56,13 @@ class TrialCalls(unittest.TestCase):
         trial(job_dir, "long__u0004", long_trial())
         trial(job_dir, "retry__u0005", history(), retries=1)
         trial(job_dir, "retried/retry__u0005.try-1", history()[:1])
+        later = Path(trial(job_dir, "later__u0006", history())) / ".work" / "relay" / "exchanges" / "parts.jsonl"
+        later.write_text(json.dumps({"schema": "nullius.exchanges/v2"}) + "\n" + later.read_text().split("\n", 1)[1])
+        for name, marked in (("later-route__u0007", "u0001.jsonl"), ("later-parts__u0008", "parts.jsonl")):
+            folder = Path(trial(job_dir, name, history()))
+            (folder / "agent" / "calls.jsonl").unlink()
+            path = folder / ".work" / "relay" / "exchanges" / marked
+            path.write_text(json.dumps({"schema": "nullius.exchanges/v2"}) + "\n" + path.read_text().split("\n", 1)[1])
         trial(root / "other-run", "kept__u0001", history()[:1])
         (Path(job_dir) / "plain__u0003" / "agent" / "calls.jsonl").unlink()
         cls.job = parse.parse_job(str(job_dir))
@@ -157,6 +164,27 @@ class TrialCalls(unittest.TestCase):
         self.assertIn("1 call · 3 steps", tab)
         self.get(f"/trial/calls-run/retry__u0005.try-1/picture/{sha(P1)}")
         self.get(f"/trial/calls-run/retry__u0005.try-1/picture/{sha(P2)}", status=404)
+
+    def test_a_later_store_without_call_records_shows_its_refusal(self):
+        for name in ("later-route__u0007", "later-parts__u0008"):
+            with self.subTest(name=name):
+                _, html = self.tab(name)
+                self.assertIn('<div class="toast bad">', html)
+                self.assertIn("version 2", html)
+                self.assertIn("version 1", html)
+                data = self.get(f"/trial/calls-run/{name}/conversation", query_string={"kind": "calls"}).get_json()
+                self.assertEqual((data["view"], data["total"], data["selected"]), ("calls", 0, None))
+                self.assertIn("version 2", data["notice"])
+                self.assertIn("version 1", data["notice"])
+
+    def test_a_store_in_a_later_format_is_refused_naming_both_versions(self):
+        tab, _ = self.tab("later__u0006")
+        self.assertIn("4 calls · 3 steps", tab)
+        data = self.get("/trial/calls-run/later__u0006/conversation", query_string={"kind": "calls"}).get_json()
+        self.assertEqual((data["record"], data["total"], data["selected"]["sent"]["unreadable"]), ("calls", 4, True))
+        self.assertEqual(data["selected"]["sent"]["note"], "Unreadable: parts.jsonl is in version 2 of the exchange store's "
+                                                           "format; this Nullius reads version 1: read it with a later Nullius")
+        self.get(f"/trial/calls-run/later__u0006/picture/{sha(P1)}", status=404)
 
 
 if __name__ == "__main__":

@@ -304,6 +304,52 @@ class ThreeKinds(Base):
             calls.picture(v, sha(P1))
 
 
+class LaterVersion(Base):
+    def test_a_later_store_without_call_records_keeps_its_refusal_on_the_page(self):
+        for name in ("u0001.jsonl", exchanges.PARTS):
+            with self.subTest(name=name):
+                folder = self.trial(history(), name=name.split(".")[0] + "__u0001")
+                os.unlink(os.path.join(folder, calls.CALLS))
+                self.assertFalse(os.path.exists(os.path.join(folder, calls.RELAY, "u0001.jsonl")))
+                self.assertEqual(len(load(folder)["calls"]), 4)
+                path = os.path.join(calls.store_folder(folder), name)
+                with open(path) as f:
+                    rows = f.read().split("\n", 1)
+                with open(path, "w") as f:
+                    f.write(json.dumps({"schema": "nullius.exchanges/v2"}) + "\n" + rows[1])
+                v = load(folder)
+                self.assertEqual((v["calls"], v["pictures"]), ([], {}))
+                for page in (calls.page(v), calls.page(v, query="missing", step=1)):
+                    self.assertEqual((page["total"], page["rows"], page["selected"]), (0, [], None))
+                    self.assertIn("version 2", page["notice"])
+                    self.assertIn("version 1", page["notice"])
+                    self.assertEqual(page["notice"], v["notice"])
+
+    def test_a_store_in_a_later_format_is_not_read_and_each_call_says_both_versions(self):
+        for name in ("u0001.jsonl", exchanges.PARTS):
+            with self.subTest(name=name):
+                folder = self.trial(history(), name=name.split(".")[0] + "__u0001")
+                path = os.path.join(calls.store_folder(folder), name)
+                with open(path) as f:
+                    rows = f.read().split("\n", 1)
+                self.assertEqual(rows[0] + "\n", exchanges.HEADER)
+                with open(path, "w") as f:
+                    f.write(json.dumps({"schema": "nullius.exchanges/v2"}) + "\n" + rows[1])
+                v = load(folder)
+                self.assertEqual((v["record"], v["pictures"], len(v["calls"])), ("calls", {}, 4))
+                for c in v["calls"]:
+                    self.assertEqual(c["sent"], {"recorded": False, "unreadable": True, "note":
+                                                 f"Unreadable: {name} is in version 2 of the exchange store's format; "
+                                                 "this Nullius reads version 1: read it with a later Nullius"})
+                self.assertEqual((v["calls"][3]["answer"]["text"], v["calls"][3]["answer"]["abridged"]), ("done", True))
+                self.assertIn("version 2", calls.page(v)["selected"]["sent"]["note"])
+                # each call says why: the page's own notices stay as they were
+                self.assertEqual([calls.page(v, **ask)["notice"] for ask in ({}, {"query": "zzzz"}, {"step": "none"})],
+                                 ["", "No calls match this search.", "No call in this search holds that source step."])
+                with self.assertRaises(LookupError):
+                    calls.picture(v, sha(P1))
+
+
 class Unreadable(Base):
     def test_every_call_naming_a_damaged_part_is_unreadable(self):
         for damage in ("truncated", "picture"):
@@ -497,6 +543,60 @@ class TheCommand(Base):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as usage:
             runs_cli.main(["show", root, j.job_id, "--calls"])
         self.assertEqual(usage.exception.code, 2)
+
+
+class Unmarked:
+    """The tests again on stores written without the mark of their format, as before it: they read the same."""
+
+    def setUp(self):
+        patch = mock.patch.object(exchanges, "HEADER", "")
+        patch.start()
+        self.addCleanup(patch.stop)
+        super().setUp()
+
+
+class UnmarkedSentIsWhatIsNew(Unmarked, SentIsWhatIsNew):
+    pass
+
+
+class UnmarkedAnswerIsWhole(Unmarked, AnswerIsWhole):
+    pass
+
+
+class UnmarkedNumbering(Unmarked, Numbering):
+    pass
+
+
+class UnmarkedStepsUnderCalls(Unmarked, StepsUnderCalls):
+    pass
+
+
+class UnmarkedThreeKinds(Unmarked, ThreeKinds):
+    pass
+
+
+class UnmarkedUnreadable(Unmarked, Unreadable):
+    pass
+
+
+class UnmarkedPictures(Unmarked, Pictures):
+    pass
+
+
+class UnmarkedWeight(Unmarked, Weight):
+    pass
+
+
+class UnmarkedNothingSecret(Unmarked, NothingSecret):
+    pass
+
+
+class UnmarkedTries(Unmarked, Tries):
+    pass
+
+
+class UnmarkedTheCommand(Unmarked, TheCommand):
+    pass
 
 
 if __name__ == "__main__":

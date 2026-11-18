@@ -249,7 +249,7 @@ def conversation_data(job_id, trial_name):
     _, t = _trial_evidence(job_id, trial_name, tries=True)
     traj = trajectory.load(t.trajectory_path) if t.has_trajectory else None
     view = _calls_view(t, traj) if request.args.get("kind") == "calls" else None
-    if view is not None and view["calls"]:
+    if view is not None and (view["calls"] or view.get("notice")):
         payload = calls.page(view, query=request.args.get("q", ""), page=request.args.get("page", 1),
                              position=request.args.get("position"), step=request.args.get("step"),
                              section=request.args.get("section"), chunk=request.args.get("chunk", 0))
@@ -338,12 +338,17 @@ def trial(job_id, trial_name):
                                 key=record["key"], workspace=request.args.get("workspace"))
         record["download"] = url_for("artifact_download", job_id=job_id, trial_name=trial_name,
                                      key=record["key"], workspace=request.args.get("workspace"))
+    n_calls = calls.recorded(t.dir)
+    if not n_calls and os.path.isdir(calls.store_folder(t.dir)):
+        notice = _calls_view(t, traj).get("notice")
+        if notice:
+            flash(notice, "error")
     return render_template(
         "traces/trial.html", job=j, trial=t, traj=traj, loc=loc, bench_parts=bench_parts,
         trace=tr, charts=ch, viewing=viewing, imported_from=_imported_from(j),
         chart_filter=cfilt, default_save_name=SAVED_TRACE_DEFAULT,
         artifacts=records, attempt=attempt, attempts=task_attempts.of(j, attempt), tries=_tries(attempt),
-        n_calls=calls.recorded(t.dir),
+        n_calls=n_calls,
         # an earlier try is evidence only: the job counts its last, and only that is judged
         judgement=_judgement_panel(j, t) if attempt is t else None,
         llm_judgement=_judgement_panel(j, t, "llm") if attempt is t else None, csrf=shared._csrf_token(),

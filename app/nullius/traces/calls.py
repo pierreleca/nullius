@@ -25,7 +25,9 @@ answered; a refused or failed call keeps its place, unnumbered.
 Without the store a call has its time, tokens, cost and the answer as the
 call record abridged it; its Sent is not recorded. A trial with no call record
 has no calls. A call the store cannot give back (a damaged part, a picture
-name that is not a digest) is said unreadable and the others are read.
+name that is not a digest) is said unreadable and the others are read. A store
+in a later format than this code reads is not read: each call says why, as the
+store refused it, and is read from its call record.
 
 Every text a view holds went through ``redact``; a picture is its hash, type
 and size, never its bytes (:func:`picture` reads one, for a page). No Flask.
@@ -138,7 +140,7 @@ def _parts(folder: str) -> Dict[str, object]:
         path = exchanges._inside(os.path.realpath(folder), exchanges.PARTS)
     except exchanges.Missing:
         return out
-    for p in _jsonl(path):
+    for p in exchanges.unmarked(_jsonl(path), exchanges.PARTS):
         h = p.get("sha256")
         if isinstance(h, str) and re.fullmatch(r"[0-9a-fA-F]{64}", h) and "part" in p:
             out[h] = p["part"]
@@ -356,16 +358,18 @@ def view(trial_dir: str, traj=None) -> dict:
     folder = store_folder(trial_dir)
     tag = route_tag(trial_dir, exchanges.tags(folder))
     records = _record(trial_dir, tag)
-    lines = {}
+    lines, reader, refused = {}, None, ""
     try:
         lines = {x["n"]: x for x in exchanges.lines(folder, tag) if isinstance(x.get("n"), int)} if relay._TAG.match(tag) else {}
+        reader = _Reader(folder) if lines else None
+    except exchanges.Later as e:                 # a later format: its calls from their record alone, each saying why
+        lines, reader, refused = {}, None, str(e)
     except exchanges.Missing:
         pass
     seen = {r.get("n") for r in records}
     records += [{"n": n, "t0": x.get("t0"), "path": x.get("path"), "status": (x.get("reply") or {}).get("status")}
                 for n, x in sorted(lines.items()) if n not in seen]          # a call its record lost
     order = sorted(range(len(records)), key=lambda i: (_number(records[i].get("t0")) or 0.0, i))
-    reader = _Reader(folder) if lines else None
     pictures: Dict[str, str] = {}
     if reader is not None:
         for p in reader.parts.values():
@@ -391,7 +395,8 @@ def view(trial_dir: str, traj=None) -> dict:
                 "cost_usd": _number(rec.get("cost_usd")), "cost_from": rec.get("cost_from"), "steps": []}
         line = lines.get(rec.get("n")) if isinstance(rec.get("n"), int) else None
         if line is None:
-            call["sent"] = {"recorded": False, "note": "Not sent: refused before it went out" if rec.get("refused") else "Not recorded"}
+            call["sent"] = ({"recorded": False, "unreadable": True, "note": "Unreadable: " + refused} if refused and not rec.get("refused")
+                            else {"recorded": False, "note": "Not sent: refused before it went out" if rec.get("refused") else "Not recorded"})
             call["answer"] = _answer_of_record(rec) if rec.get("status") == 200 else None
         else:
             call["answer"] = _answer_of_line(line) or (_answer_of_record(rec) if rec.get("status") == 200 else None)
@@ -426,7 +431,7 @@ def view(trial_dir: str, traj=None) -> dict:
     for c in out:
         c["search"] = "\n".join(_texts_of(c)).casefold()
     return {"record": "exchanges" if lines else "calls" if records else None, "calls": out,
-            "before": _redacted(early), "folder": folder, "pictures": pictures}
+            "before": _redacted(early), "folder": folder, "pictures": pictures, "notice": redact(refused)}
 
 
 def _texts_of(call: dict) -> List[str]:
@@ -495,7 +500,7 @@ def page(v: dict, *, query="", page=1, position=None, step=None, section=None, c
     query = conversation._text(query).strip()[:500]
     calls = v.get("calls") or []
     result = {"view": "calls", "query": query, "kind": "calls", "page_size": PAGE_SIZE, "page": 1, "pages": 1,
-              "total": len(calls), "matches": 0, "rows": [], "selected": None, "notice": "", "record": v.get("record")}
+              "total": len(calls), "matches": 0, "rows": [], "selected": None, "notice": "" if calls else v.get("notice") or "", "record": v.get("record")}
     needle = query.casefold()
     matching = [i for i, c in enumerate(calls) if not needle or needle in c["search"]]
     result["matches"] = len(matching)
@@ -505,7 +510,7 @@ def page(v: dict, *, query="", page=1, position=None, step=None, section=None, c
     if step is not None:
         chosen = next((i for i in matching if any(str(s["step_id"]) == str(step) for s in calls[i]["steps"])), None)
         if chosen is None:
-            result["notice"] = "No call in this search holds that source step."
+            result["notice"] = result["notice"] or "No call in this search holds that source step."
     elif position is not None:
         wanted = conversation._integer(position, -1)
         chosen = wanted if wanted in matching else None
