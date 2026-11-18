@@ -470,6 +470,7 @@ class Bridge:
             raise ValueError(f"version {version} needs the agent's folder, an absolute path in its plain form")
         self.version, self.folder = version, folder
         self.window, self.prepared = version != 1 and bool(window), prepared   # version 2: the window before the task
+        self.preparing = False
         self.seen, self.unseen = None, "no step has ended"   # version 2: the observation, or why there is none
         self.password = desktop.password()
         self.used = 0                                # acting calls handed to the loop: its steps
@@ -586,10 +587,16 @@ class Bridge:
         return {"files": self._files(call.files or [])}
 
     def close_window(self):
-        """Version 2: the agent is being given its task; upload and prepare are refused from now on, and acting calls
-        taken."""
+        """Close version 2's window, refuse waiting preparation and wait for active preparation to end."""
         with self.change:
             self.window = False
+            refused = [c for c in self.calls if self.version != 1 and c.tool in WINDOW]
+            self.calls = collections.deque(c for c in self.calls if c not in refused)
+        for call in refused:
+            call.answer(error=f"the task has been given: {call.tool} is taken only before it")
+        with self.change:
+            while self.preparing:
+                self.change.wait()
 
     def _next(self):
         refused = []
@@ -654,12 +661,23 @@ class Bridge:
             c.answer(error=self.ended)
 
     def _serve(self, call):
+        preparing = False
         try:
+            if self.version != 1 and call.tool in WINDOW:
+                with self.change:
+                    if not self.window:
+                        raise Refused(f"the task has been given: {call.tool} is taken only before it")
+                    self.preparing = preparing = True
             call.answer(**self._reading(call))
         except Refused as e:
             call.answer(error=str(e))
         except Exception as e:                       # the desktop failed it: its words, and the agent may call again
             call.answer(error=f"the desktop failed {call.tool}: {type(e).__name__}: {e}")
+        finally:
+            if preparing:
+                with self.change:
+                    self.preparing = False
+                    self.change.notify_all()
 
     def _reading(self, call):
         a = call.clean

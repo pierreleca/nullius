@@ -321,6 +321,100 @@ class Window(Port2):
         self.assertEqual(self.left(c), 3)
 
 
+class WindowClosure(unittest.TestCase):
+    def setUp(self):
+        tmp = self.enterContext(tempfile.TemporaryDirectory())
+        self.desktop = Desktop(tmp)
+        self.bridge = cp.Bridge(self.desktop, 3, 0, (100, 100), 30, version=2, folder=FOLDER, window=True)
+        self.bridge._begin(None)
+        self.addCleanup(self.bridge.finish)
+
+    def submit(self, tool):
+        args = {"actions": ["print(1)"], "files": ["/agent/a"]} if tool == "prepare" else {
+            "path": "/agent/a", "data": "YQ=="}
+        replies = []
+        call = cp.Call(tool, args, lambda c, v, i, e: replies.append((v, i, e)))
+        cp.checked(call, self.bridge.screen, self.bridge.version, self.bridge.folder)
+        self.bridge.submit(call)
+        return call, replies
+
+    def test_closing_refuses_queued_upload_and_prepare_as_calls_sent_after_it(self):
+        pending = [self.submit(tool) for tool in cp.WINDOW]
+        before = list(self.desktop.events)
+        self.bridge.close_window()
+        for call, replies in pending:
+            _, later = self.submit(call.tool)
+            self.assertEqual(replies, later)
+            self.assertEqual(replies, [(None, None, f"the task has been given: {call.tool} is taken only before it")])
+        self.assertEqual(list(self.bridge.calls), [])
+        self.assertEqual(self.desktop.events, before)
+        self.assertEqual(self.bridge.used, 0)
+
+    def test_a_dequeued_call_is_refused_if_it_has_not_started_before_closure(self):
+        for tool in cp.WINDOW:
+            with self.subTest(tool=tool):
+                self.bridge.window = True
+                call, replies = self.submit(tool)
+                self.assertIs(self.bridge._next(), call)
+                before = list(self.desktop.events)
+                self.bridge.close_window()
+                self.bridge._serve(call)
+                _, later = self.submit(tool)
+                self.assertEqual(replies, later)
+                self.assertEqual(self.desktop.events, before)
+
+    def test_closing_waits_for_running_upload_and_prepare_even_when_they_fail(self):
+        for tool in cp.WINDOW:
+            for fails in (False, True):
+                with self.subTest(tool=tool, fails=fails):
+                    self.bridge.window = True
+                    call, replies = self.submit(tool)
+                    entered, release, waiting, closed = (threading.Event() for _ in range(4))
+                    operation = "upload" if tool == "upload" else ("python" if fails else "read")
+                    original = getattr(self.desktop, operation)
+                    wait = self.bridge.change.wait
+
+                    def blocked(*args):
+                        entered.set()
+                        if not release.wait(5):
+                            raise RuntimeError("the test did not release the desktop")
+                        if fails:
+                            raise RuntimeError("the desktop operation failed")
+                        return original(*args)
+
+                    def waited(*args):
+                        waiting.set()
+                        return wait(*args)
+
+                    def close():
+                        self.bridge.close_window()
+                        closed.set()
+
+                    with mock.patch.object(self.desktop, operation, blocked), \
+                            mock.patch.object(self.bridge.change, "wait", waited):
+                        serving = threading.Thread(target=lambda: self.bridge._serve(self.bridge._next()))
+                        closing = threading.Thread(target=close)
+                        serving.start()
+                        try:
+                            self.assertTrue(entered.wait(5))
+                            closing.start()
+                            self.assertTrue(waiting.wait(1), "closure did not wait for the running call")
+                            self.assertFalse(closed.is_set())
+                            self.assertFalse(self.bridge.window)
+                            _, later = self.submit(tool)
+                            self.assertIn("the task has been given", later[0][2])
+                        finally:
+                            release.set()
+                            serving.join(5)
+                            if closing.ident is not None:
+                                closing.join(5)
+                        self.assertFalse(serving.is_alive() or closing.is_alive())
+                    self.assertTrue(closed.is_set())
+                    self.assertEqual(len(replies), 1)
+                    self.assertEqual(replies[0][2] is not None, fails)
+                    self.assertEqual(self.bridge.used, 0)
+
+
 class StepFiles(Port2):
     def test_a_step_returns_each_file_null_for_a_missing_one_and_an_error_for_one_too_large(self):
         c = self.start(steps=3)
