@@ -223,9 +223,8 @@ def _request(trial: parse.Trial, n: int) -> int:
     """Call ``n`` of the trial's agent route rebuilt from its store: the bytes on stdout, the verdict on stderr."""
     folder = os.path.join(trial.dir, ".work", "relay", exchanges.FOLDER)
     routes = exchanges.tags(folder)
-    tag = trial.trial_name.rsplit("__", 1)[-1]
-    tag = tag if tag in routes else routes[0] if len(routes) == 1 else None
-    if tag is None:
+    tag = by_call.route_tag(trial.dir, routes)
+    if tag not in routes:
         print(f"{trial.trial_name} kept no exchanges (a run before them, or --exchanges off)" if not routes
               else f"{trial.trial_name} holds the exchanges of several routes: {', '.join(routes)}", file=sys.stderr)
         return EXIT_NOT_FOUND
@@ -287,6 +286,9 @@ def _show(args) -> int:
         return EXIT_NOT_FOUND
     if args.trial_name:
         trial = next((t for t in job.trials if t.trial_name == args.trial_name), None)
+        if trial is None and args.call is not None:
+            trial = next((t for current in job.trials for _, t in parse.tries(current)
+                          if t.trial_name == args.trial_name), None)
         if trial is None:
             known = ", ".join(t.trial_name for t in job.trials) or "none"
             print(f"no trial named {args.trial_name!r} in {job.job_id} (trials there: {known})",

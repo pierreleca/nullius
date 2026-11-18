@@ -437,6 +437,41 @@ class Tries(Base):
 
 
 class TheCommand(Base):
+    def test_request_reads_the_route_of_each_try(self):
+        root = os.path.join(self.tmp, "jobs")
+        job = os.path.join(root, "job-a")
+        kept = history()
+        names = ("task__u0001.try-1", "task__u0001")
+        for i, name in enumerate(names):
+            folder = os.path.join(job, "retried", name) if i == 0 else os.path.join(job, name)
+            write_trial(folder, [kept[i]])
+            with open(os.path.join(folder, "result.json"), "w") as f:
+                json.dump({"task_name": "d/task", "trial_name": "task__u0001", "source": "d",
+                           "standard": {"retries": i}}, f)
+            other = {"messages": ["another route"]}
+            exchanges.Store(os.path.join(folder, calls.RELAY)).write(
+                "other", 1, T0, "/messages", other, json.dumps(other).encode(), {}, 200, False, b"{}")
+        with open(os.path.join(job, "config.json"), "w") as f:
+            json.dump({"agents": [{"name": "a", "model_name": "m"}], "datasets": [{"name": "d", "n_tasks": 1}]}, f)
+        with open(os.path.join(job, "result.json"), "w") as f:
+            json.dump({"stats": {"n_trials": 1}}, f)
+        (j,) = parse.load_all([root])
+        tries = parse.tries(j.trials[0])
+        self.assertEqual([t.trial_name for _, t in tries], list(names))
+        for i, (_, trial) in enumerate(tries):
+            for entry in ("request", "command"):
+                with self.subTest(trial=i, entry=entry):
+                    out, err = io.TextIOWrapper(io.BytesIO(), encoding="utf-8"), io.StringIO()
+                    self.addCleanup(out.close)
+                    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                        code = (runs_cli._request(trial, 1) if entry == "request" else
+                                runs_cli.main(["show", root, j.job_id, trial.trial_name, "--call", "1", "--request"]))
+                    out.flush()
+                    self.assertEqual((code, out.buffer.getvalue()), (0, json.dumps(kept[i]["req"]).encode() + b"\n"))
+                    self.assertIn("the recorded sent_sha256", err.getvalue())
+                    self.assertEqual(load(trial.dir)["calls"][0]["answer"]["tool_calls"][0]["name"],
+                                     "click" if i == 0 else "type_text")
+
     def test_runs_show_calls_prints_the_view_as_json(self):
         root = os.path.join(self.tmp, "jobs")
         job = os.path.join(root, "job-a")

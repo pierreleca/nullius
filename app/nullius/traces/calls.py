@@ -95,7 +95,7 @@ def store_folder(trial_dir: str) -> str:
     return os.path.join(trial_dir, RELAY, exchanges.FOLDER)
 
 
-def _tag(trial_dir: str, routes: List[str]) -> str:
+def route_tag(trial_dir: str, routes: List[str]) -> str:
     """The unit's route: the end of its trial's name (an earlier try's ``.try-N`` left off), else the store's one route."""
     tag = _TRY.sub("", os.path.basename(os.path.normpath(trial_dir))).rsplit("__", 1)[-1]
     return tag if tag in routes or not routes else routes[0] if len(routes) == 1 else tag
@@ -111,13 +111,13 @@ def _record(trial_dir: str, tag: str) -> List[dict]:
 def recorded(trial_dir: str) -> int:
     """How many calls the trial's call record holds: 0 when it has none (a Harbor or imported trial, a control)."""
     folder = store_folder(trial_dir)
-    return len(_record(trial_dir, _tag(trial_dir, exchanges.tags(folder))))
+    return len(_record(trial_dir, route_tag(trial_dir, exchanges.tags(folder))))
 
 
 def signature(trial_dir: str, trajectory_path: str = "") -> tuple:
     """What a view is read from, by size and time: a view kept for it holds while this is the same."""
     folder = store_folder(trial_dir)
-    tag = _tag(trial_dir, exchanges.tags(folder))
+    tag = route_tag(trial_dir, exchanges.tags(folder))
     out = []
     for path in (os.path.join(trial_dir, CALLS), os.path.join(trial_dir, RELAY, tag + ".jsonl"),
                  os.path.join(folder, tag + ".jsonl"), os.path.join(folder, exchanges.PARTS), trajectory_path):
@@ -354,7 +354,7 @@ def view(trial_dir: str, traj=None) -> dict:
     ``calls`` each call, ``before`` the steps before the first one, ``pictures`` the store's pictures by
     hash (their types). ``traj``: the trial's trajectory as ``trajectory.load`` reads it, for the steps."""
     folder = store_folder(trial_dir)
-    tag = _tag(trial_dir, exchanges.tags(folder))
+    tag = route_tag(trial_dir, exchanges.tags(folder))
     records = _record(trial_dir, tag)
     lines = {}
     try:
