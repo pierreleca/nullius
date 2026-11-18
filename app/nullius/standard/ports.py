@@ -58,6 +58,13 @@ PORTS = {
         "summary": "A desktop the agent sees in screenshots and drives with mouse and keyboard actions.",
         "kit": "agent-computer-v1",
     },
+    "agent.computer/v2": {
+        "label": "Computer use by steps",
+        "family": "agent",
+        "summary": "A desktop the agent sees in screenshots and drives with mouse and keyboard actions, reached through "
+                   "steps alone: what the agent learns of it comes in a step's answer.",
+        "kit": None,
+    },
     "cap.memory/v1": {
         "label": "Memory",
         "family": "capability",

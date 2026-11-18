@@ -1,6 +1,6 @@
 # The computer port: `agent.computer/v1`
 
-A desktop the agent sees in screenshots and drives with pointer and keyboard actions. A desktop benchmark's runner serves one MCP server, `computer`, to the agent's session; its tools are the desktop's basic operations. The agent is a client alone. An agent with a driver of its own installs it with `upload` and `python` and sends its actions with `step`. Any other agent uses the pointer and keyboard tools. Every agent gets the same tool list.
+A desktop the agent sees in screenshots and drives with pointer and keyboard actions. A desktop benchmark's runner serves one MCP server, `computer`, to the agent's session; its tools are the desktop's basic operations. The agent is a client alone. An agent with a driver of its own installs it with `upload` and `python` and sends its actions with `step`. Any other agent uses the pointer and keyboard tools. Every agent gets the same tool list. [Version 2](agent-computer-v2.md) is the same desktop, reached through steps alone once the agent is given its task.
 
 Coordinates are pixels of the screen, from its top left corner. A result's text is JSON.
 
