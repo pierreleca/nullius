@@ -43,7 +43,7 @@ from typing import Dict, List, Optional
 
 from nullius import settings
 
-MODES =("whole", "text", "off")
+MODES = ("whole", "text", "off")
 DEFAULT = "whole"
 MAX_MB = 256                                     # a unit's store, in millions of bytes
 FOLDER = "exchanges"
