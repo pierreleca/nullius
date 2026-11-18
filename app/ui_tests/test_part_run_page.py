@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from nullius.harbor import feed
@@ -232,6 +233,17 @@ new Function('$', '$$', 'rows', 'document', 'nulliusFetch', 'URL', 'location',
         self.assertEqual(text(trial, r'<p class="try-why".*?</p>'), "Run again by hand: the provider failed")
         earlier = self.page(f"/trial/r1/{name}.try-1")
         self.assertEqual(text(earlier, r'<p class="try-why".*?</p>'), "First run, in a later part: the rest of the plan")
+
+    def test_first_run_label_strips_only_the_archive_suffix(self):
+        name = "case.try-1__u0000"
+        job = SimpleNamespace(reruns=[{"at": "later", "begun": [{"trial": name}]}])
+        mark = rerun_page.web.app.jinja_env.filters["try_mark"]
+        for suffix in ("", ".try-1", ".try-12", ".try-note", ".try-1.more"):
+            with self.subTest(suffix=suffix):
+                trial = SimpleNamespace(trial_name=name + suffix, rerun={"at": "later"})
+                expected = "run again by hand" if suffix in (".try-note", ".try-1.more") else "first run, in a later part"
+                self.assertEqual(mark(trial, job), expected)
+        self.assertEqual(mark(SimpleNamespace(trial_name=name, rerun={"at": "again"}), job), "run again by hand")
 
     def test_run_later_counts_the_tasks_of_a_part_not_their_attempts(self):
         d = self.run_of()
