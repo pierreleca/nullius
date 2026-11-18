@@ -208,6 +208,31 @@ new Function('$', '$$', 'rows', 'document', 'nulliusFetch', 'URL', 'location',
         writer.emit("job.end")                                                   # ended: the board's own count, no part
         self.assertNotIn("part", json.loads(self.page("/job/r1/live")))
 
+    def test_a_task_first_run_in_a_later_part_names_that_try_by_what_it_was(self):
+        d = self.run_of()
+        name, first, again = trial_name(1), "2026-11-18T15:40:12+00:00", "2026-11-18T15:50:00+00:00"
+        (d / "retried").mkdir()
+        shutil.copytree(d / name, d / "retried" / f"{name}.try-1")
+        for path, mark in ((d / "retried" / f"{name}.try-1", {"at": first, "reason": "the rest of the plan", "begun": True}),
+                           (d / name, {"at": again, "reason": "the provider failed", "replaced": {"reward": 0.0}})):
+            res = json.loads((path / "result.json").read_text())
+            res["standard"] = dict(res["standard"], retries=int(path == d / name), rerun=dict(mark, by="hand"))
+            (path / "result.json").write_text(json.dumps(res))
+        top = json.loads((d / "result.json").read_text())
+        top["reruns"] = [{"at": first, "finished_at": first, "reason": "the rest of the plan", "trials": [name], "replaced": [],
+                          "begun": [{"trial": name, "unit": "t-1", "now": {"reward": 0.0}}]},
+                         {"at": again, "finished_at": again, "reason": "the provider failed", "trials": [name],
+                          "replaced": [{"trial": name, "unit": "t-1", "try": 1, "was": {"reward": 0.0}, "now": {"reward": 0.0}}]}]
+        (d / "result.json").write_text(json.dumps(top))
+        self.open(d.parent)
+        trial = self.page(f"/trial/r1/{name}")
+        tabs = text(trial, r'<nav class="try-tabs".*?</nav>')
+        self.assertRegex(tabs, r"^Try 1 first run, in a later part \S+ Try 2 run again by hand"); self.assertNotIn("Try 1 run again", tabs)
+        self.assertRegex(trial, r'title="Try 1: [^"]*, first run, in a later part: the rest of the plan"')
+        self.assertEqual(text(trial, r'<p class="try-why".*?</p>'), "Run again by hand: the provider failed")
+        earlier = self.page(f"/trial/r1/{name}.try-1")
+        self.assertEqual(text(earlier, r'<p class="try-why".*?</p>'), "First run, in a later part: the rest of the plan")
+
     def test_a_job_run_whole_shows_none_of_it(self):
         d = self.run_of()
         self.open(d.parent)
