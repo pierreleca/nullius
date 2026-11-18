@@ -145,6 +145,8 @@ class RunFactsOnTheJobPage(unittest.TestCase):
         standard_job(str(jobs), "named", [1.0], bench={k: v for k, v in VERSIONED.items() if k != "_version"} | {"key": "locomo", "_ref": "locomo"},
                      bench_options={"rag_mode": "dialog"}, options={}, served_by=None, timeouts=None, max_turns=None, max_calls=None, retries=0)
         standard_job(str(jobs), "scored", [1.0, 0.5, 0.0, None], bench=SCORED)
+        standard_job(str(jobs), "constrained", [1], constraints={"cpus": 2, "memory_mb": 512, "processes": 128,
+                                                                  "cpu_set": "0-1", "gpu_ids": [], "concurrency": 2})
         standard_job(str(jobs), "nop", [0.0], other=NOP, model="", options={}, served_by=None)
         harbor = jobs / "harbor"
         (harbor / "t__1").mkdir(parents=True)
@@ -193,6 +195,11 @@ class RunFactsOnTheJobPage(unittest.TestCase):
                                                          ("Answered by", "DeepInfra 1"), ("Limits", "3 at a time")])
         self.assertEqual([name for name, _ in self.rows(self.page("nop"))], ["Benchmark", "Limits"])     # a control asks no model
         self.assertNotIn('id="run-facts"', self.page("harbor"))
+
+    def test_the_identity_block_shows_recorded_resource_constraints(self):
+        self.assertIn(("Resources", "CPUs 2 · Memory (MB) 512 · Processes and threads 128 · CPUs Nullius may use 0-1 · GPUs Nullius may use none · Concurrent units 2"),
+                      self.rows(self.page("constrained")))
+        self.assertNotIn("Resources", dict(self.rows(self.page("facts"))))
 
     def test_the_mean_over_every_trial_planned_stands_beside_the_mean_over_the_trials_scored(self):
         html = self.page("scored")

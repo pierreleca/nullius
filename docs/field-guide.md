@@ -151,7 +151,7 @@ How the agent worked, not whether it won. Computed over layer 3.
 | `is_running` | The job records running or pending trials. Numbers are partial; a managed execution's terminal status takes precedence on the page. | measured | any |
 | `n_planned / n_retries` | Planned trials from the run record or task count, and retries recorded by the harness. Repeated attempts are separate trials, not retries. | measured | any |
 | `retries` | Retries a standard run allows each attempt (`--retries`); 0 elsewhere. | measured | any |
-| `identity` | What tells a standard run from another, from `config.json` and `result.json`: benchmark, version and options; agent, version and options; model; provider; pinned serving providers and who served; limits and caps. A fact not recorded is left out. Empty for other jobs. | measured | any |
+| `identity` | What tells a standard run from another, from `config.json` and `result.json`: benchmark, version and options; agent, version and options; model; provider; pinned serving providers and who served; limits, caps and resource constraints. A fact not recorded is left out. Empty for other jobs. | measured | any |
 | `dataset` | The dataset folder, `name@version` for a registry fetch, or the task names' shared prefix. | measured | any |
 
 ## Trial metrics, one row per task attempt {#trials}

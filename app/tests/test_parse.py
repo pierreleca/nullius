@@ -870,6 +870,13 @@ class RunIdentity(unittest.TestCase):
         for j in (older, control):
             self.assertNoEmpty(j.identity)
 
+    def test_recorded_resource_constraints_are_part_of_the_identity(self):
+        caps = {"cpus": 2, "memory_mb": 512, "processes": 128, "cpu_set": "0-1", "gpu_ids": [], "concurrency": 2}
+        job = parse.parse_job(standard_job(self.tmp, "constrained", [1], constraints=caps))
+        self.assertEqual(job.identity["limits"]["constraints"], caps)
+        plain = parse.parse_job(standard_job(self.tmp, "plain", [1]))
+        self.assertNotIn("constraints", plain.identity["limits"])
+
     def test_a_merged_job_and_a_job_with_retried_tries_read_the_same_facts(self):
         every = [f"t-{i}" for i in range(6)]
         shards = [standard_job(self.tmp, f"run-shard-{i}of2", [1.0] * 6, shard_of=(i, 2, every)) for i in (1, 2)]

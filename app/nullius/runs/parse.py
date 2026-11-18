@@ -962,7 +962,7 @@ def identity_of(cfg: dict, res: dict, agent_version: str = "") -> dict:
     provider; the serving providers pinned by model (``served_by``) and who
     served (``served``); and the limits in force: time limits by phase, turns,
     model calls, attempts of each unit, retries, units at a time, and the
-    spending caps. A fact the job does not record is not a key, never an
+    spending caps and resource constraints. A fact the job does not record is not a key, never an
     empty value, and a control that calls no model has no provider. {} for a
     job not of the standard. Every string is redacted."""
     std = cfg.get("standard") if isinstance(cfg, dict) and isinstance(cfg.get("standard"), dict) else {}
@@ -987,6 +987,7 @@ def identity_of(cfg: dict, res: dict, agent_version: str = "") -> dict:
     budget = _budget(res.get("budget") if isinstance(res, dict) else None)
     whole = lambda v: v if number(v) and isinstance(v, int) else None
     limits = {"timeouts": {str(k): v for k, v in timeouts.items() if number(v)},
+              "constraints": _options(std.get("constraints")),
               "max_turns": whole(std.get("max_turns")), "max_calls": whole(std.get("max_calls")),
               "repeat": whole(std.get("repeat")) if (whole(std.get("repeat")) or 0) > 1 else None,
               "retries": whole(std.get("retries")), "concurrency": whole(cfg.get("n_concurrent_trials")),

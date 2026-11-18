@@ -41,6 +41,7 @@
     {% if facts.served_by %}<div><dt>Served by</dt><dd class="mono">{% for m, slugs in facts.served_by.items() %}{% if not loop.first %} <span class="faint">·</span> {% endif %}{% if facts.served_by|length > 1 %}{{ m }}: {% endif %}{{ slugs|join(', ') }}{% endfor %}</dd></div>{% endif %}
     {% if facts.served and (facts.served.calls or facts.served.unnamed) %}<div><dt>Answered by</dt><dd>{% for name, n in facts.served.calls.items() %}{% if not loop.first %} <span class="faint">·</span> {% endif %}{{ name }} {{ n }}{% endfor %}{% if facts.served.unnamed %}{% if facts.served.calls %} <span class="faint">·</span> {% endif %}unnamed {{ facts.served.unnamed }}{% endif %}</dd></div>{% endif %}
     {% if limits %}<div><dt>Limits</dt><dd>{{ limits|join(' · ') }}</dd></div>{% endif %}
+    {% if lim.constraints %}<div><dt>Resources</dt><dd>{% for k, v in lim.constraints.items() %}{% if not loop.first %} <span class="faint">·</span> {% endif %}{{ names.constraints.get(k, k|replace('_', ' ')|capitalize) }} <span class="mono">{{ 'none' if v == [] else fact_value(v) }}</span>{% endfor %}</dd></div>{% endif %}
   </dl>
   {% endif %}
   <div class="run-actions" role="group" aria-label="Run actions">
