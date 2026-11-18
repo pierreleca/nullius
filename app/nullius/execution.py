@@ -49,6 +49,11 @@ Proofs update that copy, never the shared runner. Both ``jobs/`` and
 ``catalogue/`` are mirrored back beside the run record; remote proofs do
 not replace the local user's active definitions.
 
+A run that has ended can take one more part in its own folder, where it
+ran (``Execution.again``): the standard's ``rerun`` of chosen tasks of one
+of its jobs, started from the job's page. It is prepared, launched,
+followed and mirrored as a part is; each job's end stays its first part's.
+
 An agent's run that fails with more to come pauses the run and the page
 asks: continue or stop. Every state change lands in ``runs/<name>/run.json``;
 ``restore`` reads those records when Nullius starts and reattaches to what
