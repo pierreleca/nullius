@@ -48,7 +48,7 @@ A command given to `--through` or `--read` runs without any provider key in its 
 | Item | Detail |
 | --- | --- |
 | The default rule | The first tool call's name and arguments, as canonical JSON; `no call`; a failed send, its error |
-| `--read CMD` | One reply's body on the command's stdin; the first line it prints is the label |
+| `--read CMD` | One reply's body on the command's stdin; the first line it prints is the label. Needed for a model that writes its action as text: the default reads `no call` |
 | The counts | Each distinct label, grouped by tool, with the recorded answer's label marked |
 
 ## The folder
