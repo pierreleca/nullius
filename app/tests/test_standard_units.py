@@ -238,6 +238,22 @@ class Listed(unittest.TestCase):
         got = merge.merge([left, right], os.path.join(self.jobs, "merged"))
         self.assertEqual(got["trials"], 2)
 
+    def test_a_list_and_a_task_set_together_are_refused_before_any_unit(self):
+        listed = run.units_file(self.file("good\n"))
+        record = {"id": "0" * 32, "name": "dev", "revision": 1, "hash": "0" * 64, "units": ["model"]}
+        with self.assertRaisesRegex(run.Refused, "from a file or from a task set, not both"):
+            run.Run(self.b, definitions.control(self.b, "nop"), model="", provider="openai", jobs_root=self.jobs, env={},
+                    say=lambda s: None, units_file=listed, task_set=record)
+        self.assertFalse(os.path.exists(self.jobs))
+
+    def test_a_task_sets_units_run_as_a_lists_do_and_its_record_is_kept(self):
+        record = {"id": "0" * 32, "name": "dev", "revision": 2, "hash": "0" * 64, "units": ["model", "wrong"]}
+        job = self.go(task_set=record, limit=1)
+        self.assertEqual(self.trials(job), ["wrong__u0001"])
+        cfg = read(os.path.join(job, "config.json"))["standard"]
+        self.assertEqual(cfg["task_set"], record)
+        self.assertNotIn("units_file", cfg)
+
     def test_a_run_without_a_list_is_the_run_it_was(self):
         job = self.go()
         self.assertEqual(self.trials(job), ["good__u0000", "model__u0003", "slow__u0002", "wrong__u0001"])

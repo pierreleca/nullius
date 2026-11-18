@@ -293,6 +293,43 @@ class CommandLine(Scratch):
         self.assertNotIn(KEY, out.stdout)
 
 
+# ── task-sets.md ────────────────────────────────────────────────────────────
+
+class TaskSetCommands(Scratch):
+    def test_help_and_refusals_of_the_task_set_commands(self):
+        """Each set command has help with its examples and exit codes; a
+        refusal is one line on stderr with nothing on stdout, 2 for a usage
+        error or a refusal, 3 for what is not found, and writes nothing."""
+        cat = os.path.join(self.tmp, "catalogue")
+        env = {"NULLIUS_CATALOGUE": cat, "NULLIUS_HOME": os.path.join(self.tmp, "profile")}
+        for sub in ((), ("create",), ("update",), ("list",), ("show",), ("import",)):
+            with self.subTest(help=sub):
+                out = self.sh("standard.cli", "set", *sub, "--help", env=env)
+                self.assertEqual(out.returncode, 0, out.stderr)
+                for line in ("usage:", "examples:", "exit codes:"):
+                    self.assertIn(line, out.stdout)
+                self.assertEqual(out.stderr, "")
+        listed = write_json(Path(self.tmp, "ten.txt"), "HumanEval/0\nHumanEval/1\n")
+        cases = [
+            (["set", "create", "humaneval"], 2, "usage:"),
+            (["set", "create", "humaneval", "a/b", "--dataset", "humaneval", "--units", listed], 2, "not a task set's name"),
+            (["set", "create", "humaneval", "ok", "--dataset", "nope", "--units", listed], 2, "no dataset 'nope'"),
+            (["set", "create", "no-such-bench", "ok", "--dataset", "x", "--units", listed], 3, "no benchmark"),
+            (["set", "show", "humaneval", "nowhere"], 3, "no task set 'nowhere'"),
+            (["set", "update", "humaneval", "nowhere", "--add", "HumanEval/2"], 3, "no task set 'nowhere'"),
+            (["set", "import", os.path.join(self.tmp, "absent.json")], 3, "no such file or job"),
+        ]
+        for args, code, said in cases:
+            with self.subTest(args=args):
+                out = self.sh("standard.cli", *args, env=env)
+                self.assertEqual(out.returncode, code, out.stderr)
+                self.assertIn(said, out.stderr)
+                self.assertEqual(out.stdout, "")
+        self.assertFalse(os.path.exists(cat))
+        out = self.sh("standard.cli", "set", "list", "--json", env=env)
+        self.assertEqual((out.returncode, json.loads(out.stdout), out.stderr), (0, [], ""))
+
+
 # ── import.md ───────────────────────────────────────────────────────────────
 
 class ImportContract(Scratch):
