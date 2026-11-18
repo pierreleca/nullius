@@ -1013,10 +1013,15 @@ class Run:
                     elif name.startswith("driver-") and name.endswith(".log"):
                         os.remove(path)
                 words = self.bench["units"]
-                source = (self.units_file["name"] if self.units_file
-                          else f"the task set {self.task_set['name']}@{self.task_set['revision']}")
-                why = (f"{source} lists {len(unknown)} {words['noun'] if len(unknown) == 1 else words['nouns']} "
-                       f"that {self.bench['label']}'s dataset {self.ds['id']} does not hold: " + ", ".join(unknown))
+                if self.units_file:
+                    why = (f"{self.units_file['name']} lists {len(unknown)} {words['noun'] if len(unknown) == 1 else words['nouns']} "
+                           f"that {self.bench['label']}'s dataset {self.ds['id']} does not hold: " + ", ".join(unknown))
+                else:
+                    # a set holds no option: its ids are checked against the listing under this run's own
+                    given = ", ".join(f"{k}={v}" for k, v in sorted(self.bench_options.items())) or "none"
+                    why = (f"{len(unknown)} of the {len(listed)} ids of the task set {self.task_set['name']}@"
+                           f"{self.task_set['revision']} are not listed by {self.bench['label']}'s dataset {self.ds['id']} "
+                           f"under the run's options ({given}): " + ", ".join(unknown[:5]) + (", ..." if len(unknown) > 5 else ""))
                 p.emit("refused", detail=why)
                 raise Refused(why)
         # the list and the shard, then the limit; each unit keeps its place in the whole dataset (its trial's tag)

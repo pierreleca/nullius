@@ -2,22 +2,23 @@
 
 An entry is ``sets/<benchmark>/<name>.json`` under the user catalogue
 (``paths.catalogue_dir``, ``NULLIUS_CATALOGUE``): a plain file to copy or keep
-in git. It holds an id minted when it is made, its name and description, the
-benchmark and version, the dataset it is cut from, the benchmark options it
-pins, the setup it was made under
-(``yours``, or a setup of the benchmark), and its revisions. A revision is one
-membership: its number, its date, a note, the unit ids and a content hash over
-the benchmark, the dataset, those options, the setup and the sorted ids. Two
-runs ran the same set when their jobs name the same id; the revision and the
-hash say which membership. Two entries with equal lists stay two sets.
-Only options explicitly given to ``set create --bench-option`` are pinned,
-including explicit defaults, whether the units come from a file or a job.
+in git. A set is a group of tasks, run as a benchmark's own dataset is: it
+holds an id minted when it is made, its name and description, the benchmark,
+the dataset it is cut from, and its revisions, and nothing that binds a run
+(no benchmark option, no setup). A revision is one membership: its number,
+its date, a note, the unit ids and a content hash over the benchmark, the
+dataset and the sorted ids. Two runs ran the same set when their jobs name the
+same id; the revision and the hash say which membership. Two entries with
+equal lists stay two sets. An entry holding any other field is refused where
+it is read.
 
 Only a change of membership adds a revision; the earlier ones stay in the
 file, and ``NAME@REV`` names one. ``record`` is what a job's ``config.json``
-keeps of the set it ran (``standard.task_set``): the entry with that one
-revision, enough for ``import_path`` to rebuild it on another machine. The
-same id and revision with another hash is refused there.
+keeps of the set it ran (``standard.task_set``): its id, name, revision, hash
+and units. With the job's benchmark and dataset that is enough for
+``import_path`` to rebuild the entry on another machine, its description
+empty and the revision dated by the import. The same id and revision with
+another hash is refused there.
 """
 from __future__ import annotations
 
@@ -28,7 +29,7 @@ import re
 import tempfile
 import uuid
 from datetime import datetime, timezone
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 from nullius import paths
 from nullius.runs import classify
@@ -47,8 +48,9 @@ GROUPS = {
                classify.NO_PATCH, classify.AGENT_ERROR},
     "infra": set(classify.INFRA_OUTCOMES),
 }
-HEADER = ("id", "name", "description", "benchmark", "benchmark_version", "dataset", "benchmark_options", "setup")
+HEADER = ("id", "name", "description", "benchmark", "dataset")
 REVISION = ("revision", "date", "note", "units", "hash")
+RECORD = ("id", "name", "revision", "hash", "units")
 
 
 class Refused(Exception):
@@ -105,20 +107,15 @@ def split_ref(ref: str) -> Tuple[str, Optional[int]]:
     return check_name(name), int(rev)
 
 
-def _options(options: Optional[dict]) -> Dict[str, str]:
-    return {str(k): str(v) for k, v in sorted((options or {}).items())}
-
-
-def content_hash(benchmark: str, dataset: str, options: Optional[dict], setup: str, units: Iterable[str]) -> str:
-    """The sha256 over what makes the membership: the benchmark, the dataset, the options and the setup it
-    was made under, and the ids sorted (an order, a comment, a file's name say nothing)."""
-    doc = {"benchmark": benchmark, "dataset": dataset, "benchmark_options": _options(options), "setup": setup,
-           "units": sorted(set(str(u) for u in units))}
+def content_hash(benchmark: str, dataset: str, units: Iterable[str]) -> str:
+    """The sha256 over what makes the membership: the benchmark, the dataset and the ids sorted (an order, a
+    comment, a file's name say nothing)."""
+    doc = {"benchmark": benchmark, "dataset": dataset, "units": sorted(set(str(u) for u in units))}
     return hashlib.sha256(json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
 
 
 def _hash_of(entry: dict, units: Iterable[str]) -> str:
-    return content_hash(entry["benchmark"], entry["dataset"], entry.get("benchmark_options"), entry.get("setup") or "yours", units)
+    return content_hash(entry["benchmark"], entry["dataset"], units)
 
 
 def _now() -> str:
@@ -141,6 +138,10 @@ def check(entry: dict, where: str) -> dict:
     """``entry`` as read from ``where``, its shape and every revision's hash checked."""
     if not isinstance(entry, dict) or entry.get("schema") != SCHEMA:
         raise Refused(f"{where}: not a task set (schema {SCHEMA})")
+    other = sorted(set(entry) - {"schema", *HEADER, "revisions"})
+    if other:
+        raise Refused(f"{where}: holds {', '.join(other)}, which a task set does not hold: a set is its dataset, "
+                      "its ids and its revisions, and a run gives its own options")
     for k in ("id", "name", "benchmark", "dataset"):
         if not isinstance(entry.get(k), str) or not entry[k]:
             raise Refused(f"{where}: no {k}")
@@ -148,13 +149,6 @@ def check(entry: dict, where: str) -> dict:
     _bench_key(entry["benchmark"])
     if not isinstance(entry.get("description"), str):
         raise Refused(f"{where}: description is text")
-    if "benchmark_version" in entry and (not isinstance(entry["benchmark_version"], str) or not entry["benchmark_version"]):
-        raise Refused(f"{where}: benchmark_version is a word")
-    if not isinstance(entry.get("setup"), str) or not entry["setup"]:
-        raise Refused(f"{where}: setup is a word")
-    options = entry.get("benchmark_options")
-    if not isinstance(options, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in options.items()):
-        raise Refused(f"{where}: benchmark_options maps names to words")
     revs = entry.get("revisions")
     if not isinstance(revs, list) or not revs:
         raise Refused(f"{where}: no revision")
@@ -172,7 +166,7 @@ def check(entry: dict, where: str) -> dict:
             raise Refused(f"{where}: revision {n} lists no units")
         _ids(r["units"], f"{where}: revision {n}")
         if r.get("hash") != _hash_of(entry, r["units"]):
-            raise Refused(f"{where}: revision {n}'s hash is not that of its units, dataset and options: "
+            raise Refused(f"{where}: revision {n}'s hash is not that of its units and dataset: "
                           "the file was changed by hand")
     return entry
 
@@ -236,6 +230,17 @@ def entries(benchmark: Optional[str] = None, root: Optional[str] = None) -> Tupl
     return got, bad
 
 
+def rows(benchmark: str, root: Optional[str] = None) -> List[dict]:
+    """The readable entries of ``benchmark`` as a page lists them, by name: {name, description, dataset, revision,
+    units, date}, the revision the latest, ``units`` its number of ids, ``date`` its date."""
+    out = []
+    for e in entries(benchmark, root)[0]:
+        last = revision(e)
+        out.append({"name": e["name"], "description": e.get("description") or "", "dataset": e["dataset"],
+                    "revision": last["revision"], "units": len(last["units"]), "date": last["date"]})
+    return out
+
+
 def write(entry: dict, root: Optional[str] = None) -> str:
     """The entry written whole, in place of the old file at once."""
     path = path_of(entry["benchmark"], entry["name"], root)
@@ -255,16 +260,6 @@ def write(entry: dict, root: Optional[str] = None) -> str:
     return path
 
 
-def listing_options(bench: dict, dataset: str, given: Optional[dict], setup: str = "yours",
-                    kind: Optional[str] = "agent") -> Dict[str, str]:
-    """The explicitly given benchmark options a list was made under, as words.
-    A set records these values and its hash covers them."""
-    values, bad = definitions.bench_options_of(bench, dataset, given, setup, kind=kind)
-    if bad:
-        raise Refused("; ".join(bad))
-    return _options({n: v for n, v in values.items() if n in (given or {})})
-
-
 def _dataset(bench: dict, dataset: Optional[str]) -> str:
     ids = [d["id"] for d in bench.get("datasets") or []]
     if not dataset:
@@ -274,18 +269,15 @@ def _dataset(bench: dict, dataset: Optional[str]) -> str:
     return dataset
 
 
-def create(bench: dict, name: str, *, dataset: str, units: List[str], options: Optional[dict] = None,
-           setup: str = "yours", description: str = "", note: str = "", version: Optional[str] = None,
+def create(bench: dict, name: str, *, dataset: str, units: List[str], description: str = "", note: str = "",
            root: Optional[str] = None) -> dict:
-    """A new entry at revision 1, written; refused when one of that name exists. ``options`` are as
-    ``listing_options`` gives them."""
+    """A new entry at revision 1, written; refused when one of that name exists."""
     check_name(name)
     path = path_of(bench["key"], name, root)
     if os.path.exists(path):
         raise Refused(f"a task set {name!r} of {bench['key']} exists already ({path}): set update changes it")
     entry = {"id": uuid.uuid4().hex, "name": name, "description": description or "", "benchmark": bench["key"],
-             **({"benchmark_version": version} if version else {}), "dataset": _dataset(bench, dataset),
-             "benchmark_options": _options(options), "setup": setup or "yours"}
+             "dataset": _dataset(bench, dataset)}
     ids = _ids(units, f"the set {name}")
     entry["revisions"] = [{"revision": 1, "date": _now(), "note": note or "", "units": ids, "hash": _hash_of(entry, ids)}]
     write(entry, root)
@@ -352,9 +344,12 @@ def outcome_names(given: Optional[List[str]]) -> set:
     return out
 
 
-def from_job(bench: dict, job_dir: str, outcomes: Optional[List[str]] = None, named: Optional[List[str]] = None,
-             *, options: Optional[dict] = None) -> dict:
-    """What a set made from a job holds: {dataset, version, options, setup, units, note}. The trials of the
+def _job_dataset(cfg: dict) -> str:
+    return str(((cfg.get("datasets") or [{}])[0].get("name") or "")).rpartition("/")[2]
+
+
+def from_job(bench: dict, job_dir: str, outcomes: Optional[List[str]] = None, named: Optional[List[str]] = None) -> dict:
+    """What a set made from a job holds: {dataset, units, note}. The trials of the
     ``outcomes`` and the units ``named`` (each the full id a trial's ``standard.unit`` records), every unit
     the job ran when neither is given; a unit of several attempts is taken when any of them is."""
     from nullius.runs import parse
@@ -364,7 +359,7 @@ def from_job(bench: dict, job_dir: str, outcomes: Optional[List[str]] = None, na
     std = cfg["standard"]
     if std.get("benchmark") != bench["key"]:
         raise Refused(f"{job_dir} ran {std.get('benchmark')}, not {bench['key']}")
-    dataset = str(((cfg.get("datasets") or [{}])[0].get("name") or "")).rpartition("/")[2]
+    dataset = _job_dataset(cfg)
     wanted = outcome_names(outcomes)
     trials = []
     for trial_dir in job.trial_dirs(job_dir):
@@ -389,24 +384,21 @@ def from_job(bench: dict, job_dir: str, outcomes: Optional[List[str]] = None, na
         units = held
     if not units:
         raise Refused(f"{job_dir} has no trial of the outcomes {', '.join(sorted(wanted))}")
-    setup = (std.get("setup") or {}).get("name") or "yours"
-    options = listing_options(bench, dataset, options, setup, kind=std.get("kind"))
     said = ([f"outcomes {','.join(outcomes)}"] if outcomes else []) + ([f"{len(names)} named"] if names else [])
-    return {"dataset": dataset, "version": std.get("benchmark_version"), "options": options, "setup": setup,
-            "units": units, "note": f"from the job {cfg.get('job_name') or os.path.basename(job_dir)}"
+    return {"dataset": dataset, "units": units, "note": f"from the job {cfg.get('job_name') or os.path.basename(job_dir)}"
             + (f": {'; '.join(said)}" if said else "")}
 
 
 def record(entry: dict, rev: dict) -> dict:
-    """What a job's config keeps of the set it ran (``standard.task_set``): the entry with that one revision."""
-    return {**{k: entry[k] for k in HEADER if k in entry}, **{k: rev[k] for k in REVISION}}
+    """What a job's config keeps of the set it ran (``standard.task_set``): its id, name, revision, hash and units."""
+    return {"id": entry["id"], "name": entry["name"], "revision": rev["revision"], "hash": rev["hash"], "units": rev["units"]}
 
 
-def for_run(bench: dict, ref: str, *, dataset: Optional[str] = None, bench_options: Optional[dict] = None,
-            units_given: bool = False, root: Optional[str] = None) -> Tuple[dict, str, dict]:
-    """``run --set NAME[@REV]``: (the record the job keeps, the dataset, the benchmark options), the set's
-    dataset and options taken over the run's. A ``--units`` beside it, another ``--dataset``, or a
-    ``--bench-option`` that gives one of the set's options another value is refused."""
+def for_run(bench: dict, ref: str, *, dataset: Optional[str] = None, units_given: bool = False,
+            root: Optional[str] = None) -> Tuple[dict, str]:
+    """``run --set NAME[@REV]``: (the record the job keeps, the dataset), the set's dataset taken over the run's.
+    A ``--units`` beside it, or another ``--dataset``, is refused. The run's benchmark options are its own, as
+    on the whole dataset: the run then refuses an id its driver does not list under them."""
     name, rev = split_ref(ref)
     if units_given:
         raise Refused(f"--set {ref} and --units: the set lists the units, give one or the other")
@@ -414,11 +406,7 @@ def for_run(bench: dict, ref: str, *, dataset: Optional[str] = None, bench_optio
     got = revision(entry, rev)
     if dataset and dataset != entry["dataset"]:
         raise Refused(f"--dataset {dataset}: the task set {name} is cut from the dataset {entry['dataset']}")
-    mine = entry.get("benchmark_options") or {}
-    for n, v in (bench_options or {}).items():
-        if n in mine and str(v) != mine[n]:
-            raise Refused(f"--bench-option {n}={v}: the task set {name} was made under {n}={mine[n]}")
-    return record(entry, got), entry["dataset"], {**(bench_options or {}), **mine}
+    return record(entry, got), entry["dataset"]
 
 
 def import_path(path: str, root: Optional[str] = None) -> Tuple[dict, List[int]]:
@@ -431,8 +419,14 @@ def import_path(path: str, root: Optional[str] = None) -> Tuple[dict, List[int]]
         rec = cfg["standard"].get("task_set")
         if not isinstance(rec, dict):
             raise NotFound(f"{path}: the job ran no task set")
-        incoming = {"schema": SCHEMA, **{k: rec.get(k) for k in HEADER if k in rec},
-                    "revisions": [{k: rec.get(k) for k in REVISION}]}
+        missing = [k for k in RECORD if k not in rec]
+        if missing:
+            raise Refused(f"{path}: its task set's record has no {', '.join(missing)}")
+        incoming = {"schema": SCHEMA, "id": rec["id"], "name": rec["name"], "description": "",
+                    "benchmark": cfg["standard"].get("benchmark"), "dataset": _job_dataset(cfg),
+                    "revisions": [{"revision": rec["revision"], "date": _now(),
+                                   "note": f"from the job {cfg.get('job_name') or os.path.basename(path)}",
+                                   "units": rec["units"], "hash": rec["hash"]}]}
     elif os.path.isfile(path):
         incoming = _read(path)
     else:
@@ -451,9 +445,8 @@ def import_path(path: str, root: Optional[str] = None) -> Tuple[dict, List[int]]
     here = load(bench, name, root)
     if here["id"] != incoming["id"]:
         raise Refused(f"a task set {name!r} of {bench} with another id is here already ({target})")
-    for k in ("dataset", "benchmark_options", "setup"):
-        if (here.get(k) or None) != (incoming.get(k) or None):
-            raise Refused(f"the set {name} here differs in its {k}: {here.get(k)!r}, not {incoming.get(k)!r}")
+    if here["dataset"] != incoming["dataset"]:
+        raise Refused(f"the set {name} here differs in its dataset: {here['dataset']!r}, not {incoming['dataset']!r}")
     have = {r["revision"]: r for r in here["revisions"]}
     added = []
     for r in incoming["revisions"]:

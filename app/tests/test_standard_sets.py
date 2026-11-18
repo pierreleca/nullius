@@ -1,12 +1,13 @@
 """Task sets (``standard/sets.py``): a named list of a benchmark's units in the
-user catalogue, with an id and revisions. The content hash says the same for
-the same ids in any order and changes with an id, the dataset or an option; a
-change of membership adds a revision and keeps the earlier ones; a name that
+user catalogue, with an id and revisions, and no option. The content hash says
+the same for the same ids in any order and changes with an id or the dataset;
+a change of membership adds a revision and keeps the earlier ones; a name that
 would leave the benchmark's folder is refused; a set is made from a file or
 from a job's trials by outcome or by name; an entry comes in from its file or
-from a job that ran it. ``run --set`` takes the set's dataset and options,
-refuses what contradicts them, and records the set in the job's config. No key,
-no network: the runs are a control's."""
+from a job that ran it. ``run --set`` takes the set's dataset, refuses what
+contradicts it, runs under any options it is given, refuses ids its driver does
+not list under them, and records the set in the job's config. No key, no
+network: the runs are a control's."""
 from __future__ import annotations
 
 import copy
@@ -77,20 +78,15 @@ class Hash(Scratch):
         b = self.make("b", "# the same two\n\n  model  \r\ngood\n")
         self.assertEqual(sets.revision(a)["hash"], sets.revision(b)["hash"])
         self.assertNotEqual(a["id"], b["id"])                        # two entries of equal lists stay two sets
-        self.assertEqual(sets.content_hash("fakebench", "all", {}, "yours", ["good", "model"]),
-                         sets.content_hash("fakebench", "all", {}, "yours", ["model", "good"]))
+        self.assertEqual(sets.content_hash("fakebench", "all", ["good", "model"]),
+                         sets.content_hash("fakebench", "all", ["model", "good"]))
 
-    def test_it_changes_with_an_id_the_dataset_or_a_listing_option(self):
-        base = sets.content_hash("fakebench", "all", {"mode": "plain"}, "yours", ["good", "model"])
-        for other in (sets.content_hash("fakebench", "all", {"mode": "plain"}, "yours", ["good", "slow"]),
-                      sets.content_hash("fakebench", "responding", {"mode": "plain"}, "yours", ["good", "model"]),
-                      sets.content_hash("fakebench", "all", {"mode": "hard"}, "yours", ["good", "model"])):
+    def test_it_changes_with_an_id_or_the_dataset(self):
+        base = sets.content_hash("fakebench", "all", ["good", "model"])
+        for other in (sets.content_hash("fakebench", "all", ["good", "slow"]),
+                      sets.content_hash("fakebench", "responding", ["good", "model"])):
             self.assertNotEqual(base, other)
-        hard = self.make("hard", "good\nmodel\n", "--bench-option", "mode=hard")
-        plain = self.make("plain", "good\nmodel\n", "--bench-option", "mode=plain")
-        self.assertEqual((hard["benchmark_options"], plain["benchmark_options"]), ({"mode": "hard"}, {"mode": "plain"}))
-        self.assertNotEqual(sets.revision(hard)["hash"], sets.revision(plain)["hash"])
-        self.assertEqual(sets.revision(plain)["hash"], base)
+        self.assertEqual(sets.revision(self.make("plain", "good\nmodel\n"))["hash"], base)
 
     def test_a_file_changed_by_hand_is_refused_where_it_is_read(self):
         self.make("edited", "good\nmodel\n")
@@ -101,6 +97,35 @@ class Hash(Scratch):
             json.dump(entry, f)
         with self.assertRaisesRegex(sets.Refused, "changed by hand"):
             sets.load("fakebench", "edited")
+
+
+class NoOption(Scratch):
+    def test_set_create_takes_no_benchmark_option(self):
+        for source in (["--units", self.file("good\n")], ["--search", "good"]):
+            with self.subTest(source=source[0]):
+                out, err = io.StringIO(), io.StringIO()
+                with redirect_stdout(out), redirect_stderr(err), self.assertRaises(SystemExit) as stop:
+                    cli.main(["set", "create", "fakebench", "dev", "--dataset", "all", *source, "--bench-option", "mode=hard"])
+                self.assertEqual((stop.exception.code, out.getvalue()), (2, ""))
+                self.assertIn("usage:", err.getvalue())
+                self.assertIn("unrecognized arguments: --bench-option", err.getvalue())
+        self.assertFalse(os.path.exists(self.cat))
+
+    def test_the_entry_holds_no_option_and_an_earlier_entry_that_does_is_refused_where_it_is_read(self):
+        entry = self.make("dev", "good\nmodel\n")
+        self.assertEqual(sorted(read(sets.path_of("fakebench", "dev"))),
+                         ["benchmark", "dataset", "description", "id", "name", "revisions", "schema"])
+        self.assertEqual(sorted(sets.record(entry, sets.revision(entry))), ["hash", "id", "name", "revision", "units"])
+        for field, value in (("benchmark_options", {"mode": "hard"}), ("setup", "yours"), ("benchmark_version", "1")):
+            with self.subTest(field=field):
+                path = sets.path_of("fakebench", "dev")
+                with open(path, "w") as f:
+                    json.dump(dict(entry, schema=sets.SCHEMA, **{field: value}), f)
+                with self.assertRaisesRegex(sets.Refused, f"holds {field}, which a task set does not hold"):
+                    sets.load("fakebench", "dev")
+                code, out, err = self.cli("set", "show", "fakebench", "dev")
+                self.assertEqual((code, out), (2, ""))
+                self.assertIn(f"holds {field}", err)
 
 
 class Revisions(Scratch):
@@ -232,21 +257,10 @@ class FromAJob(Scratch):
                 self.assertEqual(code, 0, err)
                 entry = sets.load("fakebench", name)
                 self.assertEqual(sets.revision(entry)["units"], want)
-                self.assertEqual((entry["dataset"], entry["benchmark_options"]), ("all", {}))
+                self.assertEqual(entry["dataset"], "all")
+                self.assertNotIn("benchmark_options", entry)       # the job ran under mode=hard; the set holds none
+                self.assertEqual(sets.revision(entry)["hash"], sets.content_hash("fakebench", "all", want))
                 self.assertIn(f"outcomes {outcome}", sets.revision(entry)["note"])
-
-    def test_only_explicit_options_are_pinned_from_a_job(self):
-        d = self.job()
-        for name, args, expected in (("unpinned", [], {}),
-                                     ("hard", ["--bench-option", "mode=hard"], {"mode": "hard"}),
-                                     ("plain", ["--bench-option", "mode=plain"], {"mode": "plain"})):
-            with self.subTest(name=name):
-                code, out, err = self.cli("set", "create", "fakebench", name, "--from-job", d, *args)
-                self.assertEqual(code, 0, err)
-                entry = sets.load("fakebench", name)
-                self.assertEqual(entry["benchmark_options"], expected)
-                self.assertEqual(sets.revision(entry)["hash"],
-                                 sets.content_hash("fakebench", "all", expected, "yours", sets.revision(entry)["units"]))
 
     def test_unit_takes_the_ones_named(self):
         d = self.job()
@@ -278,7 +292,7 @@ class Import(Scratch):
         # here, the same id with a revision 2 of another list
         other = read(exported)
         other["revisions"][1]["units"] = ["good", "wrong"]
-        other["revisions"][1]["hash"] = sets.content_hash("fakebench", "all", other["benchmark_options"], "yours", ["good", "wrong"])
+        other["revisions"][1]["hash"] = sets.content_hash("fakebench", "all", ["good", "wrong"])
         with open(exported, "w") as f:
             json.dump(other, f)
         code, out, err = self.cli("set", "import", exported)
@@ -288,58 +302,74 @@ class Import(Scratch):
         self.assertEqual(sets.revision(sets.load("fakebench", "dev"))["units"], ["good", "model", "slow"])
 
     def test_import_checks_every_consumed_field_before_storing_an_entry_or_job_record(self):
-        entry = self.make("dev", "good\n")
-        required = ("id", "name", "description", "benchmark", "dataset", "benchmark_options", "setup")
-        cases = [("entry", k, None, True) for k in required]
+        entry = dict(self.make("dev", "good\n"), schema=sets.SCHEMA)
+        cases = [("entry", k, None, True) for k in ("id", "name", "description", "benchmark", "dataset")]
         cases += [("revision", k, None, True) for k in sets.REVISION]
         cases += [("entry", k, v, False) for k, v in (
-            ("id", 1), ("name", []), ("description", {}), ("benchmark", False),
-            ("benchmark_version", []), ("dataset", {}), ("setup", []), ("setup", ""),
-            ("benchmark_options", []), ("benchmark_options", {"mode": ["plain"]}))]
+            ("id", 1), ("name", []), ("description", {}), ("benchmark", False), ("dataset", {}),
+            ("benchmark_options", {}), ("setup", "yours"))]
         cases += [("revision", k, v, False) for k, v in (
             ("revision", True), ("date", None), ("date", []), ("date", ""), ("note", None),
             ("note", {}), ("units", [1]), ("units", [{}]), ("units", "good"), ("hash", []))]
+        rec = sets.record(entry, sets.revision(entry))
+        jobs = [(k, None, True) for k in sets.RECORD]
+        jobs += [(k, v, False) for k, v in (("id", 1), ("name", []), ("revision", True), ("revision", 0),
+                                            ("units", [1]), ("units", "good"), ("units", []), ("hash", []),
+                                            ("hash", "0" * 64))]
         source_job = os.path.join(self.tmp, "source-job")
         os.makedirs(source_job)
-        for index, (section, field, value, missing) in enumerate(cases):
-            for source in ("entry", "job"):
-                elsewhere = os.path.join(self.tmp, f"elsewhere-{index}-{source}")
-                with self.subTest(section=section, field=field, value=value, missing=missing, source=source):
-                    incoming = copy.deepcopy(entry)
-                    target = incoming if section == "entry" else incoming["revisions"][0]
-                    if missing:
-                        del target[field]
-                    else:
-                        target[field] = value
-                    if source == "entry":
-                        path = self.file(json.dumps(incoming), "incoming.json")
-                    else:
-                        rec = {k: v for k, v in incoming.items() if k not in ("schema", "revisions")}
-                        rec.update(incoming["revisions"][0])
-                        self.file(json.dumps({"runner": "standard", "standard": {"task_set": rec}}),
-                                  "source-job/config.json")
-                        path = source_job
-                    with mock.patch.dict(os.environ, {"NULLIUS_CATALOGUE": elsewhere}):
-                        code, out, err = self.cli("set", "import", path)
-                    self.assertEqual((code, out), (2, ""), err)
-                    self.assertTrue(err.startswith("refused: "), err)
-                    self.assertFalse(os.path.exists(elsewhere))
+        for index, (section, field, value, missing) in enumerate(cases + [("job",) + c for c in jobs]):
+            elsewhere = os.path.join(self.tmp, f"elsewhere-{index}")
+            with self.subTest(section=section, field=field, value=value, missing=missing):
+                if section == "job":
+                    got = dict(rec)
+                    target = got
+                else:
+                    got = copy.deepcopy(entry)
+                    target = got if section == "entry" else got["revisions"][0]
+                if missing:
+                    del target[field]
+                else:
+                    target[field] = value
+                if section == "job":
+                    self.file(json.dumps({"runner": "standard", "datasets": [{"name": "fakebench/all"}],
+                                          "standard": {"benchmark": "fakebench", "task_set": got}}),
+                              "source-job/config.json")
+                    path = source_job
+                else:
+                    path = self.file(json.dumps(got), "incoming.json")
+                with mock.patch.dict(os.environ, {"NULLIUS_CATALOGUE": elsewhere}):
+                    code, out, err = self.cli("set", "import", path)
+                self.assertEqual((code, out), (2, ""), err)
+                self.assertTrue(err.startswith("refused: "), err)
+                self.assertFalse(os.path.exists(elsewhere))
 
     def test_an_entry_comes_in_from_a_job_that_ran_it(self):
-        entry = self.make("dev", "model\ngood\n", "--bench-option", "mode=hard", "--description", "two of them")
-        code, out, err = self.cli("run", "fakebench", "nop", "--jobs", self.jobs, "--set", "dev", "--name", "ran")
+        entry = self.make("dev", "model\ngood\n", "--description", "two of them")
+        code, out, err = self.cli("run", "fakebench", "nop", "--jobs", self.jobs, "--set", "dev", "--bench-option", "mode=hard",
+                                  "--name", "ran")
         self.assertEqual(code, 0, out + err)
         elsewhere = os.path.join(self.tmp, "elsewhere")
         with mock.patch.dict(os.environ, {"NULLIUS_CATALOGUE": elsewhere}):
             code, out, err = self.cli("set", "import", os.path.join(self.jobs, "ran"))
             self.assertEqual(code, 0, err)
-            self.assertEqual(sets.load("fakebench", "dev"), entry)
+            got = sets.load("fakebench", "dev")
+            # the record holds the set's id, name, revision, hash and units: the rest is the job's or the import's
+            self.assertEqual({k: got[k] for k in ("id", "name", "benchmark", "dataset", "description")},
+                             {**{k: entry[k] for k in ("id", "name", "benchmark", "dataset")}, "description": ""})
+            self.assertEqual([{k: r[k] for k in ("revision", "units", "hash")} for r in got["revisions"]],
+                             [{k: r[k] for k in ("revision", "units", "hash")} for r in entry["revisions"]])
+            self.assertEqual(got["revisions"][0]["note"], "from the job ran")
+            # the entry exported from here then adds nothing there: the same id, revision and hash
+            code, out, err = self.cli("set", "import", sets.path_of("fakebench", "dev", self.cat))
+            self.assertEqual(code, 0, err)
+            self.assertIn("here already", out)
         code, out, err = self.cli("set", "import", self.jobs)
         self.assertEqual((code, out), (3, ""))
         self.assertIn("no job", err)
         # another set under the name: refused, the entry here unchanged
         shutil.rmtree(os.path.join(self.cat, "sets"))
-        self.make("dev", "model\ngood\n", "--bench-option", "mode=hard")
+        self.make("dev", "model\ngood\n")
         code, out, err = self.cli("set", "import", os.path.join(self.jobs, "ran"))
         self.assertEqual(code, 2)
         self.assertIn("another id", err)
@@ -356,9 +386,8 @@ class Running(Scratch):
         self.assertFalse(os.path.exists(self.jobs))
 
     def test_each_contradiction_is_refused_before_any_unit_with_a_plain_message(self):
-        self.make("dev", "good\nmodel\n", "--bench-option", "mode=hard")
+        self.make("dev", "good\nmodel\n")
         for args, said in ((["--dataset", "responding"], "--dataset responding: the task set dev is cut from the dataset all"),
-                           (["--bench-option", "mode=plain"], "--bench-option mode=plain: the task set dev was made under mode=hard"),
                            (["--units", self.file("good\n")], "the set lists the units, give one or the other"),
                            (["--set", "nowhere"], "no task set 'nowhere' of fakebench")):
             with self.subTest(args=args):
@@ -371,48 +400,60 @@ class Running(Scratch):
         code, out, err = self.run_cli("--set", "dev", "--dataset", "all", "--bench-option", "mode=hard", "--name", "agrees")
         self.assertEqual(code, 0, out + err)
 
-    def test_an_unpinned_option_can_change_and_the_job_records_its_value(self):
-        entry = self.make("implicit", "good\n")
-        self.assertEqual(entry["benchmark_options"], {})
-        self.assertEqual(sets.revision(entry)["hash"],
-                         sets.content_hash("fakebench", "all", {}, "yours", ["good"]))
+    def test_two_runs_under_two_values_of_an_option_both_start_and_record_the_same_set(self):
+        entry = self.make("dev", "good\nwrong\n")
+        rev = sets.revision(entry)
+        records = []
         for value in ("plain", "hard"):
             with self.subTest(value=value):
-                code, out, err = self.run_cli("--set", "implicit", "--bench-option", f"mode={value}", "--name", value)
+                code, out, err = self.run_cli("--set", "dev", "--bench-option", f"mode={value}", "--name", value)
                 self.assertEqual(code, 0, out + err)
+                self.assertEqual(self.trials(os.path.join(self.jobs, value)), ["good__u0000", "wrong__u0001"])
                 cfg = read(os.path.join(self.jobs, value, "config.json"))
                 self.assertEqual(cfg["standard"]["benchmark_options"], {"mode": value})
-                self.assertEqual(cfg["standard"]["task_set"], sets.record(entry, sets.revision(entry)))
+                records.append(cfg["standard"]["task_set"])
+        self.assertEqual(records[0], records[1])
+        self.assertEqual({k: records[0][k] for k in ("id", "revision", "hash")},
+                         {"id": entry["id"], "revision": 1, "hash": rev["hash"]})
+        self.assertEqual(rev["hash"], sets.content_hash("fakebench", "all", ["good", "wrong"]))   # no option in it
 
-    def test_an_explicit_default_is_pinned_and_other_options_stay_free(self):
-        self.b["options"] = {**MODE, "max_steps": {"summary": "a step limit", "pattern": "^[0-9]+$", "default": "30"}}
-        entry = self.make("explicit", "good\n", "--bench-option", "mode=plain")
-        self.assertEqual(entry["benchmark_options"], {"mode": "plain"})
-        self.assertEqual(sets.revision(entry)["hash"],
-                         sets.content_hash("fakebench", "all", {"mode": "plain"}, "yours", ["good"]))
-        code, out, err = self.run_cli("--set", "explicit", "--bench-option", "mode=hard")
+    def listing_by_mode(self):
+        """The fake benchmark whose driver leaves slow and model out of its listing under mode=hard."""
+        here = os.path.join(self.tmp, "fakebench")
+        shutil.copytree(self.b["_here"], here)
+        path = os.path.join(here, "driver.py")
+        with open(path) as f:
+            text = f.read()
+        text = text.replace('            units.remove("slow")\n',
+                            '            units.remove("slow")\n'
+                            '        if os.environ.get("NULLIUS_OPTION_MODE") == "hard":\n'
+                            '            units = [u for u in units if u not in ("slow", "model")]\n')
+        with open(path, "w") as f:
+            f.write(text)
+        self.b["_here"] = here
+
+    def test_ids_the_driver_does_not_list_under_the_runs_options_refuse_it_before_any_unit(self):
+        self.listing_by_mode()
+        self.make("dev", "good\nslow\nmodel\nwrong\n")
+        code, out, err = self.run_cli("--set", "dev", "--bench-option", "mode=hard", "--name", "hard")
         self.assertEqual(code, 2, out + err)
-        self.assertIn("was made under mode=plain", out)
-        self.assertFalse(os.path.exists(self.jobs))
-        code, out, err = self.run_cli("--set", "explicit", "--bench-option", "mode=plain",
-                                     "--bench-option", "max_steps=60", "--name", "agrees")
+        self.assertIn("2 of the 4 ids of the task set dev@1 are not listed by Fake bench's dataset all under the run's "
+                      "options (mode=hard): slow, model", out)
+        job_dir = os.path.join(self.jobs, "hard")
+        self.assertEqual(self.trials(job_dir), [])
+        self.assertFalse(os.path.exists(os.path.join(job_dir, "config.json")))
+        code, out, err = self.run_cli("--set", "dev", "--bench-option", "mode=plain", "--name", "plain")
         self.assertEqual(code, 0, out + err)
-        cfg = read(os.path.join(self.jobs, "agrees", "config.json"))
-        self.assertEqual(cfg["standard"]["benchmark_options"], {"mode": "plain", "max_steps": "60"})
-        self.b["options"]["mode"] = dict(MODE["mode"], default="hard")
-        code, out, err = self.run_cli("--set", "explicit", "--name", "pinned")
-        self.assertEqual(code, 0, out + err)
-        cfg = read(os.path.join(self.jobs, "pinned", "config.json"))
-        self.assertEqual(cfg["standard"]["benchmark_options"], {"mode": "plain", "max_steps": "30"})
 
-    def test_an_id_the_driver_does_not_list_is_refused_before_any_unit(self):
-        self.make("dev", "good\nnope\n")
+    def test_the_message_names_the_first_five_ids_not_listed(self):
+        self.make("dev", "good\n" + "".join(f"gone{i}\n" for i in range(7)))
         record = sets.record(sets.load("fakebench", "dev"), sets.revision(sets.load("fakebench", "dev")))
         r = run.Run(self.b, definitions.control(self.b, "nop"), model="", provider="openai", jobs_root=self.jobs, env={},
                     say=lambda s: None, task_set=record)
         with self.assertRaises(run.Refused) as e:
             r.start()
-        self.assertIn("the task set dev@1 lists 1 task that Fake bench's dataset all does not hold: nope", str(e.exception))
+        self.assertIn("7 of the 8 ids of the task set dev@1 are not listed by Fake bench's dataset all under the run's "
+                      "options (mode=plain): gone0, gone1, gone2, gone3, gone4, ...", str(e.exception))
         self.assertEqual(self.trials(r.job_dir), [])
         self.assertFalse(os.path.exists(os.path.join(r.job_dir, "config.json")))
 
@@ -432,17 +473,18 @@ class Running(Scratch):
         with open(os.path.join(part, feed.FEED)) as f:
             self.assertEqual(next(e for e in map(json.loads, f) if e["event"] == "job.start")["tasks"], ["wrong"])
 
-    def test_the_config_records_the_set_its_revision_and_its_options(self):
+    def test_the_config_records_the_set_its_revision_and_the_runs_options(self):
         self.b["datasets"] = [*self.b["datasets"], {"id": "responding", "units": 3}]
-        self.make("dev", "good\nmodel\n", "--dataset", "responding", "--bench-option", "mode=hard")
+        self.make("dev", "good\nmodel\n", "--dataset", "responding")
         self.cli("set", "update", "fakebench", "dev", "--add", "slow")
-        code, out, err = self.run_cli("--set", "dev@1", "--name", "first")
+        code, out, err = self.run_cli("--set", "dev@1", "--bench-option", "mode=hard", "--name", "first")
         self.assertEqual(code, 0, out + err)
         cfg = read(os.path.join(self.jobs, "first", "config.json"))
         entry = sets.load("fakebench", "dev")
         self.assertEqual(cfg["standard"]["task_set"], sets.record(entry, sets.revision(entry, 1)))
-        self.assertEqual({k: cfg["standard"]["task_set"][k] for k in ("id", "name", "revision", "units")},
-                         {"id": entry["id"], "name": "dev", "revision": 1, "units": ["good", "model"]})
+        self.assertEqual(cfg["standard"]["task_set"],
+                         {"id": entry["id"], "name": "dev", "revision": 1, "hash": entry["revisions"][0]["hash"],
+                          "units": ["good", "model"]})
         self.assertEqual(cfg["standard"]["benchmark_options"], {"mode": "hard"})
         self.assertNotIn("units_file", cfg["standard"])
         self.assertEqual(cfg["datasets"], [{"name": "fakebench/responding", "n_tasks": 2}])
