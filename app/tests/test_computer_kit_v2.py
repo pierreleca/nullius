@@ -24,7 +24,23 @@ v1, checks, desktop = driver.v1, driver.checks, driver.desktop
 
 
 class Fake(FakeDesktop):
-    """Version 1's fake desktop, which also makes the agent's folder as the bridge asks."""
+    """A blank desktop that draws the fixture on request and makes the agent's folder as the bridge asks."""
+
+    def __init__(self, name, values):
+        super().__init__(name, {})
+        self.boxes.clear()
+        self.log.clear()
+
+    def start_fixture(self, values):
+        self.values = values
+        self.boxes = {label: [100 + 300 * i, 100, 300 + 300 * i, 200]
+                      for i, label in enumerate(values.get("labels") or [])}
+        self.boxes.update(field=[600, 500, 1200, 560], handle=[200, 500, 260, 560], zone=[1300, 400, 1700, 700],
+                          list=[600, 300, 1300, 800])
+        self.log.append({"kind": "ready", "t": time.monotonic(), "boxes": dict(self.boxes)})
+
+    def capture(self):
+        return super().capture() + json.dumps(self.boxes).encode()
 
     def python(self, code, seconds=None):
         if "os.makedirs(p, 0o700)" in code:
@@ -43,6 +59,22 @@ class Definition(unittest.TestCase):
         self.assertEqual(driver.units("kit")["units"], list(checks.CHECKS) + ["late"])
         self.assertEqual(set(kit["check_details"]), set(driver.UNITS))
         self.assertEqual(set(kit["basic"]) | set(kit["skills"]), set(driver.UNITS))
+
+
+class Fixture(unittest.TestCase):
+    def test_the_fake_starts_blank_and_draws_the_button_only_when_the_fixture_starts(self):
+        values = {"screen": "click", "labels": ["BUTTON"]}
+        d = Fake("desktop", values)
+        self.assertEqual(d.boxes, {})
+        self.assertEqual(d.events(), [])
+        before = d.capture()
+        self.assertEqual(d.hit(200, 150), "background")
+        d.start_fixture(values)
+        self.assertEqual(d.hit(200, 150), "BUTTON")
+        self.assertNotEqual(d.capture(), before)
+        self.assertEqual(len(d.events()), 1)
+        self.assertEqual(d.events()[0]["kind"], "ready")
+        self.assertEqual(d.events()[0]["boxes"], d.boxes)
 
 
 class Units(unittest.TestCase):
@@ -112,6 +144,9 @@ class Units(unittest.TestCase):
     def test_late_passes_for_the_reference_which_looks_again_by_steps(self):
         ws, s = self.unit("late")
         self.assertIn("appears on the screen a few seconds after", s["prompt"])
+        u = v1.OPEN["late"]
+        self.assertEqual(u.desktop.boxes, {})
+        self.assertEqual(u.desktop.events(), [])
         got = driver.score("late", ws, [], driver.oracle("late", ws)["answer"])
         self.assertTrue(got["passed"], got)
         self.assertIn("wait", got["detail"]["calls"])
