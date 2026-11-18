@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}{{ entry.name if entry else ds.label or ds.id }} · {{ title }} — Nullius{% endblock %}
+{% block crumb %}/ <a href="{{ url_for('benchmarks_page') }}">benchmarks</a> / <a href="{{ url_for('benchmark_page', key=bench.key) }}#task-sets">{{ bench.key }}</a> / {{ ds.id }}{% if entry %} / {{ entry.name }}{% endif %}{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='catalogue/catalogue.css') }}">{% endblock %}
+{% block body %}
+{#- One page for a dataset's tasks: the browser keeps the ids ticked, the server gives a page of 100 at a time
+    (standard/units.py). Opened from a set (?set=NAME&rev=N), its members start ticked; an earlier revision is read only. -#}
+{% set read_only = entry and rev and rev.revision != latest %}
+<article class="bench-page tasks-page" id="tasks-page"
+  data-listing="{{ url_for('benchmark_tasks_listing', key=bench.key, dataset=ds.id) }}"
+  data-prepare="{{ url_for('benchmark_tasks_prepare', key=bench.key, dataset=ds.id) }}"
+  data-rows="{{ url_for('benchmark_tasks_rows', key=bench.key, dataset=ds.id) }}"
+  data-save="{{ url_for('benchmark_tasks_save', key=bench.key, dataset=ds.id) }}"
+  data-csrf="{{ csrf }}" data-writable="{{ 'true' if writable and not read_only else 'false' }}" data-local="{{ 'true' if writable else 'false' }}"
+  data-nouns="{{ nouns }}" data-set="{{ entry.name if entry else '' }}">
+  <header class="bench-head">
+    <div class="bench-head-copy">
+      <div class="bench-tags"><span class="cat-tag">{{ 'Task set' if entry else 'Tasks' }}</span><span class="origin-tag">{{ title }} · {{ ds.label or ds.id }}</span></div>
+      <h1><svg class="bench-mark" aria-hidden="true"><use href="{{ url_for('static', filename='catalogue/marks.svg') }}#bm-{{ bench.key }}"/></svg>{{ entry.name if entry else ds.label or ds.id }}</h1>
+      {% if entry and entry.description %}<p class="bench-domain">{{ entry.description }}</p>{% endif %}
+    </div>
+    <div class="bench-actions">
+      {% if not read_only %}<a class="btn ghost" href="{{ url_for('new_run', standard=bench.key, dataset=ds.id, set=(entry.name ~ '@' ~ rev.revision) if entry else none) }}">Build a run <span aria-hidden="true">→</span></a>{% endif %}
+      {#- renaming and deleting ask first, in place; one question open at a time #}
+      {% if writable and entry %}<details class="bench-delete tasks-rename" name="tasks-set-action">
+        <summary class="btn ghost">Rename</summary>
+        <form method="post" action="{{ url_for('benchmark_tasks_rename', key=bench.key, dataset=ds.id) }}" class="bench-delete-ask">
+          <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="set" value="{{ entry.name }}">{% if read_only %}<input type="hidden" name="rev" value="{{ rev.revision }}">{% endif %}
+          <label class="tasks-field">New name<input name="name" value="{{ entry.name }}" maxlength="64" required autocomplete="off" spellcheck="false"></label>
+          <button type="submit" class="btn">Rename</button>
+          <button type="button" class="btn ghost" onclick="this.closest('details').open = false">Cancel</button>
+        </form>
+      </details>{% endif %}
+      {% if writable and (entry or broken) %}{% set n = (entry.revisions|sort(attribute='revision')|last).units|length if entry else 0 %}<details class="bench-delete" name="tasks-set-action">
+        <summary class="btn ghost danger">Delete</summary>
+        <form method="post" action="{{ url_for('benchmark_tasks_delete', key=bench.key, dataset=ds.id) }}" class="bench-delete-ask">
+          <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="set" value="{{ entry.name if entry else broken }}">
+          <span>Delete the task set <b>{{ entry.name if entry else broken }}</b>{% if entry %}: {{ n }} {{ noun if n == 1 else nouns }}, {{ entry.revisions|length }} {{ 'revision' if entry.revisions|length == 1 else 'revisions' }}{% endif %}? Runs made from it stay.</span>
+          <button type="submit" class="btn danger">Yes, delete</button>
+          <button type="button" class="btn ghost" onclick="this.closest('details').open = false">Keep it</button>
+        </form>
+      </details>{% endif %}
+    </div>
+  </header>
+  {% if problem %}<p class="bench-blocked" role="note">{{ problem }}</p>{% endif %}
+
+  {% if entry %}
+  <div class="bench-facts tasks-facts">
+    <div><span>Revision</span><b>{{ rev.revision }} of {{ latest }}</b></div>
+    <div><span>{{ nouns|capitalize }}</span><b>{{ rev.units|length }}</b></div>
+    <div><span>Dataset</span><b>{{ ds.label or ds.id }}</b></div>
+    <div><span>Date</span><b>{{ rev.date[:10] }}</b></div>
+    {% if rev.note %}<div><span>Note</span><b class="tasks-note">{{ rev.note }}</b></div>{% endif %}
+  </div>
+  {% if entry.revisions|length > 1 %}<nav class="bench-cats tasks-revs" aria-label="Revisions">{% for r in entry.revisions|sort(attribute='revision') %}<a class="bench-cat{{ ' on' if r.revision == rev.revision }}" href="{{ url_for('benchmark_tasks', key=bench.key, dataset=ds.id, set=entry.name, rev=r.revision) }}"{% if r.revision == rev.revision %} aria-current="page"{% endif %}>Revision {{ r.revision }} · {{ r.units|length }}</a>{% endfor %}</nav>{% endif %}
+  {% if read_only %}<p class="bench-blocked" role="note">Revision {{ rev.revision }} is read only. <a href="{{ url_for('benchmark_tasks', key=bench.key, dataset=ds.id, set=entry.name) }}">Open revision {{ latest }}</a> to change the set.</p>{% endif %}
+  {% endif %}
+
+  <p class="bench-blocked tasks-state" id="tasks-state" role="status" hidden></p>
+
+  <section class="bench-section tasks-browse" aria-label="{{ nouns|capitalize }}">
+    <div class="tasks-bar">
+      <label class="bench-find tasks-find">Search<input type="search" id="tasks-q" placeholder="Words of an id, a title or a text" autocomplete="off" spellcheck="false"></label>
+      <div class="tasks-cats" id="tasks-cats"></div>
+    </div>
+    <div class="tasks-sel" role="group" aria-label="Chosen {{ nouns }}">
+      <b id="tasks-chosen">0 chosen</b>
+      {% if not read_only %}<button type="button" class="btn ghost sm" id="tasks-match" hidden>Select the matches</button>{% endif %}
+      <button type="button" class="btn ghost sm" id="tasks-show" aria-pressed="false">Show selected</button>
+      {% if not read_only %}<details class="tasks-paste"><summary class="btn ghost sm">Paste ids</summary>
+        <div class="tasks-paste-box"><textarea id="tasks-paste" rows="4" placeholder="One id a line, or separated by spaces or commas" spellcheck="false"></textarea>
+          <button type="button" class="btn sm" id="tasks-paste-add">Add</button></div>
+      </details>
+      <button type="button" class="btn ghost sm" id="tasks-clear">Clear</button>{% endif %}
+    </div>
+    <p class="tasks-count" id="tasks-count" aria-live="polite"></p>
+    <div class="tasks-scroll">
+      <table class="grid tasks-table" id="tasks-table" hidden>
+        <thead><tr><th scope="col" class="tasks-tick"><span class="sr">Chosen</span></th><th scope="col">Task</th><th scope="col" id="tasks-cat-head">Category</th></tr></thead>
+        <tbody id="tasks-rows"></tbody>
+      </table>
+    </div>
+    <nav class="tasks-pages" id="tasks-pages" aria-label="Pages" hidden>
+      <button type="button" class="btn ghost sm" data-page="prev">Previous</button><span id="tasks-page-of"></span><button type="button" class="btn ghost sm" data-page="next">Next</button>
+    </nav>
+    {% if writable and not read_only %}
+    <div class="tasks-savebar" id="tasks-savebar">
+      <b id="tasks-bar-chosen">0 chosen</b>
+      <a class="btn sm" href="#tasks-save-title" id="tasks-to-save">{{ 'Save' if entry else 'Save as task set' }}</a>
+    </div>
+    {% endif %}
+  </section>
+
+  {% if writable and not read_only %}
+  <section class="bench-section tasks-save" aria-labelledby="tasks-save-title">
+    <h2 id="tasks-save-title">{{ 'Save' if entry else 'Save as task set' }}</h2>
+    {% if entry %}
+    <form class="tasks-form" id="tasks-revise">
+      <label class="tasks-field">Note<input name="note" maxlength="200" autocomplete="off" placeholder="What changed"></label>
+      <button class="btn" type="submit">Save as a new revision</button>
+    </form>
+    {% endif %}
+    <form class="tasks-form" id="tasks-create">
+      <label class="tasks-field">Name<input name="name" maxlength="64" autocomplete="off" spellcheck="false" placeholder="letters, digits, . _ -"></label>
+      <label class="tasks-field tasks-wide">Description<input name="description" maxlength="300" autocomplete="off"></label>
+      <button class="btn{{ ' ghost' if entry }}" type="submit">Save as task set</button>
+    </form>
+    <p class="tasks-msg" id="tasks-msg" role="alert"></p>
+  </section>
+  {% endif %}
+</article>
+<script id="tasks-chosen-ids" type="application/json">{{ (rev.units if rev else [])|tojson }}</script>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='catalogue/tasks.js') }}"></script>{% endblock %}

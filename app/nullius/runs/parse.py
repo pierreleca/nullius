@@ -30,7 +30,7 @@ DEFAULT_TRACE_NAME = "trace.json"
 # The shape this module produces. A workspace caches parsed Jobs keyed on it,
 # so bump it when a Trial or Job field is added, renamed or means something
 # new — otherwise a cache written by the old parse is read back as current.
-SCHEMA = "18"
+SCHEMA = "19"
 
 # What a rate-limit record in `agent/gateway.log` looks like. The agent's SDK
 # retries a 429 below the harness (an agent's `max_retries` reaching its
@@ -358,6 +358,9 @@ class Job:
     launch_id: str = ""
     # Source job names explicitly recorded by standard merge.
     merged_from: list[str] = field(default_factory=list)
+    # The task set a Nullius standard job ran (config ``standard.task_set``): its name, revision and id, its
+    # benchmark, and ``units``, its number of ids. {} for every other job.
+    task_set: dict = field(default_factory=dict)
     # Each time chosen trials of a Nullius standard job were run again in it (``result.json`` ``reruns``,
     # ``standard/rerun.py``): {at, reason, trials, replaced [{trial, unit, try, was, now}], begun [{trial, unit,
     # now}] and no_result [trial] when it had any, max_usd, spent_usd, stopped}, oldest first. [] for a job never
@@ -1034,6 +1037,11 @@ def parse_job(job_dir: str, reuse=None, trials: bool = True) -> Job:
     job.launch_id = str(std.get("launch") or "")
     merged = std.get("merged_from")
     job.merged_from = [s["job"] for s in merged if isinstance(s, dict) and isinstance(s.get("job"), str) and s["job"]] if isinstance(merged, list) else []
+    ts = std.get("task_set") if isinstance(std.get("task_set"), dict) else {}
+    job.task_set = ({"name": str(ts["name"]), "revision": ts.get("revision") if isinstance(ts.get("revision"), int) else None,
+                     "id": str(ts.get("id") or ""), "benchmark": str(std.get("benchmark") or ""),
+                     "units": len(ts["units"]) if isinstance(ts.get("units"), list) else 0}
+                    if isinstance(ts.get("name"), str) and ts["name"] else {})
     job.budget = _budget(res.get("budget"))
     job.reruns = _reruns(res)
     job.standard = bool(std)

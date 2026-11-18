@@ -605,6 +605,23 @@
       + (C.leaderboard(rec) ? tile({attr:'model-choice',key:'leaderboard',title:'Like the leaderboard',on:on==='leaderboard'}) : '')
       + `${tile({attr:'model-choice',key:'any',title:'Any of your choice',on:on==='any'})}</div>`;
   }
+  // A chosen dataset's tasks: all of them, or one of its task sets (its name, its number of tasks, its revision), small
+  // cards, a select past five; and the page of its tasks, where a set is made
+  function taskSetChoice(rec, b, x, u) {
+    const on = (rec.task_sets || {})[x.id] || '', sets = x.sets || [], ref = s => s.name + '@' + s.revision;
+    const all = 'All ' + (x.units ? x.units + ' ' : '') + u.nouns;
+    const page = `/benchmarks/${encodeURIComponent(b.key)}/tasks/${encodeURIComponent(x.id)}`;
+    const picked = sets.find(s => on === ref(s) || on === s.name);
+    const choice = sets.length + 1 > 5
+      ? `<label class="nb-field">Tasks of ${esc(x.label)}<select data-std-taskset-select="${esc(x.id)}"><option value="">${esc(all)}</option>`
+        + sets.map(s => `<option value="${esc(ref(s))}" ${s === picked ? 'selected' : ''}>${esc(s.name)} · ${s.units} ${esc(u.nouns)} · revision ${s.revision}</option>`).join('')
+        + (on && !picked ? `<option value="${esc(on)}" selected>${esc(on)}</option>` : '') + '</select></label>'
+      : `<div class="nb-pick-grid std-optgrid">` + [tile({attr: 'std-taskset', key: '', data: ` data-of="${esc(x.id)}"`, on: !on, title: all}),
+          ...sets.map(s => tile({attr: 'std-taskset', key: ref(s), data: ` data-of="${esc(x.id)}"`, on: s === picked, title: s.name, tip: s.description || '',
+            meta: `${s.units} ${s.units === 1 ? u.noun : u.nouns} · revision ${s.revision}`})),
+          ...(on && !picked ? [tile({attr: 'std-taskset', key: on, data: ` data-of="${esc(x.id)}"`, on: true, title: on})] : [])].join('') + '</div>';
+    return `<div class="nb-sectionhead std-sethead"><h3>${esc(x.label)}: which tasks?</h3><a class="nb-inlinebutton" href="${page}${picked ? '?set=' + encodeURIComponent(picked.name) : ''}">${picked ? 'Open ' + esc(picked.name) : 'Choose its tasks'} <span aria-hidden="true">→</span></a></div>` + choice;
+  }
   function standardForm(rec) {
     const st = C.standard(), b = C.standardBench(rec);
     if (!b) return note('Choose a benchmark first', button('Benchmark step', `data-step="${S.benchmark}"`, 'nb-inlinebutton'));
@@ -615,6 +632,7 @@
           tip: x.summary || '', meta: x.units ? x.units + ' ' + u.nouns : '',
           foot: (x.controls || []).map(c => controlChip(c)).join('') + checkChip('stable', (x.proofs || {}).units, (x.failed || {}).units, 'the same ids twice, each unique')
             + ((b.controls || []).some(c => c.key === 'oracle') ? checkChip('no leak', (x.proofs || {}).leak, (x.failed || {}).leak, 'nothing of the reference shows before the run') : '')})).join('')}</div>`
+        + b.datasets.filter(x => C.datasetsOf(rec).includes(x.id)).map(x => taskSetChoice(rec, b, x, u)).join('')
         + credentialWarnings(b, b.datasets.filter(x => C.datasetsOf(rec).includes(x.id)));
     if (step === S.agent) {
       const agent = b.family === 'agent', all = C.standardOthers(rec), others = all.filter(o => !o.control && !o.setup);
@@ -682,7 +700,8 @@
     if (step === S.limits) {
       const sets = b.datasets.filter(x => C.datasetsOf(rec).includes(x.id)), per = sets.length > 1 ? ' of each dataset' : '';
       // empty is the default, shown as the placeholder: every unit, one at a time, one attempt
-      const ds = sets.length === 1 ? sets[0] : null, all = ds && ds.units ? String(ds.units) : 'all';
+      const ds = sets.length === 1 ? sets[0] : null, mine = ds && (ds.sets || []).find(s => [s.name, s.name + '@' + s.revision].includes((rec.task_sets || {})[ds.id]));
+      const all = mine ? String(mine.units) : ds && ds.units ? String(ds.units) : 'all';
       return '<div class="nb-sectionhead"><h2>Scope</h2></div><div class="nb-two">'
         + field('Number of ' + u.nouns, 'limit', rec.limit, {type: 'number', min: 1, placeholder: all, hint: 'The first ones' + per + ', in its order.'})
         + field('Concurrent ' + u.nouns, 'concurrency', rec.concurrency, {type: 'number', min: 1, max: 32, placeholder: '1'}) + '</div>'
@@ -1037,7 +1056,8 @@
     else if(d.runner){toRunner(d.runner,C.benchKey(r()));}
     else if(d.bench){toRunner(C.runnerFor(r(),d.bench),d.bench);}
     else if(d.stdBench){C.setStandardBenchmark(r(),d.stdBench);}
-    else if(d.stdDataset){const rec=r(),c=C.datasetsOf(rec);rec.datasets=c.includes(d.stdDataset)?(c.length>1?c.filter(k=>k!==d.stdDataset):c):[...c,d.stdDataset];delete rec.dataset;}
+    else if(d.stdDataset){const rec=r(),c=C.datasetsOf(rec);rec.datasets=c.includes(d.stdDataset)?(c.length>1?c.filter(k=>k!==d.stdDataset):c):[...c,d.stdDataset];delete rec.dataset;C.keepTaskSets(rec);}
+    else if(d.stdTaskset!==undefined){C.setTaskSet(r(),d.of,d.stdTaskset);}
     else if(d.stdOther){const rec=r(),c=C.chosenOf(rec);rec.others=c.includes(d.stdOther)?c.filter(k=>k!==d.stdOther):[...c,d.stdOther];delete rec.other;if(rec.options)delete rec.options[d.stdOther];}
     // the standard's machines: each a toggle, one at least; several split the run into shards
     else if(d.stdWhere){const rec=r(),list=C.whereList(rec),on=list.includes(d.stdWhere),next=on?list.filter(w=>w!==d.stdWhere):[...list,d.stdWhere];if(!next.length)return;rec.where=next.length>1?next:next[0];}
@@ -1114,6 +1134,7 @@
     if(d.custom?.endsWith(':type')){$('#nb-parameters').innerHTML=customRows(!['common','extra'].includes(tab)?tab:'');}
     else if(d.stdUnsandboxed!==undefined){r().unsandboxed=el.checked;refreshPlan();}
     else if(d.stdVersion!==undefined){C.setStandardBenchmark(r(),el.value);render();}
+    else if(d.stdTasksetSelect!==undefined){C.setTaskSet(r(),d.stdTasksetSelect,el.value);renderForm();refreshPlan();}
     // an option at its default is left out: the recipe names only what was changed. A select's value can show or hide
     // the options that apply under it (`when`): the step is drawn again and the focus goes back to the select, or to the
     // menu button controls.js puts after it once this change is handled; a typed value is left as it is

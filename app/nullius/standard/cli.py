@@ -12,6 +12,9 @@
     PYTHONPATH=app python3 -m nullius.standard.cli prove BENCHMARK[@VERSION] [--dataset D] [--limit N]
     PYTHONPATH=app python3 -m nullius.standard.cli run ... --shard I/N [--launch ID]
     PYTHONPATH=app python3 -m nullius.standard.cli merge JOB_DIR... -o OUT [--force]
+    PYTHONPATH=app python3 -m nullius.standard.cli set create|update|list|show|rename|delete|import ...
+    PYTHONPATH=app python3 -m nullius.standard.cli run ... --set NAME[@REV]
+    PYTHONPATH=app python3 -m nullius.standard.cli units BENCHMARK --dataset D [--search TEXT] [--category FIELD=VALUE ...] [--json]
     PYTHONPATH=app python3 -m nullius.standard.cli rerun JOB_DIR (--unit ID ... | --units FILE | --unfinished) [--reason TEXT] [-j N] [--retries N] [--max-usd USD]
     PYTHONPATH=app python3 -m nullius.standard.cli fidelity AGENT --model M [--provider P] [--option NAME=VALUE ...] [--passes N] --unsandboxed
 
@@ -46,7 +49,11 @@ runs only the units a file lists (``run.units_file``: one id a line), read on
 the machine the command runs on, ``--from-run`` or not; ``merge``
 puts a launch's shard jobs together into one job (``standard/merge.py``); ``rerun`` runs
 chosen tasks of an ended job again in that job, with its settings, each earlier
-try kept (``standard/rerun.py``). ``--option``
+try kept (``standard/rerun.py``). ``set``
+keeps a named list of a benchmark's units in the user catalogue, with its
+revisions (``standard/sets.py``), and ``run --set NAME[@REV]`` runs one: its
+dataset taken from it, the job recording which revision ran. ``units`` lists a
+dataset's tasks, searched and counted by category (``standard/units.py``). ``--option``
 sets one of the agent's or capability's options (``options`` in its definition);
 the rest keep the vendor's defaults, and the job's config records them all.
 ``--served-by [MODEL=]SLUG[,SLUG...]`` lets only those serving providers answer
@@ -84,7 +91,8 @@ from nullius import constraints as limits, paths, prices as price_list, progress
 if __name__ == "__main__" and "--from-run" not in sys.argv[1:]:
     settings.load(paths.settings_file())
 
-from nullius.standard import boat, conform, definitions, fidelity, job, match, merge, pins, ports, prove, rerun, run, shard
+from nullius.standard import boat, conform, definitions, fidelity, job, match, merge, pins, ports, prove, rerun, run, sets, shard
+from nullius.standard import units as unit_list
 
 ENV_FILE = paths.settings_file()
 
@@ -525,6 +533,14 @@ def _bench(key):
 
 def cmd_run(a):
     b = _bench(a.benchmark)
+    task_set, dataset, bench_options = None, a.dataset, options(a.bench_option)
+    if a.task_set is not None:
+        # the set's dataset over the run's, refused where it differs: before anything starts
+        try:
+            task_set, dataset = sets.for_run(b, a.task_set, dataset=a.dataset, units_given=a.units is not None)
+        except sets.Refused as e:
+            print("refused:", e)
+            return 2
     if a.other in definitions.CONTROLS:
         other = definitions.control(b, a.other)
         if other is None:
@@ -558,15 +574,16 @@ def cmd_run(a):
             unreachable = str(e)
     held, spill = licences(b, from_run=a.from_run)
     try:
-        job, failed = run.run_and_report(b, other, model=a.model or "", provider=a.provider, dataset=a.dataset, limit=a.limit,
+        job, failed = run.run_and_report(b, other, model=a.model or "", provider=a.provider, dataset=dataset, limit=a.limit,
                       concurrency=a.concurrency, jobs_root=a.jobs, name=a.name, unsandboxed=a.unsandboxed, judge_model=a.judge_model, backend=a.backend,
                       boat_size=a.boat_size, simulator_model=a.simulator_model, options=options(a.option), shard=_shard(a.shard), launch=a.launch,
-                      licences=held, bench_options=options(a.bench_option), repeat=a.repeat, retries=a.retries,
+                      licences=held, bench_options=bench_options, repeat=a.repeat, retries=a.retries,
                       remove_images=a.remove_images,
                       prices=prices(a.price), max_usd=a.max_usd, max_usd_per_unit=a.max_usd_per_unit, prices_unreachable=unreachable,
                       constraints=given,
                       timeouts=timeouts(a.timeout), max_turns=a.max_turns, max_calls=a.max_calls,
                       **({"units_file": run.units_file(a.units)} if a.units is not None else {}),
+                      **({"task_set": task_set} if task_set else {}),
                       **({"served_by": run.served_by(a.served_by, a.model or "")} if a.served_by else {}),
                       **({"env": run_env(a.provider)} if a.from_run else {}))
     except run.Refused as e:
@@ -620,6 +637,216 @@ def cmd_merge(a):
     print(f"{got['out']}: {got['trials']} trials from {len(got['merged_from'])} shards")
     for line in got["notes"]:
         print("  " + line)
+    return 0
+
+
+SET_EPILOG = """\
+examples:
+  nullius standard set create humaneval first-ten --dataset humaneval --units ten.txt --description "a quick look"
+  nullius standard set create humaneval misses --from-job jobs_standard/JOB --outcome failed,infra
+  nullius standard set create osworld1 chrome-tabs --dataset test_nogdrive --search tab --category domain=chrome
+  nullius standard set update humaneval misses --remove HumanEval/12 --note "solved upstream"
+  nullius standard set show humaneval misses@1 --json
+  nullius standard set rename humaneval misses misses-june
+  nullius standard set delete humaneval misses-june
+  nullius standard run humaneval reference --model M --set misses@2 --unsandboxed
+
+exit codes:
+  0  done; an update that changes nothing adds no revision
+  1  unexpected error (a traceback: report it)
+  2  usage, or refused: a name taken or not allowed, a list the set cannot hold, an import that conflicts,
+     an entry of the earlier format
+  3  not found: no such benchmark, set, revision, file or job
+"""
+
+
+def _refused(e: Exception) -> int:
+    print(f"refused: {e}", file=sys.stderr)
+    return 3 if isinstance(e, (sets.NotFound, unit_list.NotFound)) else 2
+
+
+def _listed_units(path: str) -> list:
+    """A ``--units`` file's ids, read by the rules ``run --units`` reads it by."""
+    if not os.path.isfile(path):
+        raise sets.NotFound(f"--units {path}: no such file")
+    try:
+        return run.units_file(path)["units"]
+    except run.Refused as e:
+        raise sets.Refused(str(e))
+
+
+def _set_rows(entry: dict) -> dict:
+    last = sets.revision(entry)
+    return {"benchmark": entry["benchmark"], "name": entry["name"], "id": entry["id"], "revision": last["revision"],
+            "units": len(last["units"]), "dataset": entry["dataset"], "description": entry.get("description") or ""}
+
+
+def _find_bench(key):
+    """A benchmark of the catalogue, or a conformance kit, by its key; None when there is none."""
+    return definitions.get("benchmark", key) or next((k for k in definitions.kits() if k["key"] == key), None)
+
+
+def cmd_set_create(a):
+    b = _find_bench(a.benchmark)
+    if b is None:
+        raise sets.NotFound(f"no benchmark {a.benchmark!r}")
+    filtered = a.search is not None or bool(a.category)
+    if sum((a.units is not None, a.from_job is not None, filtered)) != 1:
+        raise sets.Refused("set create: --units FILE, --from-job JOB_DIR, or --search and --category")
+    if a.from_job is None and (a.outcome or a.unit):
+        raise sets.Refused("--outcome and --unit choose a job's trials: give them with --from-job")
+    if a.units is not None:
+        dataset = sets._dataset(b, a.dataset)
+        got = {"dataset": dataset, "units": _listed_units(a.units), "note": f"from {os.path.basename(a.units)}"}
+    elif filtered:
+        # the ids the listing matches today, under the benchmark's default options; the note keeps the filter
+        dataset = sets._dataset(b, a.dataset)
+        chosen = unit_list.categories_of(a.category)
+        found = unit_list.find(b, dataset, search=a.search or "", categories=chosen, size=None)
+        if not found["total"]:
+            raise sets.Refused(f"no task of {dataset} matches {unit_list.filter_text(a.search or '', chosen)}")
+        got = {"dataset": dataset, "units": [t["id"] for t in found["tasks"]],
+               "note": f"matched by {unit_list.filter_text(a.search or '', chosen)}"}
+    else:
+        got = sets.from_job(b, a.from_job, a.outcome, a.unit)
+        if a.dataset and a.dataset != got["dataset"]:
+            raise sets.Refused(f"--dataset {a.dataset}: the job ran the dataset {got['dataset']}")
+    entry = sets.create(b, a.name, dataset=got["dataset"], units=got["units"], description=a.description, note=got["note"])
+    print(f"wrote {sets.path_of(entry['benchmark'], entry['name'])}: {entry['name']}, revision 1, "
+          f"{len(got['units'])} {b['units']['nouns'] if len(got['units']) != 1 else b['units']['noun']} of {entry['dataset']}")
+    return 0
+
+
+def cmd_set_update(a):
+    units = _listed_units(a.units) if a.units is not None else None
+    entry, changed = sets.update(a.benchmark, a.name, add=a.add, remove=a.remove, units=units, note=a.note)
+    last = sets.revision(entry)
+    print(f"{entry['name']}: revision {last['revision']}, {len(last['units'])} units"
+          + ("" if changed else " (no change: no revision added)"))
+    return 0
+
+
+def cmd_set_list(a):
+    got, bad = sets.entries(a.benchmark)
+    for problem in bad:
+        print("problem:", problem, file=sys.stderr)
+    rows = [_set_rows(e) for e in got]
+    if a.json:
+        print(json.dumps(rows, indent=2))
+        return 0
+    for r in rows:
+        print(f"{r['benchmark']:<16} {r['name']:<24} rev {r['revision']:<3} {r['units']:>6} units of {r['dataset']}"
+              + (f"  {r['description']}" if r["description"] else ""))
+    return 0
+
+
+def cmd_set_show(a):
+    name, rev = sets.split_ref(a.ref)
+    entry = sets.load(a.benchmark, name)
+    got = sets.revision(entry, rev)
+    revs = [{"revision": r["revision"], "date": r["date"], "note": r["note"], "units": len(r["units"]), "hash": r["hash"]}
+            for r in sorted(entry["revisions"], key=lambda r: r["revision"])]
+    if a.json:
+        print(json.dumps({**{k: entry[k] for k in sets.HEADER if k in entry}, "revision": got, "revisions": revs}, indent=2))
+        return 0
+    print(f"{entry['name']}: {len(got['units'])} units of {entry['benchmark']} {entry['dataset']}, "
+          f"revision {got['revision']} of {revs[-1]['revision']}")
+    if entry.get("description"):
+        print(f"  {entry['description']}")
+    print(f"  id {entry['id']}")
+    for r in revs:
+        print(f"  revision {r['revision']}  {r['date']}  {r['units']} units  {r['hash'][:12]}" + (f"  {r['note']}" if r["note"] else ""))
+    print("units:")
+    for u in got["units"]:
+        print(f"  {u}")
+    return 0
+
+
+def cmd_set_rename(a):
+    entry = sets.rename(a.benchmark, a.name, a.new)
+    n = len(entry["revisions"])
+    print(f"renamed {a.name} to {entry['name']} ({sets.path_of(entry['benchmark'], entry['name'])}): its id and "
+          f"{n} revision{'s' if n != 1 else ''} kept; jobs that ran it find it by its id")
+    return 0
+
+
+def cmd_set_delete(a):
+    path = sets._file_of(a.benchmark, a.name, None)
+    entry = sets.delete(a.benchmark, a.name)
+    if entry is None:
+        print(f"deleted {path}: an entry this version could not read")
+        return 0
+    n, last = len(entry["revisions"]), sets.revision(entry)
+    print(f"deleted {path}: {entry['name']}, {len(last['units'])} units, {n} revision{'s' if n != 1 else ''}; "
+          "jobs that ran it keep their record")
+    return 0
+
+
+def cmd_set_import(a):
+    entry, added = sets.import_path(a.path)
+    if added:
+        print(f"{entry['name']} of {entry['benchmark']}: revision{'s' if len(added) > 1 else ''} "
+              f"{', '.join(map(str, added))} imported into {sets.path_of(entry['benchmark'], entry['name'])}")
+    else:
+        print(f"{entry['name']} of {entry['benchmark']}: every revision is here already")
+    return 0
+
+
+def cmd_set(a):
+    try:
+        return {"create": cmd_set_create, "update": cmd_set_update, "list": cmd_set_list, "show": cmd_set_show,
+                "rename": cmd_set_rename, "delete": cmd_set_delete, "import": cmd_set_import}[a.set_cmd](a)
+    except (sets.Refused, unit_list.Refused) as e:
+        return _refused(e)
+
+
+UNITS_EPILOG = """\
+examples:
+  nullius standard units humaneval --dataset humaneval
+  nullius standard units osworld1 --dataset test_nogdrive --search "tab" --category domain=chrome --category domain=vlc
+  nullius standard units longmemeval --dataset longmemeval_oracle --bench-option question_type=multi-session --json
+
+exit codes:
+  0  listed, a match of no task included
+  1  unexpected error (a traceback: report it)
+  2  usage, or refused: an option or a category not known, a program the listing needs not on this machine,
+     a driver that could not list the dataset
+  3  not found: no such benchmark or dataset
+
+A first listing fetches what it needs first (the upstream, the dataset, the driver's environment unless the
+benchmark names a light listing command), said in one line on stderr; later listings read the cache.
+"""
+
+
+def cmd_units(a):
+    try:
+        b = _find_bench(a.benchmark)
+        if b is None:
+            raise unit_list.NotFound(f"no benchmark {a.benchmark!r}")
+        try:
+            given = options(a.bench_option, "--bench-option")
+        except SystemExit as e:
+            raise unit_list.Refused(str(e))
+        chosen = unit_list.categories_of(a.category)
+        before = unit_list.state(b, a.dataset, given)
+        if before["state"] == "refused":
+            raise unit_list.Refused(before["reason"])
+        if before["fetch"]:
+            print(f"first listing of {a.dataset}: fetching " + ", then ".join(f["text"] for f in before["fetch"]),
+                  file=sys.stderr, flush=True)
+        found = unit_list.find(b, a.dataset, given, search=a.search or "", categories=chosen, size=None)
+    except unit_list.Refused as e:
+        return _refused(e)
+    if a.json:
+        print(json.dumps(found, indent=2, ensure_ascii=False))
+        return 0
+    words = b["units"]
+    print(f"{found['total']} of {found['of']} {words['nouns']} of {a.dataset}"
+          + ("" if found["described"] else " (its driver gives ids alone: a search reads the ids)"))
+    for field, values in found["categories"].items():
+        print(f"{field}: " + ", ".join(f"{v['value']} {v['count']}" for v in values))
+    for t in found["tasks"]:
+        print(f"  {t['id']}" + (f"  {t['title']}" if t["title"] else ""))
     return 0
 
 
@@ -775,6 +1002,9 @@ def main(argv=None):
             p.add_argument("--units", metavar="FILE",
                            help="only the units this file lists, one id a line (# starts a comment): in the dataset's order, "
                                 "before --shard and --limit; the job's config records the file's name, sha256 and units")
+            p.add_argument("--set", dest="task_set", metavar="NAME[@REV]",
+                           help="only the units of this task set (nullius standard set), its latest revision or REV: its "
+                                "dataset is the run's, the options the run's own; the job's config records the set and its revision")
             p.add_argument("--limit", type=int)
             p.add_argument("-j", "--concurrency", type=int, default=4)
             p.add_argument("--judge-model", help="a benchmark scored by a model: this judge instead of its official one")
@@ -829,6 +1059,66 @@ def main(argv=None):
     g.add_argument("jobs", nargs="+", metavar="JOB_DIR")
     g.add_argument("-o", "--out", required=True, help="the merged job's directory (its name is the job's)")
     g.add_argument("--force", action="store_true", help="merge shards of different launches, versions, models or agents")
+    st = sub.add_parser("set", help="task sets: named lists of a benchmark's units, with their revisions",
+                        epilog=SET_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ss = st.add_subparsers(dest="set_cmd", required=True, metavar="COMMAND")
+    sc = ss.add_parser("create", help="a new task set, from a units file or from a job's trials",
+                       epilog=SET_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sc.add_argument("benchmark", metavar="BENCH")
+    sc.add_argument("name", metavar="NAME", help="letters, digits, '.', '_' and '-'; unique among the benchmark's sets")
+    sc.add_argument("--dataset", help="the dataset the set is cut from (from a job: the job's)")
+    source = sc.add_mutually_exclusive_group()
+    source.add_argument("--units", metavar="FILE", help="the units a file lists, one id a line (# starts a comment)")
+    source.add_argument("--from-job", metavar="JOB_DIR", help="the units a standard job ran (each trial's full unit id)")
+    sc.add_argument("--outcome", action="append", metavar="O,...",
+                    help="with --from-job: the trials of these outcomes (the pages' names, or passed, failed, infra)")
+    sc.add_argument("--unit", action="append", metavar="ID", help="with --from-job: this unit too (repeatable)")
+    sc.add_argument("--search", metavar="TEXT",
+                    help="the tasks whose id, title or text hold each word (nullius standard units): those matched today")
+    sc.add_argument("--category", action="append", metavar="FIELD=VALUE",
+                    help="the tasks of this category's value (repeatable: values of one field widen, fields narrow)")
+    sc.add_argument("--description", default="")
+    su = ss.add_parser("update", help="a new revision: units added, removed or replaced; earlier revisions kept",
+                       epilog=SET_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    su.add_argument("benchmark", metavar="BENCH")
+    su.add_argument("name", metavar="NAME")
+    change = su.add_mutually_exclusive_group(required=True)
+    change.add_argument("--add", nargs="+", metavar="ID")
+    change.add_argument("--remove", nargs="+", metavar="ID")
+    change.add_argument("--units", metavar="FILE", help="the units this file lists, in place of the set's")
+    su.add_argument("--note", default="", help="why the membership changed, kept with the revision")
+    sl = ss.add_parser("list", help="the task sets, of one benchmark or all",
+                       epilog=SET_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sl.add_argument("benchmark", metavar="BENCH", nargs="?")
+    sl.add_argument("--json", action="store_true", help="one JSON array of rows")
+    sw = ss.add_parser("show", help="one task set: its revisions and the units of one",
+                       epilog=SET_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sw.add_argument("benchmark", metavar="BENCH")
+    sw.add_argument("ref", metavar="NAME[@REV]", help="the set, at its latest revision or at REV")
+    sw.add_argument("--json", action="store_true", help="the set and the revision as one JSON document")
+    sr = ss.add_parser("rename", help="another name for a task set: its id and revisions kept",
+                       epilog=SET_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sr.add_argument("benchmark", metavar="BENCH")
+    sr.add_argument("name", metavar="NAME")
+    sr.add_argument("new", metavar="NEW", help="letters, digits, '.', '_' and '-'; unique among the benchmark's sets")
+    sd = ss.add_parser("delete", help="remove a task set from this catalogue: jobs that ran it keep their record",
+                       epilog=SET_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sd.add_argument("benchmark", metavar="BENCH")
+    sd.add_argument("name", metavar="NAME")
+    si = ss.add_parser("import", help="a task set from its file, or from a job that ran one, into this catalogue",
+                       epilog=SET_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    si.add_argument("path", metavar="PATH", help="an entry's .json file, or a job's directory")
+    un = sub.add_parser("units", help="a dataset's tasks: their ids, titles and categories, searched and counted",
+                        epilog=UNITS_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    un.add_argument("benchmark", metavar="BENCH")
+    un.add_argument("--dataset", required=True, help="the dataset whose tasks are listed")
+    un.add_argument("--bench-option", action="append", metavar="NAME=VALUE",
+                    help="a benchmark option the driver lists under (repeatable); the others at their defaults")
+    un.add_argument("--search", metavar="TEXT", help="the tasks whose id, title or text hold each word, whatever the case")
+    un.add_argument("--category", action="append", metavar="FIELD=VALUE",
+                    help="the tasks of this category's value (repeatable: values of one field widen, fields narrow)")
+    un.add_argument("--json", action="store_true",
+                    help="one JSON document: total, of, described, tasks and each category's values with their counts")
     rr = sub.add_parser("rerun", help="run chosen tasks of an ended job again in that job, each earlier try kept",
                         formatter_class=argparse.RawDescriptionHelpFormatter, epilog=RERUN_EPILOG)
     rr.add_argument("job", metavar="JOB_DIR", help="a job of the standard that has ended")
@@ -853,7 +1143,7 @@ def main(argv=None):
                    help="started by Nullius: the key is OPENAI_API_KEY (and OPENAI_BASE_URL), saved settings are not read")
     # Bootstrap decides whether settings may be read before these modules are
     # imported. Keep --from-run exact here too, so --from-r cannot bypass it.
-    for parser in (ap, *sub.choices.values()):
+    for parser in (ap, *sub.choices.values(), *ss.choices.values()):
         parser.allow_abbrev = False
     a = ap.parse_args(argv)
     if a.cmd in ("run", "prove", "conform", "fidelity", "rerun"):
@@ -862,7 +1152,8 @@ def main(argv=None):
     if not getattr(a, "from_run", False):
         settings.load(ENV_FILE)
     return {"list": cmd_list, "check": cmd_check, "fit": cmd_fit, "pins": cmd_pins, "new": cmd_new, "conform": cmd_conform, "run": cmd_run,
-            "fidelity": cmd_fidelity, "prove": cmd_prove, "merge": cmd_merge, "rerun": cmd_rerun, "traces": cmd_traces}[a.cmd](a)
+            "fidelity": cmd_fidelity, "prove": cmd_prove, "merge": cmd_merge, "rerun": cmd_rerun, "traces": cmd_traces,
+            "set": cmd_set, "units": cmd_units}[a.cmd](a)
 
 
 if __name__ == "__main__":

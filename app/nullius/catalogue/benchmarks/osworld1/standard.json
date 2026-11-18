@@ -27,7 +27,15 @@
       "locked": true
     },
     "participant": true,
-    "unit_end": true
+    "unit_end": true,
+    "describe": true,
+    "list_command": [
+      "python3",
+      "{here}/driver.py",
+      "{here}/agents.json",
+      "{here}/nop.py",
+      "{here}/runner.py"
+    ]
   },
   "mcp_servers": {
     "computer": {

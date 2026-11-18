@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from nullius import migrate, paths, settings
+from nullius.standard import sets
 
 
 class Migration(unittest.TestCase):
@@ -79,6 +80,25 @@ class Migration(unittest.TestCase):
         self.assertTrue(Path(paths.workspaces_dir(), "one/judgements/one.json").is_file())
         self.assertEqual(settings.in_file(paths.settings_file())["RUNS_DIR"], str(self.checkout / "runs"))
         self.assertTrue((workspace / "workspace.json").exists())
+
+    def test_task_sets_and_their_revisions_survive_migration(self):
+        source = self.checkout / "app/nullius/catalogue"
+        bench = {"key": "fakebench", "datasets": [{"id": "all"}]}
+        sets.create(bench, "dev", dataset="all", units=["good"], root=str(source))
+        entry, _ = sets.update("fakebench", "dev", add=["model"], note="one more", root=str(source))
+        original = Path(sets.path_of("fakebench", "dev", str(source))).read_bytes()
+        code, output = self.run_cli()
+        self.assertEqual(code, 0, output)
+        self.assertIn("catalogue_entries: 1", output)
+        self.assertFalse(self.profile.exists())
+        self.assertEqual(self.run_cli("--apply")[0], 0)
+        self.assertEqual(sets.load("fakebench", "dev"), entry)
+        dest = Path(sets.path_of("fakebench", "dev"))
+        self.assertEqual(dest.read_bytes(), original)
+        before = dest.stat().st_mtime_ns
+        self.assertIn("files_to_write: 0", self.run_cli("--apply")[1])
+        self.assertEqual(dest.stat().st_mtime_ns, before)
+        self.assertEqual(Path(sets.path_of("fakebench", "dev", str(source))).read_bytes(), original)
 
     def test_licences_are_opt_in_and_copied_privately(self):
         secret = self.root / "legacy-secrets/bench"
