@@ -10,7 +10,11 @@ its date, a note, the unit ids and a content hash over the benchmark, the
 dataset and the sorted ids. Two runs ran the same set when their jobs name the
 same id; the revision and the hash say which membership. Two entries with
 equal lists stay two sets. An entry holding any other field is refused where
-it is read.
+it is read; one of the earlier format, which kept a run's options, is refused
+as such (``Earlier``), and ``plain`` says it on a page without its path.
+``rename`` gives a set another name, its id and revisions kept, so a job that
+ran it finds it by its id (``by_id``); ``delete`` removes its file, and a job
+that ran it keeps its record.
 
 Only a change of membership adds a revision; the earlier ones stay in the
 file, and ``NAME@REV`` names one. ``record`` is what a job's ``config.json``
@@ -49,6 +53,8 @@ GROUPS = {
     "infra": set(classify.INFRA_OUTCOMES),
 }
 HEADER = ("id", "name", "description", "benchmark", "dataset")
+# what an entry of the earlier format held beside its header: a run's options, bound to the set
+EARLIER = ("benchmark_version", "benchmark_options", "setup")
 REVISION = ("revision", "date", "note", "units", "hash")
 RECORD = ("id", "name", "revision", "hash", "units")
 
@@ -59,6 +65,10 @@ class Refused(Exception):
 
 class NotFound(Refused):
     """No such set, revision, file or job."""
+
+
+class Earlier(Refused):
+    """An entry of the earlier format, which kept a run's options: refused where it is read."""
 
 
 def root_dir(root: Optional[str] = None) -> str:
@@ -139,6 +149,9 @@ def check(entry: dict, where: str) -> dict:
     if not isinstance(entry, dict) or entry.get("schema") != SCHEMA:
         raise Refused(f"{where}: not a task set (schema {SCHEMA})")
     other = sorted(set(entry) - {"schema", *HEADER, "revisions"})
+    if other and set(other) & set(EARLIER):
+        raise Earlier(f"{where}: holds {', '.join(other)}, which a task set does not hold: an entry of the earlier "
+                      "format, which kept a run's options. Delete it and make it again")
     if other:
         raise Refused(f"{where}: holds {', '.join(other)}, which a task set does not hold: a set is its dataset, "
                       "its ids and its revisions, and a run gives its own options")
@@ -241,6 +254,33 @@ def rows(benchmark: str, root: Optional[str] = None) -> List[dict]:
     return out
 
 
+def by_id(benchmark: str, set_id: str, name: str = "", root: Optional[str] = None) -> Optional[dict]:
+    """The readable entry of ``benchmark`` holding the id ``set_id``, whatever its name now; None when there is none.
+    ``name``, the name it was known by, is read first."""
+    if not set_id:
+        return None
+    if name:
+        try:
+            entry = load(benchmark, name, root)
+        except Refused:
+            entry = None
+        if entry is not None and entry["id"] == set_id:
+            return entry
+    try:
+        return next((e for e in entries(benchmark, root)[0] if e["id"] == set_id), None)
+    except Refused:
+        return None
+
+
+def plain(e: Refused, benchmark: str, name: str) -> str:
+    """Why the set ``name`` could not be read, in a line for a page: no file's path."""
+    if isinstance(e, Earlier):
+        return f"The task set {name} is of an earlier format, which kept a run's options: delete it and make it again."
+    if isinstance(e, NotFound):
+        return f"There is no task set {name}."
+    return f"The task set {name} cannot be read: nullius standard set show {benchmark} {name} says why."
+
+
 def write(entry: dict, root: Optional[str] = None) -> str:
     """The entry written whole, in place of the old file at once."""
     path = path_of(entry["benchmark"], entry["name"], root)
@@ -312,6 +352,43 @@ def update(benchmark: str, name: str, *, add: Optional[List[str]] = None, remove
                                "hash": _hash_of(entry, new)})
     write(entry, root)
     return entry, True
+
+
+def _file_of(benchmark: str, name: str, root: Optional[str]) -> str:
+    """The entry's file as named in its folder (a link stays a link), refused when it leads out of the folder."""
+    path_of(benchmark, name, root)
+    path = os.path.join(_folder(benchmark, root), name + ".json")
+    if not os.path.isfile(path):
+        raise NotFound(f"no task set {name!r} of {benchmark} (in {os.path.dirname(path)})")
+    return path
+
+
+def rename(benchmark: str, name: str, new: str, root: Optional[str] = None) -> dict:
+    """The entry under the name ``new``, its id, description and revisions kept: written under the new name, then
+    the old file removed. Refused: a name taken or not allowed, and an entry that cannot be read."""
+    old = _file_of(benchmark, name, root)
+    entry = load(benchmark, name, root)
+    target = path_of(benchmark, check_name(new), root)
+    if new == name or os.path.lexists(target) or os.path.lexists(os.path.join(_folder(benchmark, root), new + ".json")):
+        raise Refused(f"a task set {new!r} of {benchmark} exists already ({target})")
+    entry = dict(entry, name=new)
+    write(entry, root)
+    os.unlink(old)
+    return entry
+
+
+def delete(benchmark: str, name: str, root: Optional[str] = None) -> Optional[dict]:
+    """Remove the entry's file: the entry as it was, or None when it could not be read (an earlier format, a file
+    changed by hand). A job that ran it keeps its record."""
+    path = _file_of(benchmark, name, root)
+    try:
+        entry = load(benchmark, name, root)
+    except NotFound:
+        raise
+    except Refused:
+        entry = None
+    os.unlink(path)
+    return entry
 
 
 def _job_config(job_dir: str) -> dict:

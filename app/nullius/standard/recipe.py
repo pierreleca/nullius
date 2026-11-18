@@ -347,10 +347,18 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
             continue
         try:
             set_name, rev = sets.split_ref(ref)
+        except sets.Refused as e:
+            add("dataset", f"Task set {ref}: {e}.")
+            continue
+        try:
             if not os.path.isfile(sets.path_of(b["key"], set_name)):
                 add("dataset", f"{b['label']} has no task set {set_name}: choose another, or all of {ds_id}'s tasks.")
                 continue
             entry = sets.load(b["key"], set_name)
+        except sets.Refused as e:
+            add("dataset", sets.plain(e, b["key"], set_name))
+            continue
+        try:
             got = sets.revision(entry, rev)
         except sets.Refused as e:
             add("dataset", f"Task set {ref}: {e}.")

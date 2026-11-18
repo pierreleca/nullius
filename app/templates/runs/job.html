@@ -13,7 +13,7 @@
     {% if job.agent_label %}<span>{{ job.agent_label }}{% if job.agent_version %} <span class="mono faint" title="Resolved agent version, recorded in the trial's agent_info">v{{ job.agent_version }}</span>{% endif %}</span>{% endif %}
     <span class="mono">{{ job.model_name }}</span>
     <span title="{{ job.dataset }}">{{ job.dataset|dsname }}</span>
-    {% if job.task_set %}<span class="run-set" title="The task set this run ran: {{ job.task_set.units }} {{ 'task' if job.task_set.units == 1 else 'tasks' }}">task set {% if set_link %}<a href="{{ set_link }}">{{ job.task_set.name }}</a>{% else %}<b>{{ job.task_set.name }}</b>{% endif %}{% if job.task_set.revision %}, revision {{ job.task_set.revision }}{% endif %}</span>{% endif %}
+    {% if job.task_set %}<span class="run-set" title="The task set this run ran: {{ job.task_set.units }} {{ 'task' if job.task_set.units == 1 else 'tasks' }}">task set {% if set_link.link %}<a href="{{ set_link.link }}">{{ set_link.name }}</a>{% else %}<b>{{ set_link.name }}</b>{% endif %}{% if job.task_set.revision %}, revision {{ job.task_set.revision }}{% endif %}</span>{% endif %}
     {% if control %}<span class="chip-control" title="Harbor control: never calls a model">control</span>
     <span class="control-verdict {{ control.state }}" id="control-verdict" data-state="{{ control.state }}"
       title="{{ control.control }} must be {{ control.expected }} on every task; this is a check on the tasks, not a score">{{ control.label }}</span>{% endif %}

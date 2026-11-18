@@ -12,7 +12,7 @@
     PYTHONPATH=app python3 -m nullius.standard.cli prove BENCHMARK[@VERSION] [--dataset D] [--limit N]
     PYTHONPATH=app python3 -m nullius.standard.cli run ... --shard I/N [--launch ID]
     PYTHONPATH=app python3 -m nullius.standard.cli merge JOB_DIR... -o OUT [--force]
-    PYTHONPATH=app python3 -m nullius.standard.cli set create|update|list|show|import ...
+    PYTHONPATH=app python3 -m nullius.standard.cli set create|update|list|show|rename|delete|import ...
     PYTHONPATH=app python3 -m nullius.standard.cli run ... --set NAME[@REV]
     PYTHONPATH=app python3 -m nullius.standard.cli units BENCHMARK --dataset D [--search TEXT] [--category FIELD=VALUE ...] [--json]
     PYTHONPATH=app python3 -m nullius.standard.cli fidelity AGENT --model M [--provider P] [--option NAME=VALUE ...] [--passes N] --unsandboxed
@@ -644,12 +644,15 @@ examples:
   nullius standard set create osworld1 chrome-tabs --dataset test_nogdrive --search tab --category domain=chrome
   nullius standard set update humaneval misses --remove HumanEval/12 --note "solved upstream"
   nullius standard set show humaneval misses@1 --json
+  nullius standard set rename humaneval misses misses-june
+  nullius standard set delete humaneval misses-june
   nullius standard run humaneval reference --model M --set misses@2 --unsandboxed
 
 exit codes:
   0  done; an update that changes nothing adds no revision
   1  unexpected error (a traceback: report it)
-  2  usage, or refused: a name taken or not allowed, a list the set cannot hold, an import that conflicts
+  2  usage, or refused: a name taken or not allowed, a list the set cannot hold, an import that conflicts,
+     an entry of the earlier format
   3  not found: no such benchmark, set, revision, file or job
 """
 
@@ -756,6 +759,26 @@ def cmd_set_show(a):
     return 0
 
 
+def cmd_set_rename(a):
+    entry = sets.rename(a.benchmark, a.name, a.new)
+    n = len(entry["revisions"])
+    print(f"renamed {a.name} to {entry['name']} ({sets.path_of(entry['benchmark'], entry['name'])}): its id and "
+          f"{n} revision{'s' if n != 1 else ''} kept; jobs that ran it find it by its id")
+    return 0
+
+
+def cmd_set_delete(a):
+    path = sets.path_of(a.benchmark, a.name)
+    entry = sets.delete(a.benchmark, a.name)
+    if entry is None:
+        print(f"deleted {path}: an entry this version could not read")
+        return 0
+    n, last = len(entry["revisions"]), sets.revision(entry)
+    print(f"deleted {path}: {entry['name']}, {len(last['units'])} units, {n} revision{'s' if n != 1 else ''}; "
+          "jobs that ran it keep their record")
+    return 0
+
+
 def cmd_set_import(a):
     entry, added = sets.import_path(a.path)
     if added:
@@ -769,7 +792,7 @@ def cmd_set_import(a):
 def cmd_set(a):
     try:
         return {"create": cmd_set_create, "update": cmd_set_update, "list": cmd_set_list, "show": cmd_set_show,
-                "import": cmd_set_import}[a.set_cmd](a)
+                "rename": cmd_set_rename, "delete": cmd_set_delete, "import": cmd_set_import}[a.set_cmd](a)
     except (sets.Refused, unit_list.Refused) as e:
         return _refused(e)
 
@@ -1015,6 +1038,15 @@ def main(argv=None):
     sw.add_argument("benchmark", metavar="BENCH")
     sw.add_argument("ref", metavar="NAME[@REV]", help="the set, at its latest revision or at REV")
     sw.add_argument("--json", action="store_true", help="the set and the revision as one JSON document")
+    sr = ss.add_parser("rename", help="another name for a task set: its id and revisions kept",
+                       epilog=SET_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sr.add_argument("benchmark", metavar="BENCH")
+    sr.add_argument("name", metavar="NAME")
+    sr.add_argument("new", metavar="NEW", help="letters, digits, '.', '_' and '-'; unique among the benchmark's sets")
+    sd = ss.add_parser("delete", help="remove a task set from this catalogue: jobs that ran it keep their record",
+                       epilog=SET_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sd.add_argument("benchmark", metavar="BENCH")
+    sd.add_argument("name", metavar="NAME")
     si = ss.add_parser("import", help="a task set from its file, or from a job that ran one, into this catalogue",
                        epilog=SET_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
     si.add_argument("path", metavar="PATH", help="an entry's .json file, or a job's directory")

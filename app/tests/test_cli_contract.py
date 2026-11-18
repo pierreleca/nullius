@@ -302,8 +302,8 @@ class TaskSetCommands(Scratch):
         error or a refusal, 3 for what is not found, and writes nothing."""
         cat = os.path.join(self.tmp, "catalogue")
         env = {"NULLIUS_CATALOGUE": cat, "NULLIUS_HOME": os.path.join(self.tmp, "profile")}
-        for sub in (("set",), ("set", "create"), ("set", "update"), ("set", "list"), ("set", "show"), ("set", "import"),
-                    ("units",)):
+        for sub in (("set",), ("set", "create"), ("set", "update"), ("set", "list"), ("set", "show"), ("set", "rename"),
+                    ("set", "delete"), ("set", "import"), ("units",)):
             with self.subTest(help=sub):
                 out = self.sh("standard.cli", *sub, "--help", env=env)
                 self.assertEqual(out.returncode, 0, out.stderr)
@@ -318,6 +318,9 @@ class TaskSetCommands(Scratch):
             (["set", "create", "no-such-bench", "ok", "--dataset", "x", "--units", listed], 3, "no benchmark"),
             (["set", "show", "humaneval", "nowhere"], 3, "no task set 'nowhere'"),
             (["set", "update", "humaneval", "nowhere", "--add", "HumanEval/2"], 3, "no task set 'nowhere'"),
+            (["set", "rename", "humaneval", "nowhere", "elsewhere"], 3, "no task set 'nowhere'"),
+            (["set", "rename", "humaneval", "nowhere"], 2, "usage:"),
+            (["set", "delete", "humaneval", "nowhere"], 3, "no task set 'nowhere'"),
             (["set", "import", os.path.join(self.tmp, "absent.json")], 3, "no such file or job"),
             (["set", "create", "humaneval", "ok", "--dataset", "humaneval", "--units", listed, "--bench-option", "a=b"], 2,
              "unrecognized arguments: --bench-option"),

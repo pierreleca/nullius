@@ -552,20 +552,22 @@ def job(job_id):
                            trial_rows=attempts.grouped(j), pass_k=attempts.for_job(j))
 
 
-def _set_link(j) -> str:
-    """The page of the task set a job ran, at the revision it ran; "" when the catalogue here has no set of that
-    name and id, or not that revision."""
+def _set_link(j) -> dict:
+    """The task set a job ran as its page names it: {name, link}. Found by its id, under the name it has now (a set
+    renamed since), its link the page of the revision the job ran; when the catalogue here holds no set of that id,
+    or not that revision, the name the job recorded and no link."""
     ts = j.task_set
-    if not ts or not ts.get("benchmark"):
-        return ""
+    if not ts:
+        return {}
+    entry = task_sets.by_id(ts["benchmark"], ts.get("id"), ts["name"]) if ts.get("benchmark") else None
+    if entry is None:
+        return {"name": ts["name"], "link": ""}
     try:
-        entry = task_sets.load(ts["benchmark"], ts["name"])
         task_sets.revision(entry, ts.get("revision"))
     except task_sets.Refused:
-        return ""
-    if entry["id"] != ts.get("id"):
-        return ""
-    return url_for("benchmark_tasks", key=ts["benchmark"], dataset=entry["dataset"], set=ts["name"], rev=ts.get("revision"))
+        return {"name": entry["name"], "link": ""}
+    return {"name": entry["name"], "link": url_for("benchmark_tasks", key=ts["benchmark"], dataset=entry["dataset"],
+                                                   set=entry["name"], rev=ts.get("revision"))}
 
 
 def _set_saving(j) -> bool:

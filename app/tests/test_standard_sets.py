@@ -227,6 +227,80 @@ class Names(Scratch):
         self.assertEqual(sets.load("fakebench", "dev"), first)
 
 
+class RenameAndDelete(Scratch):
+    def test_a_rename_keeps_the_id_and_the_revisions_and_the_id_finds_it(self):
+        first = self.make("dev", "good\nmodel\n", "--description", "two of them")
+        self.cli("set", "update", "fakebench", "dev", "--add", "slow")
+        code, out, err = self.cli("set", "rename", "fakebench", "dev", "misses")
+        self.assertEqual((code, err), (0, ""))
+        self.assertTrue(out.startswith("renamed dev to misses ("), out)
+        self.assertIn("its id and 2 revisions kept", out)
+        got = sets.load("fakebench", "misses")
+        self.assertEqual((got["id"], got["description"], [r["revision"] for r in got["revisions"]]),
+                         (first["id"], "two of them", [1, 2]))
+        self.assertEqual(sorted(os.listdir(os.path.join(self.cat, "sets", "fakebench"))), ["misses.json"])
+        self.assertEqual(sets.by_id("fakebench", first["id"], "dev")["name"], "misses")
+        # another set made under the old name is another set: the id still finds the renamed one
+        self.make("dev", "good\n")
+        self.assertEqual(sets.by_id("fakebench", first["id"], "dev")["name"], "misses")
+        self.assertIsNone(sets.by_id("fakebench", "0" * 32, "dev"))
+
+    def test_a_name_taken_empty_or_with_a_slash_and_a_set_not_there_are_refused(self):
+        dev = self.make("dev", "good\n")
+        other = self.make("other", "model\n")
+        for new, code, said in (("other", 2, "exists already"), ("dev", 2, "exists already"), ("", 2, "not a task set's name"),
+                                ("a/b", 2, "not a task set's name"), ("..", 2, "not a task set's name")):
+            with self.subTest(new=new):
+                got = self.cli("set", "rename", "fakebench", "dev", new)
+                self.assertEqual(got[:2], (code, ""))
+                self.assertIn(said, got[2])
+        got = self.cli("set", "rename", "fakebench", "nowhere", "x")
+        self.assertEqual(got[:2], (3, ""))
+        self.assertIn("no task set 'nowhere'", got[2])
+        self.assertEqual((sets.load("fakebench", "dev"), sets.load("fakebench", "other")), (dev, other))
+        self.assertEqual(sorted(os.listdir(os.path.join(self.cat, "sets", "fakebench"))), ["dev.json", "other.json"])
+
+    def test_a_delete_removes_the_file_and_says_what_it_held(self):
+        self.make("dev", "good\nmodel\n")
+        self.cli("set", "update", "fakebench", "dev", "--add", "slow")
+        path = sets.path_of("fakebench", "dev")
+        code, out, err = self.cli("set", "delete", "fakebench", "dev")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(out.strip(), f"deleted {path}: dev, 3 units, 2 revisions; jobs that ran it keep their record")
+        self.assertFalse(os.path.exists(path))
+        code, out, err = self.cli("set", "delete", "fakebench", "dev")
+        self.assertEqual((code, out), (3, ""))
+        self.assertIn("no task set 'dev'", err)
+
+    def test_a_delete_of_a_link_removes_the_link_and_not_the_set_it_leads_to(self):
+        self.make("dev", "good\n")
+        folder = os.path.join(self.cat, "sets", "fakebench")
+        os.symlink(os.path.join(folder, "dev.json"), os.path.join(folder, "alias.json"))
+        code, out, err = self.cli("set", "delete", "fakebench", "alias")
+        self.assertEqual(code, 0, err)
+        self.assertIn("could not read", out)
+        self.assertEqual(sorted(os.listdir(folder)), ["dev.json"])
+        self.assertEqual(sets.revision(sets.load("fakebench", "dev"))["units"], ["good"])
+
+    def test_an_entry_of_the_earlier_format_is_refused_plainly_and_can_be_deleted(self):
+        entry = self.make("old", "good\n")
+        path = sets.path_of("fakebench", "old")
+        with open(path, "w") as f:
+            json.dump(dict(entry, schema=sets.SCHEMA, benchmark_options={"mode": "hard"}, setup="yours"), f)
+        with self.assertRaises(sets.Earlier) as refused:
+            sets.load("fakebench", "old")
+        self.assertIn(path, str(refused.exception))
+        said = sets.plain(refused.exception, "fakebench", "old")
+        self.assertEqual(said, "The task set old is of an earlier format, which kept a run's options: delete it and make it again.")
+        self.assertNotIn(self.tmp, said)
+        code, out, err = self.cli("set", "rename", "fakebench", "old", "new")
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("earlier format", err)
+        code, out, err = self.cli("set", "delete", "fakebench", "old")
+        self.assertEqual((code, out.strip(), err), (0, f"deleted {path}: an entry this version could not read", ""))
+        self.assertFalse(os.path.exists(path))
+
+
 class FromAJob(Scratch):
     def job(self, name="graded"):
         """A job as a run writes it: good passed, wrong failed, slow rate limited, a unit whose id has a slash passed."""
