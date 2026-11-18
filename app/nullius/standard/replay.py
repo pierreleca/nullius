@@ -429,9 +429,10 @@ def provider(name: str) -> Change:
 
 def _child_env(env, drop=()) -> dict:
     """The environment a user's command runs in: this one less every provider key and every value ``drop`` holds."""
-    keys = {providers.key_setting(p) for p in providers.PROVIDERS} | {"OPENAI_API_KEY", "ANTHROPIC_AUTH_TOKEN"}
-    secret = {d for d in drop if d}
-    return {k: v for k, v in (env if env is not None else os.environ).items()
+    env = env if env is not None else os.environ
+    keys = {providers.key_setting(p) for p in providers.PROVIDERS} | {"ANTHROPIC_AUTH_TOKEN", "API_KEY_TYPESAFE"}
+    secret = {d for d in drop if d} | {v for k, v in env.items() if v and (k in keys or k.endswith("_API_KEY"))}
+    return {k: v for k, v in env.items()
             if k not in keys and not k.endswith("_API_KEY") and v not in secret}
 
 

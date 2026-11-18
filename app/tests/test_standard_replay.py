@@ -194,6 +194,21 @@ class Rebuilt(ReplayCase):
 
 
 class Changes(ReplayCase):
+    def test_commands_receive_neither_key_names_nor_value_aliases(self):
+        env = dict(self.env, API_TOKEN=KEY, API_KEY_TYPESAFE=KEY, PUBLIC_VALUE="kept")
+        script = Path(self.tmp, "environment.py")
+        script.write_text("import json, os, sys\njson.load(sys.stdin)\njson.dump(dict(os.environ), sys.stdout)\n")
+        command = f"{sys.executable} {script}"
+        for supplied in (env, None):
+            with self.subTest(supplied=supplied is not None), mock.patch.dict(os.environ, env, clear=True):
+                changed = replay.through(command, env=supplied).apply({})
+                read = json.loads(replay.command_rule(command, env=supplied)({"status": 200}))
+                for got in (changed, read):
+                    self.assertNotIn(KEY, got.values())
+                    self.assertNotIn("OPENROUTER_API_KEY", got)
+                    self.assertNotIn("API_KEY_TYPESAFE", got)
+                    self.assertEqual(got["PUBLIC_VALUE"], "kept")
+
     def assertChain(self, prep, names):
         self.assertEqual([c["name"] for c in prep.changes], names)
         self.assertEqual(prep.changes[0]["sha256_before"], prep.source.sent_sha256)
