@@ -41,6 +41,12 @@ def _try_mark(t, job) -> str:
     return "first run, in a later part" if later else "run again by hand"
 
 
+@app.template_filter("n_tasks")
+def _n_tasks(trials) -> int:
+    """How many tasks a standard job's trial names hold: a task's attempts (``<unit>__uNNNNrK``) count once."""
+    return len({re.sub(r"(__u\d+)r\d+$", r"\1", t) for t in trials})
+
+
 @app.template_filter("hitrate")
 def _hitrate(value):
     """Cache hit share. One decimal — two when rounding would claim 100%.

@@ -574,7 +574,7 @@
         <ul class="rerun-rows">{% for x in r.replaced %}<li><span class="mono">{{ x.unit or x.trial }}</span>{% for k, v in x.was.items() %} <span class="faint">{{ k }}</span> {{ v }}{% endfor %}{% if x.trial in (r.no_result or []) %} <span class="faint">no result</span>{% endif %} → {% for k, v in x.now.items() %}<span class="faint">{{ k }}</span> {{ v }} {% endfor %}<span class="faint">try {{ x.try }}</span></li>{% endfor %}
           {%- for x in r.begun or [] %}<li><span class="mono">{{ x.unit or x.trial }}</span> <span class="faint">first run</span> → {% for k, v in x.now.items() %}<span class="faint">{{ k }}</span> {{ v }} {% endfor %}</li>{% endfor %}
           {%- set left = r.trials|reject('in', r.replaced|map(attribute='trial')|list + (r.begun or [])|map(attribute='trial')|list)|list %}{% if left %}<li class="faint">{{ left|length }} not replaced: {{ left|join(', ') }}</li>{% endif %}</ul>
-        <span class="faint">{{ r.trials|length }} task{{ '' if r.trials|length == 1 else 's' }}{% if r.spent_usd is not none %} · {{ r.spent_usd|usd }} spent{% endif %}{% if r.max_usd %} of a {{ r.max_usd|cap }} cap{% endif %}</span></dd>
+        {% set n = r.trials|n_tasks %}<span class="faint">{{ n }} task{{ '' if n == 1 else 's' }}{% if r.spent_usd is not none %} · {{ r.spent_usd|usd }} spent{% endif %}{% if r.max_usd %} of a {{ r.max_usd|cap }} cap{% endif %}</span></dd>
       {% endfor %}
     </dl>
   </details>

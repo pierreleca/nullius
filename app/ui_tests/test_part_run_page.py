@@ -233,6 +233,18 @@ new Function('$', '$$', 'rows', 'document', 'nulliusFetch', 'URL', 'location',
         earlier = self.page(f"/trial/r1/{name}.try-1")
         self.assertEqual(text(earlier, r'<p class="try-why".*?</p>'), "First run, in a later part: the rest of the plan")
 
+    def test_run_later_counts_the_tasks_of_a_part_not_their_attempts(self):
+        d = self.run_of()
+        top = json.loads((d / "result.json").read_text())
+        top["reruns"] = [{"at": "2026-11-18T15:40:12+00:00", "finished_at": "2026-11-18T15:42:00+00:00", "reason": "the rest of the plan",
+                          "trials": [f"t-{k}__u{k:04d}r{a}" for k in (3, 4) for a in (1, 2)], "replaced": [],
+                          "begun": [{"trial": f"t-{k}__u{k:04d}r{a}", "unit": f"t-{k}", "now": {"reward": 1.0}} for k in (3, 4) for a in (1, 2)],
+                          "max_usd": None, "spent_usd": 0.0012}]
+        (d / "result.json").write_text(json.dumps(top))
+        self.open(d.parent)
+        html = self.page("/job/r1?view=results")
+        self.assertTrue(text(html, r'<details id="reruns" open>.*?</details>').endswith("2 tasks · $0.0012 spent"))
+
     def test_a_job_run_whole_shows_none_of_it(self):
         d = self.run_of()
         self.open(d.parent)
