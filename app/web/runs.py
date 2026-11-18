@@ -552,7 +552,7 @@ def job(job_id):
                            judgement=judge.job_summary(j) if j.trials else None,
                            control=feasibility.summary_of(j), ended=execution.ended_for(job_id), own=own, deletable=_deletable(job_id, ex),
                            trial_rows=attempts.grouped(j), pass_k=attempts.for_job(j),
-                           again=execute.again_offer(j, ex), running_again=running_again)
+                           again=execute.again_offer(j, ex), running_again=running_again, rerunning=again is not None)
 
 
 def _until_again(j, names):

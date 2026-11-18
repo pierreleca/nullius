@@ -111,6 +111,18 @@
 </div>
 {% endif %}
 {% endif %}
+{% if rerunning and live_board and not live_board.running %}
+<script>
+// Tasks of this job are being run again, and its feed has not begun again yet: ask for it every two seconds, and
+// open the page again on its default view once the board runs (or nothing will: the run ended).
+(() => {
+  const url = {{ url_for('job_live', job_id=job.job_id)|tojson }};
+  const tick = async () => { if (document.hidden) return; try { const r = await nulliusFetch(url, {cache: 'no-store'});
+    const j = r.ok ? await r.json() : {}; if (['starting', 'running'].includes(j.state)) { const u = new URL(location.href); u.searchParams.delete('view'); location.assign(u); } } catch {} };
+  setInterval(tick, 2000);
+})();
+</script>
+{% endif %}
 {% if job.is_preparing and not live_board and not ended %}
 <script>
 // Ask for the feed every second while preparing. Reload when it appears or
@@ -488,7 +500,7 @@
     <label>Reason <span class="faint">(optional)</span><input type="text" name="reason" maxlength="200" autocomplete="off"></label>
     <label>Spending cap, USD <span class="faint">(optional)</span><input type="number" name="max_usd" min="0" step="any" inputmode="decimal"{% if job.budget and job.budget.max_usd %} value="{{ job.budget.max_usd }}"{% endif %}></label>
     <p class="small bad" data-error hidden></p>
-    <div class="rerun-acts"><button type="submit" value="cancel" class="btn ghost" formnovalidate>Cancel</button><button type="submit" value="run" class="btn" data-go>Run <span data-n>0 tasks</span> again</button></div>
+    <div class="rerun-acts"><button type="submit" value="cancel" class="btn ghost" formnovalidate>Cancel</button><button type="submit" value="run" class="btn" data-go>Run 0 tasks again</button></div>
   </form>
 </dialog>
 {% endif %}

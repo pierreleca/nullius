@@ -164,6 +164,7 @@
     go.addEventListener('click', () => {
       const picked = chosen();
       $$('[data-n]', ask).forEach(s => { s.textContent = tasks(picked.length); });
+      $('[data-go]', ask).textContent = 'Run ' + tasks(picked.length) + ' again';
       $('[data-names]', ask).replaceChildren(...picked.map(x => { const li = document.createElement('li'); li.textContent = x.getAttribute('aria-label').replace(/^Choose /, ''); return li; }));
       err.hidden = true; $('[data-go]', ask).disabled = false; ask.showModal();
     });
@@ -175,7 +176,7 @@
         const r = await nulliusFetch(ask.dataset.post, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': ask.dataset.csrf },
           body: JSON.stringify({ trials: chosen().map(x => x.value), reason: form.elements.reason.value, max_usd: form.elements.max_usd.value }) });
         const j = await r.json().catch(() => ({}));
-        if (r.ok && j.ok) { location.reload(); return; }
+        if (r.ok && j.ok) { const u = new URL(location.href); u.searchParams.delete('view'); location.assign(u); return; }
         throw new Error(j.error || 'refused: HTTP ' + r.status);
       } catch (x) { err.textContent = String(x.message || x); err.hidden = false; b.disabled = false; }
     });
