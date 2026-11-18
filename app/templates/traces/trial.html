@@ -31,6 +31,7 @@
 <div class="page-title trial-title">
   <h1>{{ trial.task_base }}</h1>
   <span class="tag oc-{{ trial.outcome }}">{{ trial.outcome_label }}</span>
+  {% if trial.ended_by %}<span class="faint ended-by" title="What ended the agent's work">{{ trial.ended_label }}</span>{% endif %}
   {# The recorded exception type, beside the label that came from it. For an
      Unknown it says which class the classifier has no side for, so a reader
      can place it (classify._AGENT_EXCEPTIONS / _INFRA_EXCEPTIONS) instead of

@@ -633,10 +633,16 @@ class Texts(unittest.TestCase):
         self.assertIn("OSWorld's own agents", summary)
         self.assertIn("computer port", summary)
         with open(os.path.join(ENTRY, "benchmark.json")) as f:
-            limits = json.load(f)["limitations"]
+            entry = json.load(f)
+        limits = entry["limitations"]
         line = next(x for x in limits if x.startswith("A task run by one of OSWorld's own agents"))
-        self.assertIn("the task's setup may take 1 hour, the agent's turn 2 hours and the scoring 10 minutes", line)
+        self.assertIn("the task's setup may take 1 hour and the scoring 10 minutes; past either the task gets no score", line)
         self.assertNotIn("A task still running after 2 hours is stopped and gets no score.", limits)
+        # an agent's turn past its 2 hours is cut and scored, as the definition declares (limits.scored_cuts)
+        cut = next(x for x in entry["good_to_know"] if x.startswith("A task an agent's time"))
+        self.assertIn("(2 hours)", cut)
+        with open(os.path.join(ENTRY, "standard.json")) as f:
+            self.assertEqual(json.load(f)["limits"]["scored_cuts"], ["time", "calls", "end"])
         page = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(ENTRY))), "..", "..", "docs", "benchmarks",
                             "supported", "osworld1.md")
         if os.path.exists(page):
