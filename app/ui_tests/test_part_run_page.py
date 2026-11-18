@@ -245,6 +245,23 @@ new Function('$', '$$', 'rows', 'document', 'nulliusFetch', 'URL', 'location',
         html = self.page("/job/r1?view=results")
         self.assertTrue(text(html, r'<details id="reruns" open>.*?</details>').endswith("2 tasks · $0.0012 spent"))
 
+    def test_the_duration_adds_each_later_part_s_time_to_the_first_s(self):
+        d = self.run_of()                                                        # its first run: one minute
+        top = json.loads((d / "result.json").read_text())
+        top["reruns"] = [{"at": "2026-11-18T15:40:00+00:00", "finished_at": "2026-11-18T15:46:00+00:00", "trials": ["t-3__u0003"],
+                          "replaced": [], "begun": [{"trial": "t-3__u0003", "unit": "t-3", "now": {"reward": 1.0}}]},
+                         {"at": "2026-11-18T16:00:00+00:00", "finished_at": "2026-11-18T16:02:00+00:00", "trials": ["t-0__u0000"],
+                          "replaced": [{"trial": "t-0__u0000", "unit": "t-0", "try": 1, "was": {}, "now": {}}]}]
+        (d / "result.json").write_text(json.dumps(top))
+        self.open(d.parent)
+        html = self.page("/job/r1?view=results")
+        self.assertEqual(text(html, r'<div class="kv"[^>]*><span class="k">Duration</span>.*?</div>'), "Duration 9m")
+        self.assertIn("<span>9m</span>", html)                                   # the head says the same
+        top["reruns"] = []
+        (d / "result.json").write_text(json.dumps(top))
+        self.open(d.parent)
+        self.assertEqual(text(self.page("/job/r1?view=results"), r'<div class="kv"[^>]*><span class="k">Duration</span>.*?</div>'), "Duration 1m")
+
     def test_a_job_run_whole_shows_none_of_it(self):
         d = self.run_of()
         self.open(d.parent)

@@ -22,7 +22,7 @@
     {% set of_planned = job.n_planned and job.n_planned != job.trials|length and not job.start_with %}<span>{{ job.trials|length }}{% if of_planned %} of {{ job.n_planned }} planned{% endif %} trial{{ '' if (job.n_planned if of_planned else job.trials|length) == 1 else 's' }}</span>
     {% if job.start_with %}<span id="plan-run" title="Planned on the whole and begun on {% if job.start_with.by == 'count' %}its first {{ job.start_with.units }}{% else %}{{ job.start_with.name }}{% endif %}: the rates are over the tasks run">{{ job.n_tasks_run }} of {{ job.n_tasks }} planned tasks run</span>{% endif %}
     {% if job.n_retries %}<span class="warn" title="Trials Harbor restarted after an error">{{ job.n_retries }} retried</span>{% endif %}
-    {% if job.duration_min %}<span>{{ job.duration_min|runtime }}</span>{% endif %}
+    {% if job.duration_min %}<span>{{ job|run_min|runtime }}</span>{% endif %}
   </div>
   {#- what tells this run from another, as its records say it; the agent, its version and the model are the line above, the caps under Run totals -#}
   {%- macro fact_value(v) -%}{% if v is sameas true %}yes{% elif v is sameas false %}no{% elif v is mapping %}{{ v|tojson }}{% elif v is string or v is number %}{{ v }}{% else %}{{ v|join(', ') }}{% endif %}{%- endmacro %}
@@ -384,7 +384,7 @@
     {% if job.mean_score is not none %}<div class="kv" data-tip="{% if job.n_scored_parts %}The mean score over every one of the {{ job.n_scored_parts }} scored, whichever trial it is under{% else %}The mean of each item's graded score (an F1, partial credit){% endif %}{% if not job.scored_only %}; the rates count an item resolved at its benchmark's pass mark{% endif %}"><span class="k">Mean score</span><span class="v">{{ '%.2f'|format(job.mean_score) }}</span></div>{% endif %}
     {% if job.mean_score_planned is not none %}<div class="kv" id="planned-mean-total" data-tip="The mean over all {{ [job.n_planned, job.trials|length]|max }} planned, a trial with no score counting 0"><span class="k">Mean over planned</span><span class="v">{{ '%.2f'|format(job.mean_score_planned) }}</span></div>{% endif %}
     {% for g in job.score_by_group %}<div class="kv by-group" data-tip="The mean score of the {{ g.n }} scored with {{ job.parts_by }} {{ g.group }}"><span class="k">{{ job.parts_by|capitalize }} {{ g.group }}</span><span class="v">{{ '%.2f'|format(g.mean) }} <small class="faint">{{ g.n }}</small></span></div>{% endfor %}
-    {% if job.duration_min %}<div class="kv" data-tip="Start to finish, the whole run"><span class="k">Duration</span><span class="v">{{ job.duration_min|runtime }}</span></div>{% endif %}
+    {% if job.duration_min %}<div class="kv" data-tip="{{ 'Start to finish of each of its runs, added' if job.reruns else 'Start to finish, the whole run' }}"><span class="k">Duration</span><span class="v">{{ job|run_min|runtime }}</span></div>{% endif %}
   </div>
 </section>
 </div>
