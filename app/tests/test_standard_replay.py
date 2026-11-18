@@ -194,6 +194,16 @@ class Rebuilt(ReplayCase):
 
 
 class Changes(ReplayCase):
+    def test_endpoints_with_credentials_are_refused_without_showing_them(self):
+        src = replay.source(self.job, "task-a__u0001", 2)
+        for endpoint in (self.base + "?api_key=" + KEY, "http://user:" + KEY + "@localhost/v1"):
+            with self.subTest(endpoint=endpoint), self.assertRaises(replay.Refused) as caught:
+                replay.prepare(src, endpoint=endpoint, env=self.env)
+            self.assertNotIn(KEY, str(caught.exception))
+            self.assertIn("endpoint", str(caught.exception))
+        self.assertEqual(Upstream.seen, [])
+        self.assertFalse(Path(self.tmp, "out").exists())
+
     def test_commands_receive_neither_key_names_nor_value_aliases(self):
         env = dict(self.env, API_TOKEN=KEY, API_KEY_TYPESAFE=KEY, PUBLIC_VALUE="kept")
         script = Path(self.tmp, "environment.py")

@@ -39,7 +39,7 @@ import urllib.parse
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
-from nullius import prices as price_list, providers
+from nullius import prices as price_list, providers, settings
 from nullius.standard import exchanges, ledger as ledgers, relay
 from nullius.traces import calls as by_call
 
@@ -652,6 +652,9 @@ def prepare(src: Source, changes: List[Change] = (), *, prices: Optional[Dict[st
     base = endpoint or rec["base"]
     if not base:
         raise Refused(f"{rec['name']} has no endpoint set (Settings)")
+    problem = settings.endpoint_url_problem(base)
+    if problem:
+        raise Refused(f"endpoint: {problem}")
     row = (prices or {}).get(name) or src.prices.get(name)
     if not row:
         row = price_list.table().get(name)
