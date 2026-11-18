@@ -266,17 +266,16 @@ new Function('$', '$$', 'rows', 'document', 'nulliusFetch', 'URL', 'location',
             if name == selected:
                 job, snap = parse.parse_job(path), live.snapshot(path)
                 snapshots.append(rerun_page.web.runs._with_part(job, snap))
-                pending = [selected, "wrong__u0001r2"]
-                record = SimpleNamespace(again_of=lambda _: {"trials": pending})
+                record = SimpleNamespace(again_of=lambda _: {"trials": [selected]})
                 with patch.object(rerun_page.web.runs.execution, "for_job", return_value=record):
-                    self.assertEqual(rerun_page.web.runs._with_part(job, snap)["part"], pending)
+                    self.assertEqual(rerun_page.web.runs._with_part(job, snap)["part"], [selected])
 
         with patch.object(run.Run, "phase", observe):
             result = rerun.rerun(path, [selected], root=str(fixture.root), env={}, say=lambda _: None)
         self.assertEqual(result["trials"], [selected])
         self.assertTrue(snapshots)
-        for snapshot in snapshots:
-            self.assertEqual(snapshot["part"], [selected])
+        for snapshot in snapshots:          # no record of the choice: every attempt of the task the start names
+            self.assertEqual(snapshot["part"], [selected, "wrong__u0001r2"])
 
     def test_run_later_counts_the_tasks_of_a_part_not_their_attempts(self):
         d = self.run_of()
