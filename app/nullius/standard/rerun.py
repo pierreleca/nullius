@@ -16,10 +16,10 @@ A task the job planned and has no result for is taken the same way
 A trial never begun runs as its first try. A trial whose run was killed has
 a folder and no ``result.json``: the folder is kept as the try it was, in
 ``retried/``, with ``no-result.json`` in it, and the trial runs again. A
-trial the run's spending cap cut off has a result, the cap's: ``unfinished``
-takes it too, since its run was interrupted, not judged. A job whose feed
-does not say what it planned (a merged job keeps none) has only its trials to
-run again.
+trial the run's spending cap cut off, or a Stop ended, has a result that says
+so: ``unfinished`` takes it too, since its run was interrupted, not judged.
+A job whose feed does not say what it planned (a merged job keeps none) has
+only its trials to run again.
 
 The settings are the job's own, read from its ``config.json`` and never
 given again; the endpoint and the key come from the environment, as for a
@@ -191,9 +191,10 @@ def unfinished(job_dir: str, plan: Optional[List[tuple]] = None) -> Dict[str, di
     return out
 
 
-def cut_off(res: Optional[dict]) -> bool:
-    """Whether a trial's result is a run's spending cap cutting it off: interrupted, not judged."""
-    return ((res or {}).get("exception_info") or {}).get("exception_type") == ledgers.ERROR
+def interrupted(res: Optional[dict]) -> bool:
+    """Whether a trial's result is its run's interruption, not a judgement: the run's spending cap cut it off,
+    or a Stop ended it."""
+    return ((res or {}).get("exception_info") or {}).get("exception_type") in (ledgers.ERROR, run.CANCELLED)
 
 
 def _kept(job_dir: str, name: str) -> int:
@@ -229,7 +230,7 @@ def rerun(job_dir: str, ids: List[str], *, reason: str = "", concurrency: Option
     automatic retries of each re-run try, as a run's; ``max_usd``: the re-run's own spending cap; ``concurrency``:
     the job's unless given. ``root``: a catalogue folder to resolve the definitions in (the user's and the
     bundled ones by default). ``every_unfinished``: in place of ``ids``, each trial the job planned that has no
-    result, or the run's spending cap cut off. Returns the record added to the job's ``reruns``, or
+    result, or whose run its cap or a Stop interrupted (:func:`interrupted`). Returns the record added to the job's ``reruns``, or
     {"job", "trials": []} with nothing written when there is no such trial; ``run.Refused`` before anything
     moves."""
     job_dir = os.path.abspath(job_dir.rstrip("/"))
@@ -252,7 +253,7 @@ def rerun(job_dir: str, ids: List[str], *, reason: str = "", concurrency: Option
         if plan is None:
             raise run.Refused(f"{os.path.basename(job_dir)} does not record the tasks it planned (its live feed names "
                               "none): name its trials with --unit")
-        ids = [n for n, _ in plan if n in empty or cut_off(trials.get(n))]
+        ids = [n for n, _ in plan if n in empty or interrupted(trials.get(n))]
         if not ids:
             say(f"nothing to run: every task {os.path.basename(job_dir)} planned has a result")
             return {"job": job_dir, "trials": []}

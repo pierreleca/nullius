@@ -472,6 +472,19 @@ class FinishTest(unittest.TestCase):
         self.assertEqual([(n, t.trial_name) for n, t in parse.tries(after["good"])], [(1, f"{good}.try-1"), (3, good)])
         self.assertEqual(rerun.unfinished(job_dir), {})
 
+    def test_a_trial_a_stop_ended_is_taken_with_the_tasks_never_begun(self):
+        """A Stop ends the unit under way with a result that says so, and the units after it are never begun: both
+        are what the stop left, and --unfinished takes them; a judged trial is not taken."""
+        job_dir, root = self.capped()
+        name = "t1__u0001"
+        res = self.read(job_dir, name, "result.json")
+        res["exception_info"], res["verifier_result"] = {"exception_type": run.CANCELLED, "exception_message": "stopped"}, None
+        Path(job_dir, name, "result.json").write_text(json.dumps(res))
+        got = rerun.rerun(job_dir, [], every_unfinished=True, env=self.env, say=lambda s: None, root=root)
+        self.assertEqual(got["trials"], ["t1__u0001", "t2__u0002", "t3__u0003", "t4__u0004"])
+        self.assertEqual([(x["trial"], x["was"]) for x in got["replaced"]],
+                         [(name, {"error": run.CANCELLED}), ("t2__u0002", {"error": "SpendingCapError"})])
+
     def test_a_stop_leaves_a_task_never_begun_as_it_was(self):
         job_dir, root = self.capped()
         whole = digest(job_dir)

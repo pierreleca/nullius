@@ -11,7 +11,7 @@ nullius standard rerun JOB_DIR (--unit ID ... | --units FILE | --unfinished) [--
 | --- | --- |
 | `--unit ID` | A trial's name, or a unit's id for each of its attempts; repeatable |
 | `--units FILE` | The ids a file lists, one a line, as [a run's list](run.md#a-list-of-units) |
-| `--unfinished` | Every task the job planned with no result, and every trial the run's spending cap cut off; none: says so, exit 0 |
+| `--unfinished` | Every task the job planned with no result, and every trial the run's spending cap or a Stop interrupted; none: says so, exit 0 |
 | `--reason TEXT` | Why, kept in the job's record |
 | `-j N` | Units at once; the job's by default |
 | `--retries N` | Automatic retries of each try, as [a run's](run.md#retries); 0 by default |
