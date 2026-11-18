@@ -16,6 +16,11 @@ def module(name):
 
 
 class Website(unittest.TestCase):
+    def test_host_reruns_keep_the_recorded_catalogue(self):
+        page = (SITE.parents[1] / "docs/results.md").read_text()
+        self.assertIn("A re-run on a host uses the job's own copy of the catalogue on purpose: "
+                      "the job remains one run under the definitions it recorded.", page)
+
     def test_computer_port_links_to_the_step_option_without_repeating_its_default(self):
         page = (SITE.parents[1] / "docs/ports/agent-computer-v1.md").read_text()
         row = next(line for line in page.splitlines() if line.startswith("| The step budget |"))

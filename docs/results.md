@@ -44,6 +44,8 @@ then **Run selected again**.
 | No button | A job not started from this application, still running, merged from shards, or whose host left Settings: one line says which |
 | Refused, nothing started | A host that no longer holds the job; a provider whose key is not set here |
 
+A re-run on a host uses the job's own copy of the catalogue on purpose: the job remains one run under the definitions it recorded.
+
 The rules and the record: [`nullius standard rerun`](cli/rerun.md).
 
 ## Check the task
