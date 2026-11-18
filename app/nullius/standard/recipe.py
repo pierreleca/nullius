@@ -719,6 +719,9 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
     # a plan begun on a part: what it plans and what it begins, by dataset
     planned_of = {x["id"]: min(limit, e) if isinstance(limit, int) and e else (limit if isinstance(limit, int) else e)
                   for x, e in zip(dss, each)}
+    planned = sum(planned_of.values()) if all(planned_of.values()) else None
+    starts = [start_of.get(x["id"], {}).get("units", planned_of[x["id"]]) for x in dss]
+    begin = sum(starts) if all(starts) else None
     for ds_id, s in start_of.items():
         if planned_of.get(ds_id) and s["units"] > planned_of[ds_id]:
             add("dataset", f"Start with {s['units']} {nouns}: {ds_id} plans {planned_of[ds_id]}.")
@@ -891,7 +894,7 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
         notes.append(f"Each {(b.get('units') or {}).get('noun', 'unit')} of {b['label']} is its own image: the control "
                      "runs in it, so docker is needed where it runs, whatever the backend.")
     if start_of:
-        out["confirm"] = (f"Plan {total or 'all the'} {nouns} of {b['label']} and begin {sum(s['units'] for s in start_of.values())} "
+        out["confirm"] = (f"Plan {planned or 'all the'} {nouns} of {b['label']} and begin {begin or 'the selected ' + nouns} "
                           f"with {', '.join(p['o']['label'] for p in picks)}?").replace("  ", " ")
     elif not isinstance(limit, int):
         out["confirm"] = f"Run all {total or ''} {nouns} of {b['label']}{' (' + ', '.join(x.get('label') or x['id'] for x in dss) + ')' if many else ''} with {', '.join(p['o']['label'] for p in picks)}?".replace("  ", " ")

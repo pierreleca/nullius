@@ -17,6 +17,16 @@ from tests.test_task_set_recipe import Scratch
 
 
 class StartWith(Scratch):
+    def test_confirmation_counts_every_limited_plan_and_its_start(self):
+        for datasets, limit, planned, begun in ((["all", "more"], None, 8, 5),
+                                               (["all", "more"], 2, 4, 3),
+                                               (["all"], 2, 2, 1)):
+            with self.subTest(datasets=datasets, limit=limit):
+                out = self.compile(datasets=datasets, limit=limit, start_with={"all": "1"})
+                self.assertEqual(out["errors"], [])
+                self.assertTrue(out["confirm"].startswith(f"Plan {planned} tasks of Fake bench and begin {begun} with "),
+                                out["confirm"])
+
     def test_a_number_or_a_set_compiles_to_the_option_and_review_says_planned_and_to_begin(self):
         sets.create(self.b, "first", dataset="all", units=["good", "slow"])
         for given, word, said in (("2", "2", "all · 4 planned, 2 to begin (the first 2)"),
