@@ -305,6 +305,26 @@ class ThreeKinds(Base):
 
 
 class LaterVersion(Base):
+    def test_a_later_store_without_call_records_keeps_its_refusal_on_the_page(self):
+        for name in ("u0001.jsonl", exchanges.PARTS):
+            with self.subTest(name=name):
+                folder = self.trial(history(), name=name.split(".")[0] + "__u0001")
+                os.unlink(os.path.join(folder, calls.CALLS))
+                self.assertFalse(os.path.exists(os.path.join(folder, calls.RELAY, "u0001.jsonl")))
+                self.assertEqual(len(load(folder)["calls"]), 4)
+                path = os.path.join(calls.store_folder(folder), name)
+                with open(path) as f:
+                    rows = f.read().split("\n", 1)
+                with open(path, "w") as f:
+                    f.write(json.dumps({"schema": "nullius.exchanges/v2"}) + "\n" + rows[1])
+                v = load(folder)
+                self.assertEqual((v["calls"], v["pictures"]), ([], {}))
+                for page in (calls.page(v), calls.page(v, query="missing", step=1)):
+                    self.assertEqual((page["total"], page["rows"], page["selected"]), (0, [], None))
+                    self.assertIn("version 2", page["notice"])
+                    self.assertIn("version 1", page["notice"])
+                    self.assertEqual(page["notice"], v["notice"])
+
     def test_a_store_in_a_later_format_is_not_read_and_each_call_says_both_versions(self):
         for name in ("u0001.jsonl", exchanges.PARTS):
             with self.subTest(name=name):

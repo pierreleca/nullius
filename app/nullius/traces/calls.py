@@ -431,7 +431,7 @@ def view(trial_dir: str, traj=None) -> dict:
     for c in out:
         c["search"] = "\n".join(_texts_of(c)).casefold()
     return {"record": "exchanges" if lines else "calls" if records else None, "calls": out,
-            "before": _redacted(early), "folder": folder, "pictures": pictures}
+            "before": _redacted(early), "folder": folder, "pictures": pictures, "notice": redact(refused)}
 
 
 def _texts_of(call: dict) -> List[str]:
@@ -500,7 +500,7 @@ def page(v: dict, *, query="", page=1, position=None, step=None, section=None, c
     query = conversation._text(query).strip()[:500]
     calls = v.get("calls") or []
     result = {"view": "calls", "query": query, "kind": "calls", "page_size": PAGE_SIZE, "page": 1, "pages": 1,
-              "total": len(calls), "matches": 0, "rows": [], "selected": None, "notice": "", "record": v.get("record")}
+              "total": len(calls), "matches": 0, "rows": [], "selected": None, "notice": v.get("notice") or "", "record": v.get("record")}
     needle = query.casefold()
     matching = [i for i, c in enumerate(calls) if not needle or needle in c["search"]]
     result["matches"] = len(matching)
@@ -510,7 +510,7 @@ def page(v: dict, *, query="", page=1, position=None, step=None, section=None, c
     if step is not None:
         chosen = next((i for i in matching if any(str(s["step_id"]) == str(step) for s in calls[i]["steps"])), None)
         if chosen is None:
-            result["notice"] = "No call in this search holds that source step."
+            result["notice"] = result["notice"] or "No call in this search holds that source step."
     elif position is not None:
         wanted = conversation._integer(position, -1)
         chosen = wanted if wanted in matching else None
