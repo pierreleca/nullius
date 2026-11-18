@@ -245,6 +245,39 @@ new Function('$', '$$', 'rows', 'document', 'nulliusFetch', 'URL', 'location',
                 self.assertEqual(mark(trial, job), expected)
         self.assertEqual(mark(SimpleNamespace(trial_name=name, rerun={"at": "again"}), job), "run again by hand")
 
+    def test_a_later_part_contains_only_the_selected_attempt(self):
+        from nullius.runs import live, parse
+        from nullius.standard import rerun, run
+        from tests import test_standard_rerun as fixtures
+
+        fixture = fixtures.RerunRecords()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        path = run.run(fixture.bench, fixture.other, model="", provider="custom",
+                       jobs_root=str(fixture.tmp), name="selected-attempt", concurrency=1,
+                       units_file=dict(fixtures.UNITS, units=["good", "wrong"]),
+                       start_with={"count": 1}, repeat=2, env={}, say=lambda _: None)
+        selected = "wrong__u0001r1"
+        snapshots = []
+        phase = run.Run.phase
+
+        def observe(runner, name, unit, stage, timeout=None):
+            phase(runner, name, unit, stage, timeout)
+            if name == selected:
+                job, snap = parse.parse_job(path), live.snapshot(path)
+                snapshots.append(rerun_page.web.runs._with_part(job, snap))
+                pending = [selected, "wrong__u0001r2"]
+                record = SimpleNamespace(again_of=lambda _: {"trials": pending})
+                with patch.object(rerun_page.web.runs.execution, "for_job", return_value=record):
+                    self.assertEqual(rerun_page.web.runs._with_part(job, snap)["part"], pending)
+
+        with patch.object(run.Run, "phase", observe):
+            result = rerun.rerun(path, [selected], root=str(fixture.root), env={}, say=lambda _: None)
+        self.assertEqual(result["trials"], [selected])
+        self.assertTrue(snapshots)
+        for snapshot in snapshots:
+            self.assertEqual(snapshot["part"], [selected])
+
     def test_run_later_counts_the_tasks_of_a_part_not_their_attempts(self):
         d = self.run_of()
         top = json.loads((d / "result.json").read_text())

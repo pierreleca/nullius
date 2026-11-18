@@ -958,18 +958,24 @@ def _live_board_state(j):
 
 def _with_part(j, snap: dict) -> dict:
     """The board's snapshot, with ``part`` while a standard job's run goes on over a part of its plan: the trials
-    of that part, the units its config began with or those the latest later start names. The board counts the
+    of that part, the units its config began with or the trial IDs selected for the latest later start. The board counts the
     planned trials outside it as not run, not queued. The snapshot as it was otherwise."""
     if not j.standard or snap.get("state") not in ("starting", "running"):
         return snap
     from nullius.standard import rerun
     try:
-        starts = [e.data for e in live.read_events(live.feed_path(j.dir)).events if e.event == "job.start"]
+        events = live.read_events(live.feed_path(j.dir)).events
+        starts = [i for i, e in enumerate(events) if e.event == "job.start"]
         with open(os.path.join(j.dir, "config.json"), encoding="utf-8") as f:
             began = ((json.load(f).get("standard") or {}).get("start_with") or {}).get("units")
     except (OSError, ValueError, AttributeError):
         return snap
-    units = starts[-1].get("tasks") if len(starts) > 1 else began
+    if len(starts) > 1:
+        ex = execution.for_job(j.job_id)
+        part = ex.again_of(j.job_id) if ex is not None else None
+        names = part["trials"] if part is not None else [e.trial for e in events[starts[-1] + 1:] if e.event == "trial.queued"]
+        return dict(snap, part=list(dict.fromkeys(names)))
+    units = began
     plan = rerun.planned(j.dir) if isinstance(units, list) else None
     if not plan:
         return snap
