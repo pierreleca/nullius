@@ -69,7 +69,7 @@ import traceback
 import tempfile
 from collections import Counter
 from concurrent.futures import FIRST_EXCEPTION, CancelledError, ThreadPoolExecutor, wait
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from typing import Callable, Dict, List, Optional
 
 from nullius import constraints as limits, paths, prices as price_list, progress, providers
@@ -439,13 +439,15 @@ class Ticker:
     ``step_limit``; ``calls``, the calls answered, counted as a cap on them counts them, and ``calls_limit`` when the
     run has that cap; the tokens and the cost, as the unit's end gives them. A progress file that is missing, half
     written, not a plain file inside the trial or not readable gives nothing and is no error, and the last value
-    read stays; a record line not yet ended is read once it is. A unit's last counts are read and sent as it stops
-    being watched (:meth:`drop`), before its end is told."""
+    read stays; a record line not yet ended is read once it is. A unit's last counts are queued as it stops
+    being watched (:meth:`drop`). Its end waits at most one tick for them."""
 
     def __init__(self, feed, every: Optional[float] = None):
         self.feed, self.every = feed, TICK_SECONDS if every is None else every
         self.units: Dict[str, dict] = {}          # by trial name: what is read of it, and what was last sent
+        self.pending: List[tuple] = []
         self.lock = threading.Lock()
+        self.wake = threading.Event()
         self.ended = threading.Event()
         self.thread: Optional[threading.Thread] = None
 
@@ -455,12 +457,16 @@ class Ticker:
         return self
 
     def _run(self) -> None:
-        while not self.ended.wait(self.every):
-            self.tick()
+        while not self.ended.is_set():
+            self.wake.wait(self.every)
+            self.wake.clear()
+            if not self.ended.is_set():
+                self.tick()
 
     def close(self) -> None:
         """The job's end: the thread stops, waited for one tick at most."""
         self.ended.set()
+        self.wake.set()
         if self.thread is not None:
             self.thread.join(self.every)
 
@@ -472,22 +478,33 @@ class Ticker:
         if isinstance(progress, str) and progress and not os.path.isabs(progress):
             norm = os.path.normpath(progress)
             if norm != os.pardir and not norm.startswith(os.pardir + os.sep):
-                path = os.path.join(trial, norm)
+                path = norm
         with self.lock:
             self.units[name] = {"task": task, "agent": agent, "trial": trial, "record": record, "progress": path,
                                 "calls_limit": calls_limit, "at": 0, "counts": None, "steps": None, "sent": None}
 
     def drop(self, name: str) -> None:
-        """A unit that ended: its last counts read and sent, then it is read no more."""
+        """Queue a unit's last counts. Wait at most one tick for the read."""
         with self.lock:
             u = self.units.pop(name, None)
-            if u is not None:
-                self._read(name, u)
+            if u is None:
+                return
+            done = threading.Event()
+            self.pending.append((name, u, done))
+        self.wake.set()
+        done.wait(self.every)
 
     def tick(self) -> None:
         with self.lock:
-            for name, u in self.units.items():
+            units = list(self.units.items())
+            pending, self.pending = self.pending, []
+        for name, u, done in pending:
+            try:
                 self._read(name, u)
+            finally:
+                done.set()
+        for name, u in units:
+            self._read(name, u)
 
     def _read(self, name: str, u: dict) -> None:
         self._steps(u)
@@ -511,14 +528,18 @@ class Ticker:
         if path is None:
             return
         try:
-            if not os.path.realpath(path).startswith(os.path.realpath(u["trial"]) + os.sep):
-                return                           # a link out of the trial is not followed
-            # not a link, and never waited on: a pipe left at the path cannot hold the thread
-            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
-            try:
+            with ExitStack() as opened:
+                flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+                parent = os.open(u["trial"], flags)
+                opened.callback(os.close, parent)
+                parts = path.split(os.sep)
+                # Keep each folder open. A replacement cannot redirect the next open.
+                for part in parts[:-1]:
+                    parent = os.open(part, flags, dir_fd=parent)
+                    opened.callback(os.close, parent)
+                fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+                opened.callback(os.close, fd)
                 raw = os.read(fd, PROGRESS_BYTES + 1) if stat.S_ISREG(os.fstat(fd).st_mode) else b""
-            finally:
-                os.close(fd)
             got = json.loads(raw) if 0 < len(raw) <= PROGRESS_BYTES else None
         except (OSError, ValueError):
             return
@@ -1580,7 +1601,7 @@ class Run:
                 for ln in getattr(rl, "mcp_listeners", None) or []:
                     ln.stop()
             if getattr(self, "ticker", None) is not None:
-                self.ticker.drop(name)           # its last counts, on the feed before its end
+                self.ticker.drop(name)           # Its last counts are given one tick before its end.
         calls = rl.calls(tag) if rl is not None else []
         failed = relay.failure(calls)
         if failed and failed[0] not in (ledgers.ERROR, ledgers.UNIT_ERROR, relay.CALLS_ERROR) and exc is None \

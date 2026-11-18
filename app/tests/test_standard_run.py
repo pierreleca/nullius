@@ -1477,6 +1477,51 @@ class TickerTest(unittest.TestCase):
                 self.ticker.tick()
                 self.assertEqual([d for e, t, d in self.feed.lines if t == "y"], [])
 
+    def test_progress_parent_links_are_refused(self):
+        outside = os.path.join(self.tmp, "outside")
+        os.mkdir(outside)
+        self.write({"steps": 93, "steps_limit": 100}, os.path.join(outside, "progress.json"))
+        self.write({"steps": 1, "steps_limit": 5})
+        parent = os.path.join(self.trial, "linked")
+        for target in (os.path.dirname(self.progress), outside):
+            with self.subTest(target=os.path.basename(target)):
+                self.feed.lines.clear()
+                os.symlink(target, parent)
+                try:
+                    self.ticker.watch("x", task="u", agent="a", trial=self.trial, progress="linked/progress.json")
+                    self.ticker.tick()
+                    self.assertEqual(self.told(), [])
+                finally:
+                    os.unlink(parent)
+
+    def test_progress_parent_replaced_after_first_read_cannot_escape(self):
+        self.ticker.watch("x", task="u", agent="a", trial=self.trial, progress=".work/progress.json")
+        self.write({"steps": 1, "steps_limit": 5})
+        self.ticker.tick()
+        self.assertEqual(self.told()[0]["step"], 1)
+        self.write({"steps": 2, "steps_limit": 5})
+        outside = os.path.join(self.tmp, "outside")
+        os.mkdir(outside)
+        self.write({"steps": 93, "steps_limit": 100}, os.path.join(outside, "progress.json"))
+        opened = os.open
+        swapped = []
+
+        def replace_parent(path, flags, *args, **kwargs):
+            if os.path.basename(path) == "progress.json" and not swapped:
+                parent = os.path.dirname(self.progress)
+                os.rename(parent, parent + ".saved")
+                os.symlink(outside, parent)
+                swapped.append(True)
+            return opened(path, flags, *args, **kwargs)
+
+        with mock.patch.object(run.os, "open", side_effect=replace_parent):
+            self.ticker.tick()
+        self.assertEqual(swapped, [True])
+        self.assertTrue(all(d["step"] in (1, 2) and d["step_limit"] == 5 for d in self.told()))
+        said = list(self.told())
+        self.ticker.tick()
+        self.assertEqual(self.told(), said)
+
     def test_a_unit_with_no_progress_file_sends_its_calls_alone(self):
         self.ticker.watch("x", task="u", agent="a", trial=self.trial, record=self.record, calls_limit=50)
         self.call(cost=0.001)
@@ -1516,6 +1561,8 @@ class TickerTest(unittest.TestCase):
         self.assertLess(time.time() - t0, 0.2 + 0.5)
 
     def test_a_unit_that_ends_between_two_ticks_has_its_last_count_sent(self):
+        self.ticker.start()
+        self.addCleanup(self.ticker.close)
         self.ticker.watch("x", task="u", agent="a", trial=self.trial, record=self.record, progress=".work/progress.json")
         self.write({"steps": 7, "steps_limit": 7, "ended": "steps", "open": 0})
         self.call()
@@ -1526,6 +1573,65 @@ class TickerTest(unittest.TestCase):
         self.ticker.tick()
         self.ticker.drop("x")                                     # dropped: read no more, and no error
         self.assertEqual(len(self.told()), 1)
+
+    def test_run_ends_while_a_ticker_read_is_held(self):
+        entered, release, scored, ended = (threading.Event() for _ in range(4))
+        errors = []
+        steps = run.Ticker._steps
+
+        def held_steps(unit):
+            entered.set()
+            if not release.wait(5):
+                raise AssertionError("the read was not released")
+            steps(unit)
+
+        def request(op, **kwargs):
+            if op == "units":
+                return {"units": ["one"]}
+            if op == "setup":
+                self.write({"steps": 1, "steps_limit": 5},
+                           os.path.join(os.path.dirname(kwargs["dir"]), "progress.json"))
+                return {"prompt": "hello", "progress": "progress.json"}
+            if op == "score":
+                if not entered.wait(3):
+                    raise AssertionError("the ticker did not read")
+                scored.set()
+                return {"reward": 1.0, "passed": True, "detail": {}}
+            raise AssertionError(op)
+
+        bench = dict(definitions.get("benchmark", "fakebench", ROOT),
+                     controls={"nop": {"source": "fixture", "from": "nothing"}})
+        owner = run.Run(bench, definitions.control(bench, "nop"), model="", provider="custom",
+                        jobs_root=self.tmp, env={}, say=lambda s: None, concurrency=1)
+
+        def start():
+            try:
+                owner.start()
+            except BaseException as error:
+                errors.append(error)
+            finally:
+                ended.set()
+
+        with mock.patch.object(owner, "driver", return_value=mock.Mock(request=request)), \
+                mock.patch.object(run, "TICK_SECONDS", 0.05), \
+                mock.patch.object(run.Ticker, "_steps", staticmethod(held_steps)):
+            worker = threading.Thread(target=start)
+            worker.start()
+            try:
+                self.assertTrue(scored.wait(3), errors)
+                self.assertTrue(ended.wait(0.3), "the job waited on the ticker read")
+                self.assertFalse(release.is_set())
+                self.assertEqual(errors, [])
+                with open(os.path.join(owner.job_dir, "result.json")) as f:
+                    self.assertEqual(json.load(f)["stats"]["n_completed_trials"], 1)
+            finally:
+                release.set()
+                worker.join(5)
+                if getattr(owner, "ticker", None) is not None:
+                    owner.ticker.close()
+                    owner.ticker.thread.join(5)
+                    self.assertFalse(owner.ticker.thread.is_alive())
+                self.assertFalse(worker.is_alive())
 
     def test_the_container_and_boat_backends_give_the_same_record_and_nothing_raises(self):
         """A container's relay writes its record into the trial as this machine's user; a boat VM's relay runs
