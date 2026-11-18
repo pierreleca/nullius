@@ -70,4 +70,10 @@ As version 1, with these changes:
 
 ## The kit
 
-Defined ahead of its kit: no agent can be proven on version 2 yet.
+`cli conform AGENT --port agent.computer/v2` runs the kit `agent-computer-v2`: [version 1's eight checks](agent-computer-v1.md#the-kit), each on a desktop of its own reached through a version 2 server, and one more. The run tells the kit when it gives the agent its task; the window before it is open until then.
+
+| Check | Kind | The task | Passes when |
+| --- | --- | --- | --- |
+| `late` | skill | A button appears a few seconds after the task is given; click it once | A left press on the button, every input inside an acting call, and an observation taken as a step ended, after the button appeared, reached the agent before the press: it looked again by a step |
+
+Input sent by `prepare` fails a check as input sent by `python` does in version 1. Each check has the limits of version 1's; `late` has 8 steps. The desktop, its image and the reaper are version 1's kit's. The null control passes no check; the reference is given its task as it starts, makes version 1's calls and, for `late`, looks again by `wait` until a step's observation was taken with the button up, then clicks it: it passes all nine.
