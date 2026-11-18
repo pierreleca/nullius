@@ -21,6 +21,11 @@ so: ``unfinished`` takes it too, since its run was interrupted, not judged.
 A job whose feed does not say what it planned (a merged job keeps none) has
 only its trials to run again.
 
+A job begun on a part of its plan (``run --start-with``) has the rest planned
+with no attempt: :func:`more` takes a further part of them, a number of them
+in the plan's order or those a task set of the job's dataset names, each with
+all its attempts, and ``every_unfinished`` takes all of them.
+
 The settings are the job's own, read from its ``config.json`` and never
 given again; the endpoint and the key come from the environment, as for a
 run. The benchmark and the agent must resolve to the versions the job ran.
@@ -207,6 +212,37 @@ def _kept(job_dir: str, name: str) -> int:
     return max(tries, default=0)
 
 
+def more(job_dir: str, plan: List[tuple], empty: Dict[str, dict], *, count: Optional[int] = None,
+         task_set: Optional[dict] = None, dataset: str = "", noun: tuple = ("task", "tasks")) -> List[str]:
+    """A further part of the planned tasks not yet run (``empty``, :func:`unfinished`): the first ``count`` of them
+    in the plan's order, or those the set ``task_set`` names ({"task_set": its record, "dataset": its dataset});
+    each task with every attempt of it that has no result. Refused for a set of another dataset than the job's
+    (``dataset``), a set naming a task the job did not plan, and a count above the tasks left."""
+    many = lambda n: noun[0] if n == 1 else noun[1]
+    left = list(dict.fromkeys(u for n, u in plan if n in empty))
+    if task_set is not None:
+        rec = task_set["task_set"]
+        if task_set.get("dataset") != dataset:
+            raise run.Refused(f"the task set {rec['name']} is cut from the dataset {task_set.get('dataset')}, and "
+                              f"{os.path.basename(job_dir)} planned {dataset}")
+        planned_units = {u for _, u in plan}
+        outside = [u for u in rec["units"] if u not in planned_units]
+        if outside:
+            raise run.Refused(f"the task set {rec['name']}@{rec['revision']} names {len(outside)} {many(len(outside))} "
+                              f"{os.path.basename(job_dir)} did not plan: " + ", ".join(outside[:5])
+                              + (", ..." if len(outside) > 5 else ""))
+        wanted = set(rec["units"])
+        take = {u for u in left if u in wanted}
+    else:
+        if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+            raise run.Refused(f"--next {count!r}: a whole number of {noun[1]}, at least 1")
+        if count > len(left):
+            raise run.Refused(f"--next {count}: {len(left)} {many(len(left))} of the plan {'is' if len(left) == 1 else 'are'} "
+                              "left to run")
+        take = set(left[:count])
+    return [n for n, u in plan if n in empty and u in take]
+
+
 def chosen(job_dir: str, ids: List[str], trials: Dict[str, dict], empty: Optional[Dict[str, dict]] = None) -> List[str]:
     """The trials ``ids`` name, in the order named, each once: an id is a trial's name, or a unit's id for each
     of its attempts; a trial planned with no result (``empty``, :func:`unfinished`) too. Refused for no id, or
@@ -227,12 +263,14 @@ def chosen(job_dir: str, ids: List[str], trials: Dict[str, dict], empty: Optiona
 
 def rerun(job_dir: str, ids: List[str], *, reason: str = "", concurrency: Optional[int] = None, retries: int = 0,
           max_usd: Optional[float] = None, env=os.environ, say: Callable[[str], None] = print, licences=None,
-          prices_unreachable: Optional[str] = None, root: Optional[str] = None, every_unfinished: bool = False) -> dict:
+          prices_unreachable: Optional[str] = None, root: Optional[str] = None, every_unfinished: bool = False,
+          count: Optional[int] = None, task_set: Optional[dict] = None) -> dict:
     """Run the trials ``ids`` name (:func:`chosen`) of the ended job ``job_dir`` again, in that job. ``retries``:
     automatic retries of each re-run try, as a run's; ``max_usd``: the re-run's own spending cap; ``concurrency``:
     the job's unless given. ``root``: a catalogue folder to resolve the definitions in (the user's and the
     bundled ones by default). ``every_unfinished``: in place of ``ids``, each trial the job planned that has no
-    result, or whose run its cap or a Stop interrupted (:func:`interrupted`). Returns the record added to the
+    result, or whose run its cap or a Stop interrupted (:func:`interrupted`). ``count`` or ``task_set``: in
+    place of ``ids``, a further part of the planned tasks not yet run (:func:`more`). Returns the record added to the
     job's ``reruns``, or {"job", "trials": []} with nothing written when there is no such trial; ``run.Refused``
     before anything moves."""
     job_dir = os.path.abspath(job_dir.rstrip("/"))
@@ -251,13 +289,21 @@ def rerun(job_dir: str, ids: List[str], *, reason: str = "", concurrency: Option
     trials = {n: merge._read(os.path.join(job_dir, n, "result.json")) for n in names}
     plan = planned(job_dir)
     empty = unfinished(job_dir, plan or [])
+    if (every_unfinished or count is not None or task_set is not None) and plan is None:
+        raise run.Refused(f"{os.path.basename(job_dir)} does not record the tasks it planned (its live feed names "
+                          "none): name its trials with --unit")
     if every_unfinished:
-        if plan is None:
-            raise run.Refused(f"{os.path.basename(job_dir)} does not record the tasks it planned (its live feed names "
-                              "none): name its trials with --unit")
         ids = [n for n, _ in plan if n in empty or interrupted(trials.get(n))]
         if not ids:
             say(f"nothing to run: every task {os.path.basename(job_dir)} planned has a result")
+            return {"job": job_dir, "trials": []}
+    elif count is not None or task_set is not None:
+        ids = more(job_dir, plan, empty, count=count, task_set=task_set,
+                   dataset=str(((cfg.get("datasets") or [{}])[0] or {}).get("name") or "").partition("/")[2],
+                   noun=tuple(cfg.get("runner_items") or ("task", "tasks"))[:2])
+        if not ids:
+            say(f"nothing to run: every task of the set {task_set['task_set']['name']} {os.path.basename(job_dir)} "
+                "planned has a result")
             return {"job": job_dir, "trials": []}
     picked = chosen(job_dir, ids, trials, empty)
     bench, other = resolve(cfg, list(trials.values()), root)

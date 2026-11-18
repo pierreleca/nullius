@@ -74,6 +74,10 @@ def job_row(job: parse.Job) -> dict:
         "state": job.state,
         "n_trials": len(job.trials),
         "n_planned": job.n_planned,
+        # a job begun on a part of its plan: how the part was named, and how many of the planned tasks have run
+        "start_with": job.start_with,
+        "n_tasks": job.n_tasks,
+        "n_tasks_run": job.n_tasks_run,
         "counts": job.counts,
         "n_resolved": job.n_resolved,
         "n_infra": job.n_infra,
@@ -269,6 +273,10 @@ def _show(args) -> int:
     print(f"  {row['n_trials']} trial(s) of {row['n_planned']} planned: "
           f"resolved {row['n_resolved']} · infra {row['n_infra']} · "
           f"raw {rate(row['raw_solve_rate'])} · adjusted {rate(row['adjusted_solve_rate'])}")
+    if job.start_with:
+        words = (job.runner_items or ["task", "tasks"])[1]
+        print(f"  begun on a part: {row['n_tasks_run']} of {row['n_tasks']} planned {words} run; "
+              f"the rates are over those run")
     mix = " · ".join(f"{k} {v}" for k, v in row["counts"].items() if v)
     if mix:
         print(f"  outcomes: {mix}")

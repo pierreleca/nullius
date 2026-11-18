@@ -269,6 +269,11 @@ class CommandLine(Scratch):
             (["rerun", str(job), "--unit", "a", "--retries", "x"], 2, "usage:"),
             (["rerun", str(job), "--unit", "a", "--unfinished"], 2, "usage:"),
             (["rerun", str(job), "--unfinished"], 2, "refused: job does not record the tasks it planned"),
+            (["rerun", str(job), "--next", "2"], 2, "refused: job does not record the tasks it planned"),
+            (["rerun", str(job), "--next", "x"], 2, "usage:"),
+            (["rerun", str(job), "--unit", "a", "--next", "1"], 2, "usage:"),
+            (["rerun", str(job), "--set", "nosuch"], 3, "refused: no task set 'nosuch' of humaneval"),
+            (["rerun", str(job), "--set", "a/b"], 2, "refused: 'a/b' is not a task set's name"),
         ]
         for args, code, said in cases:
             with self.subTest(args=args[2:]):
@@ -287,6 +292,10 @@ class CommandLine(Scratch):
         out = self.sh("standard.cli", "rerun", str(job), "--unfinished")
         self.assertEqual((out.returncode, out.stderr), (0, ""))
         self.assertEqual(out.stdout.splitlines(), ["nothing to run: every task job planned has a result", str(job)])
+        self.assertEqual(tree_digest(job), before)
+        out = self.sh("standard.cli", "rerun", str(job), "--next", "1")             # more than are left
+        self.assertEqual((out.returncode, out.stdout), (2, ""))
+        self.assertEqual(out.stderr.strip(), "refused: --next 1: 0 tasks of the plan are left to run")
         self.assertEqual(tree_digest(job), before)
         self.assertTmpHolds("job", "ids.txt")
 

@@ -30,7 +30,7 @@ DEFAULT_TRACE_NAME = "trace.json"
 # The shape this module produces. A workspace caches parsed Jobs keyed on it,
 # so bump it when a Trial or Job field is added, renamed or means something
 # new — otherwise a cache written by the old parse is read back as current.
-SCHEMA = "19"
+SCHEMA = "20"
 
 # What a rate-limit record in `agent/gateway.log` looks like. The agent's SDK
 # retries a 429 below the harness (an agent's `max_retries` reaching its
@@ -361,6 +361,10 @@ class Job:
     # The task set a Nullius standard job ran (config ``standard.task_set``): its name, revision and id, its
     # benchmark, and ``units``, its number of ids. {} for every other job.
     task_set: dict = field(default_factory=dict)
+    # A Nullius standard job planned on a whole and begun on a part of it (config ``standard.start_with``): how the
+    # part was named, ``by`` count, file or set, and ``name`` (the file's, or the set's NAME@REV; "" for a count),
+    # and ``units``, the part's number of units. {} for every other job: the plan is then the job's from the start.
+    start_with: dict = field(default_factory=dict)
     # Each time chosen trials of a Nullius standard job were run again in it (``result.json`` ``reruns``,
     # ``standard/rerun.py``): {at, reason, trials, replaced [{trial, unit, try, was, now}], begun [{trial, unit,
     # now}] and no_result [trial] when it had any, max_usd, spent_usd, stopped}, oldest first. [] for a job never
@@ -403,6 +407,12 @@ class Job:
         recorded one, else the task count from the config. Comparing this with
         the trials actually on disk exposes a partial or interrupted run."""
         return self.n_total_trials or self.n_tasks
+
+    @property
+    def n_tasks_run(self) -> int:
+        """How many of the job's tasks have an attempt that ended: of ``n_tasks`` planned, for a job begun on a
+        part of its plan (``start_with``) the tasks run so far."""
+        return len({t.task_name for t in self.trials})
 
     @property
     def is_running(self) -> bool:
@@ -1042,6 +1052,12 @@ def parse_job(job_dir: str, reuse=None, trials: bool = True) -> Job:
                      "id": str(ts.get("id") or ""), "benchmark": str(std.get("benchmark") or ""),
                      "units": len(ts["units"]) if isinstance(ts.get("units"), list) else 0}
                     if isinstance(ts.get("name"), str) and ts["name"] else {})
+    sw = std.get("start_with") if isinstance(std.get("start_with"), dict) else {}
+    if isinstance(sw.get("units"), list):
+        src = sw.get("units_file") if isinstance(sw.get("units_file"), dict) else sw.get("task_set") if isinstance(sw.get("task_set"), dict) else {}
+        by = "file" if sw.get("units_file") else "set" if sw.get("task_set") else "count"
+        job.start_with = {"by": by, "units": len(sw["units"]),
+                          "name": (f"{src.get('name')}@{src.get('revision')}" if by == "set" else str(src.get("name") or ""))}
     job.budget = _budget(res.get("budget"))
     job.reruns = _reruns(res)
     job.standard = bool(std)
