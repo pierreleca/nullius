@@ -39,8 +39,9 @@ job's ``result.json`` is recomputed from its trials as a merged job's is
 (``merge.result_of``); its start, its end and its ``budget`` stay the first
 run's, and ``reruns`` lists each re-run: when, the reason, the trials, the
 results replaced, the tasks begun (``begun``), those that had no result
-(``no_result``), its cap and its spend. The live feed gets the re-run's ``job.start``, its trials' events
-and its ``job.end``, numbered on from the file's last line.
+(``no_result``), its cap and its spend. The live feed gets the re-run's
+``job.start``, its trials' events and its ``job.end``, numbered on from the
+file's last line.
 """
 from __future__ import annotations
 
@@ -230,9 +231,9 @@ def rerun(job_dir: str, ids: List[str], *, reason: str = "", concurrency: Option
     automatic retries of each re-run try, as a run's; ``max_usd``: the re-run's own spending cap; ``concurrency``:
     the job's unless given. ``root``: a catalogue folder to resolve the definitions in (the user's and the
     bundled ones by default). ``every_unfinished``: in place of ``ids``, each trial the job planned that has no
-    result, or whose run its cap or a Stop interrupted (:func:`interrupted`). Returns the record added to the job's ``reruns``, or
-    {"job", "trials": []} with nothing written when there is no such trial; ``run.Refused`` before anything
-    moves."""
+    result, or whose run its cap or a Stop interrupted (:func:`interrupted`). Returns the record added to the
+    job's ``reruns``, or {"job", "trials": []} with nothing written when there is no such trial; ``run.Refused``
+    before anything moves."""
     job_dir = os.path.abspath(job_dir.rstrip("/"))
     cfg, old = merge._read(os.path.join(job_dir, "config.json")), merge._read(os.path.join(job_dir, "result.json"))
     if cfg.get("runner") != "standard" or not isinstance(cfg.get("standard"), dict):
@@ -283,6 +284,8 @@ def rerun(job_dir: str, ids: List[str], *, reason: str = "", concurrency: Option
         i, a = (int(tag.group(1)), int(tag.group(2) or 1)) if tag else (-1, 1)
         if not tag or r.trial_name(i, unit, a) != name:
             raise run.Refused(f"{name} is not a trial this runner named: it cannot be run again in place")
+        if name not in trials and os.path.islink(os.path.join(job_dir, name)):
+            raise run.Refused(f"{name} is a symbolic link: use a directory inside the job")
         if name not in trials and not empty[name]["folder"]:
             fresh[name] = _kept(job_dir, name)
         else:
@@ -357,7 +360,8 @@ def _again(r: "run.Run", job_dir: str, old: dict, cfg: dict, trials: Dict[str, d
             res = r.try_again(name, iur, first_try[name], work_unit)
         if res is not None:                  # the try asked for: its record says so, before a retry may move it
             how = {"begun": True} if name in fresh else {"replaced": said(trials.get(name) or {})}
-            res["standard"] = dict(res.get("standard") or {}, rerun=dict(mark, **how, **({"no_result": True} if name in killed else {})))
+            how.update({"no_result": True} if name in killed else {})
+            res["standard"] = dict(res.get("standard") or {}, rerun=dict(mark, **how))
             job._write(os.path.join(job_dir, name, "result.json"), json.dumps(res, indent=1))
         return res
 
