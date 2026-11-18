@@ -915,7 +915,8 @@ class Run:
         # every unit once, then every unit again: a repeat cut short still has each unit's first run
         work = [(i, u, r) for r in range(1, self.repeat + 1) for i, u in mine]
         # begun on a part: the plan's every trial queued, the part's begun; the rest stand planned for a re-run
-        first = work if part is None else [(i, u, r) for i, u, r in work if u in set(part)]
+        begun = set(part or ())
+        first = work if part is None else [(i, u, r) for i, u, r in work if u in begun]
         self.n_units = len(first)                # what the progress counts: every run of every unit
         self.feed = live_feed.Writer(os.path.join(self.job_dir, live_feed.FEED), self.name)
         self.feed.emit("job.start", n_total=len(work), n_concurrent=self.concurrency, agents=[self.other["key"]], tasks=units,
