@@ -292,8 +292,29 @@ class ThreeKinds(Base):
 
 
 class Unreadable(Base):
+    def test_every_call_naming_a_damaged_part_is_unreadable(self):
+        for damage in ("truncated", "picture"):
+            with self.subTest(damage=damage):
+                kept = history()[:2] + [{"req": {"messages": [{"role": "user", "content": "fresh"}]},
+                                        "body": chat_reply("done")}]
+                folder = self.trial(kept, name=damage + "__u0001")
+                parts = os.path.join(calls.store_folder(folder), exchanges.PARTS)
+                with open(parts) as f:
+                    rows = f.read().splitlines()
+                rows = [(row[:40] if damage == "truncated" else row.replace(sha(P1), "../outside"))
+                        if sha(P1) in row else row for row in rows]
+                with open(parts, "w") as f:
+                    f.write("\n".join(rows) + "\n")
+                v = load(folder)
+                self.assertEqual([c["sent"].get("unreadable", False) for c in v["calls"]], [True, True, False])
+                self.assertEqual([r["unreadable"] for r in calls.page(v)["rows"]], [True, True, False])
+                self.assertEqual(v["calls"][0]["sent"]["note"], v["calls"][1]["sent"]["note"])
+                self.assertEqual(v["calls"][2]["sent"]["items"][0]["text"], "fresh")
+
     def test_a_damaged_part_or_a_bad_picture_name_makes_that_call_unreadable_and_the_others_are_read(self):
-        folder = self.trial(history())
+        kept = history()
+        kept[3]["req"]["messages"] = [m for m in kept[3]["req"]["messages"] if m.get("content") != "typed"]
+        folder = self.trial(kept)
         parts = os.path.join(calls.store_folder(folder), exchanges.PARTS)
         with open(parts) as f:
             rows = f.read().splitlines()

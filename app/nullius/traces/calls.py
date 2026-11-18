@@ -241,6 +241,7 @@ class _Reader:
         self.folder = folder
         self.parts = _parts(folder)
         self.stored: Dict[str, bool] = {}
+        self.checked: dict = {}
 
     def picture(self, mark: dict) -> dict:
         path = exchanges._picture_path(self.folder, mark)         # Missing: a name that is not a digest, a path outside
@@ -273,12 +274,20 @@ class _Reader:
     def sent(self, line: dict, before: Optional[dict]) -> dict:
         """A call's Sent: its items, and the folded line of what the call before held that it does not."""
         held = _held(line)
+        for k, h in held:
+            if (k, h) not in self.checked:
+                try:
+                    self.checked[k, h] = self.item(k, h)
+                except exchanges.Missing as e:
+                    self.checked[k, h] = e
+            if isinstance(self.checked[k, h], exchanges.Missing):
+                raise self.checked[k, h]
         new = set(exchanges.new_parts(line, before))
         items: List[dict] = []
         if before is None:                       # the first: the system text and the tools, folded, then all of it
-            tools = [self.item(k, h) for k, h in held if k == "tools"]
-            said = [self.item(k, h) for k, h in held if k in ("messages", "input")]
-            items += [self.item(k, h) for k, h in held if k in ("system", "instructions")] + [x for x in said if x["kind"] == "system"]
+            tools = [self.checked[k, h] for k, h in held if k == "tools"]
+            said = [self.checked[k, h] for k, h in held if k in ("messages", "input")]
+            items += [self.checked[k, h] for k, h in held if k in ("system", "instructions")] + [x for x in said if x["kind"] == "system"]
             if tools:
                 items.append({"kind": "tools", "names": [n for t in tools for n in t["names"]],
                               "text": "\n\n".join(t["text"] for t in tools), "pictures": [p for t in tools for p in t["pictures"]]})
@@ -291,7 +300,7 @@ class _Reader:
         for i, (k, h) in enumerate(held):
             if h not in new:
                 continue
-            got = self.item(k, h)
+            got = self.checked[k, h]
             if k == "tools":
                 tools.append(got)
             elif k in ("messages", "input") and i < last_kept:
