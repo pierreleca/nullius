@@ -182,7 +182,7 @@ class Store:
                 line["sent"] = split(_cut_key(req, self.keys) if held else req, found, parts)
             if held:
                 line["key_cut"] = True
-            line["headers"] = {k: _cut_key(v, self.keys) for k, v in headers.items()}
+            line["headers"] = _cut_key(headers, self.keys)
             line["reply"] = {"status": status, "streamed": streamed, "body": _cut_key(body.decode("utf-8", "replace"), self.keys)}
             text = json.dumps(line)
             self._keep(tag, head, text, parts, found)

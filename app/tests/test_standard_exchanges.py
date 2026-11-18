@@ -273,6 +273,16 @@ class StoreFiles(unittest.TestCase):
                 with self.assertRaises(exchanges.Missing):
                     read(store.dir)
 
+    def test_header_names_and_values_both_cut_out_the_relay_key(self):
+        store = self.store()
+        self.keep(store, {"messages": ["hello"]}, headers={"X-Trace-" + KEY: "trace", "X-Value": KEY})
+        for path in Path(store.dir).rglob("*"):
+            if path.is_file():
+                self.assertNotIn(KEY.encode(), path.read_bytes())
+        line, = exchanges.lines(store.dir, "u0001")
+        self.assertEqual(line["headers"], {"X-Trace-[REDACTED]": "trace", "X-Value": "[REDACTED]"})
+        self.assertTrue(exchanges.check(store.dir, "u0001", 1)["same"])
+
 
 class ByteForByte(WithUpstream):
     def test_each_shape_rebuilds_to_the_bytes_sent_streamed_or_not_and_a_changed_part_fails(self):
