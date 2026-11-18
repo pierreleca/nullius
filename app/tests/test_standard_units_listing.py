@@ -233,11 +233,22 @@ class CommandLine(Scratch):
         got = json.loads(out)
         self.assertEqual((code, got["total"], got["pages"], len(got["tasks"])), (0, 83, 1, 83))
 
+    def test_the_longmemeval_help_example_names_a_known_dataset(self):
+        import shlex
+        example = next(line for line in cli.UNITS_EPILOG.splitlines() if "units longmemeval" in line)
+        args = shlex.split(example)
+        bench = definitions.get("benchmark", "longmemeval")
+        dataset = args[args.index("--dataset") + 1]
+        self.assertEqual(units.dataset_of(bench, dataset)["id"], "longmemeval_oracle")
+        self.assertEqual(units.option_values(bench, dataset, {"question_type": "multi-session"})["question_type"],
+                         "multi-session")
+
     def test_refusals_are_one_line_on_stderr(self):
         for args, code, said in ((["units", "nowhere", "--dataset", "all"], 3, "no benchmark 'nowhere'"),
                                  (["units", "described", "--dataset", "nope"], 3, "no dataset 'nope'"),
                                  (["units", "described", "--dataset", "all", "--category", "kind"], 2, "FIELD=VALUE"),
-                                 (["units", "described", "--dataset", "all", "--bench-option", "mode=x"], 2, "mode")):
+                                 (["units", "described", "--dataset", "all", "--bench-option", "mode=x"], 2, "mode"),
+                                 (["units", "described", "--dataset", "all", "--bench-option", "broken"], 2, "NAME=VALUE")):
             with self.subTest(args=args):
                 got, out, err = self.cli(*args)
                 self.assertEqual((got, out), (code, ""))

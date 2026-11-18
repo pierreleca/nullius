@@ -778,7 +778,7 @@ UNITS_EPILOG = """\
 examples:
   nullius standard units humaneval --dataset humaneval
   nullius standard units osworld1 --dataset test_nogdrive --search "tab" --category domain=chrome --category domain=vlc
-  nullius standard units longmemeval --dataset oracle --bench-option question_type=multi-session --json
+  nullius standard units longmemeval --dataset longmemeval_oracle --bench-option question_type=multi-session --json
 
 exit codes:
   0  listed, a match of no task included
@@ -797,7 +797,11 @@ def cmd_units(a):
         b = _find_bench(a.benchmark)
         if b is None:
             raise unit_list.NotFound(f"no benchmark {a.benchmark!r}")
-        given, chosen = options(a.bench_option, "--bench-option"), unit_list.categories_of(a.category)
+        try:
+            given = options(a.bench_option, "--bench-option")
+        except SystemExit as e:
+            raise unit_list.Refused(str(e))
+        chosen = unit_list.categories_of(a.category)
         before = unit_list.state(b, a.dataset, given)
         if before["state"] == "refused":
             raise unit_list.Refused(before["reason"])
