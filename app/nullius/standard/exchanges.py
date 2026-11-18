@@ -306,12 +306,17 @@ def _jsonl(path: str) -> List[dict]:
 
 
 def stored_parts(folder: str) -> Dict[str, dict]:
-    """Each part of a store by its hash: {"part": ..., "as_sent": bool}."""
+    """Each readable part by its hash: {"part": ..., "as_sent": bool}. Damaged rows are left out."""
     parts = {}
     for p in _jsonl(_inside(os.path.realpath(folder), PARTS)):
-        h = _digest(p.get("sha256"))
-        if not p.get("as_sent"):
-            _drop(p.get("part"), lambda mark: _picture_path(folder, mark))
+        if "part" not in p:
+            continue
+        try:
+            h = _digest(p.get("sha256"))
+            if not p.get("as_sent"):
+                _drop(p["part"], lambda mark: _picture_path(folder, mark))
+        except Missing:
+            continue
         parts[h] = {"part": p.get("part"), "as_sent": bool(p.get("as_sent"))}
     return parts
 

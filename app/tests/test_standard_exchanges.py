@@ -204,9 +204,46 @@ class StoreFiles(unittest.TestCase):
     def keep(self, store, req, n=1, headers=None):
         store.write("u0001", n, 1.0, "/messages", req, json.dumps(req).encode(), headers or {}, 200, False, b"{}")
 
+    def test_a_damaged_part_leaves_other_calls_rebuildable(self):
+        for damage in ("truncated", "digest", "picture", "missing"):
+            with self.subTest(damage=damage):
+                trial = mock.Mock(dir=str(self.root / damage / "task__u0001"), trial_name="task__u0001")
+                store = exchanges.Store(os.path.join(trial.dir, ".work", "relay"))
+                bad, good = {"messages": [data_url(PNG)]}, {"messages": ["still readable"]}
+                for n, req in enumerate((bad, good, bad), 1):
+                    self.keep(store, req, n=n)
+                path = Path(store.dir) / exchanges.PARTS
+                rows = path.read_text().splitlines()
+                row = json.loads(rows[0])
+                if damage == "digest":
+                    row["sha256"] = "invalid"
+                elif damage == "picture":
+                    row["part"]["blob"] = "../outside"
+                elif damage == "missing":
+                    del row["part"]
+                rows[0] = rows[0][:40] if damage == "truncated" else json.dumps(row)
+                path.write_text("\n".join(rows) + "\n")
+                for n in (1, 2, 3):
+                    out, err = io.TextIOWrapper(io.BytesIO(), encoding="utf-8"), io.StringIO()
+                    self.addCleanup(out.close)
+                    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                        code = runs_cli._request(trial, n)
+                    out.flush()
+                    result = exchanges.check(store.dir, "u0001", n)
+                    self.assertEqual(result["same"], n == 2)
+                    if n == 2:
+                        self.assertEqual((code, out.buffer.getvalue()), (0, json.dumps(good).encode() + b"\n"))
+                        self.assertIn("the recorded sent_sha256", err.getvalue())
+                        line = exchanges.lines(store.dir, "u0001")[1]
+                        self.assertEqual(exchanges.rebuild(store.dir, line, exchanges.stored_parts(store.dir)),
+                                         json.dumps(good).encode())
+                    else:
+                        self.assertEqual((code, out.buffer.getvalue()), (runs_cli.EXIT_FAILED, b""))
+                        self.assertIsNone(result["request"])
+
     def assert_picture_rejected(self, store, line, parts):
-        for read in (lambda: exchanges.stored_parts(store.dir),
-                     lambda: exchanges.rebuild(store.dir, line),
+        self.assertEqual(exchanges.stored_parts(store.dir), {})
+        for read in (lambda: exchanges.rebuild(store.dir, line),
                      lambda: exchanges.rebuild(store.dir, line, parts)):
             with self.assertRaises(exchanges.Missing):
                 read()
