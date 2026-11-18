@@ -220,7 +220,7 @@ def again_offer(job, ex) -> dict | None:
     if ex is None or ex.plan.runner != standard_recipe.HARNESS:
         return {"why": "Not started from here: no record of where it ran."}
     if ex.state in execution.ALIVE or job.is_running or job.is_preparing:
-        return {"why": "Still running: tasks are run again once it has ended."}
+        return {"why": "Still running: more tasks can be started once it has ended."}
     if os.path.realpath(job.dir) != os.path.realpath(os.path.join(ex.jobs, job.job_id)):
         return {"why": "This copy is not its run's own: open the job its run wrote."}
     if ex.plan.host is not None and ex.plan.host.entry not in {h.entry for h in _hosts()}:

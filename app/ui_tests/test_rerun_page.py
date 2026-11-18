@@ -164,7 +164,7 @@ class RerunPage(unittest.TestCase):
         standard_job(loose / "cli-job", "cli-job")                               # started outside: no run record
         self.open(here.parent, gone.parent, merged.parent, loose)
         execution.EXECUTIONS["r1-1"].state = "running"
-        for name, said in [("r1", "Still running: tasks are run again once it has ended."),
+        for name, said in [("r1", "Still running: more tasks can be started once it has ended."),
                            ("r2", "Its host, ubuntu@10.0.0.9, is no longer in Settings."),
                            ("r3", "Merged from its shards' jobs: run a task again in its shard's job."),
                            ("cli-job", "Not started from here: no record of where it ran.")]:
@@ -189,7 +189,7 @@ class RerunPage(unittest.TestCase):
         row = re.search(rf'<tr data-outcome="failed_verification"[^>]*data-trial="{name}".*?</tr>', html, re.S)[0]
         self.assertIn('<span class="badge again-now"', row)
         self.assertNotIn("href=", row)                                           # its new try has no page yet
-        self.assertIn("Still running: tasks are run again once it has ended.", html)
+        self.assertIn("Still running: more tasks can be started once it has ended.", html)
         self.assertIn('id="execution-state">running', html)
         self.assertNotIn("again-now", self.page("/job/r1?view=results").split(f'data-trial="{trial_name(0)}"')[1].split("</tr>")[0])
 
