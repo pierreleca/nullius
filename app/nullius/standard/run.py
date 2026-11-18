@@ -438,13 +438,15 @@ class Ticker:
     ``step_limit``; ``calls``, the calls answered, counted as a cap on them counts them, and ``calls_limit`` when the
     run has that cap; the tokens and the cost, as the unit's end gives them. A progress file that is missing, half
     written, not a plain file inside the trial or not readable gives nothing and is no error, and the last value
-    read stays; a record line not yet ended is read once it is. A unit's last counts are read and sent as it stops
-    being watched (:meth:`drop`), before its end is told."""
+    read stays; a record line not yet ended is read once it is. A unit's last counts are queued as it stops
+    being watched (:meth:`drop`). Its end waits at most one tick for them."""
 
     def __init__(self, feed, every: Optional[float] = None):
         self.feed, self.every = feed, TICK_SECONDS if every is None else every
         self.units: Dict[str, dict] = {}          # by trial name: what is read of it, and what was last sent
+        self.pending: List[tuple] = []
         self.lock = threading.Lock()
+        self.wake = threading.Event()
         self.ended = threading.Event()
         self.thread: Optional[threading.Thread] = None
 
@@ -454,12 +456,16 @@ class Ticker:
         return self
 
     def _run(self) -> None:
-        while not self.ended.wait(self.every):
-            self.tick()
+        while not self.ended.is_set():
+            self.wake.wait(self.every)
+            self.wake.clear()
+            if not self.ended.is_set():
+                self.tick()
 
     def close(self) -> None:
         """The job's end: the thread stops, waited for one tick at most."""
         self.ended.set()
+        self.wake.set()
         if self.thread is not None:
             self.thread.join(self.every)
 
@@ -477,16 +483,27 @@ class Ticker:
                                 "calls_limit": calls_limit, "at": 0, "counts": None, "steps": None, "sent": None}
 
     def drop(self, name: str) -> None:
-        """A unit that ended: its last counts read and sent, then it is read no more."""
+        """Queue a unit's last counts. Wait at most one tick for the read."""
         with self.lock:
             u = self.units.pop(name, None)
-            if u is not None:
-                self._read(name, u)
+            if u is None:
+                return
+            done = threading.Event()
+            self.pending.append((name, u, done))
+        self.wake.set()
+        done.wait(self.every)
 
     def tick(self) -> None:
         with self.lock:
-            for name, u in self.units.items():
+            units = list(self.units.items())
+            pending, self.pending = self.pending, []
+        for name, u, done in pending:
+            try:
                 self._read(name, u)
+            finally:
+                done.set()
+        for name, u in units:
+            self._read(name, u)
 
     def _read(self, name: str, u: dict) -> None:
         self._steps(u)
@@ -1561,7 +1578,7 @@ class Run:
                 for ln in getattr(rl, "mcp_listeners", None) or []:
                     ln.stop()
             if getattr(self, "ticker", None) is not None:
-                self.ticker.drop(name)           # its last counts, on the feed before its end
+                self.ticker.drop(name)           # Its last counts are given one tick before its end.
         calls = rl.calls(tag) if rl is not None else []
         failed = relay.failure(calls)
         if failed and failed[0] not in (ledgers.ERROR, ledgers.UNIT_ERROR, relay.CALLS_ERROR) and exc is None \
