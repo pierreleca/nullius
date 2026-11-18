@@ -184,10 +184,30 @@ def source(job_dir: str, trial: str, call: int) -> Source:
                   record=record)
 
 
-def calls(job_dir: str, trial: str) -> List[dict]:
+def recorded(job_dir: str, trial: str) -> Dict[int, dict]:
+    """Each call's recorded reply, read as :func:`answer` reads one (text, reasoning, tool calls, the body as it
+    arrived), by its ``n``: the requests are not rebuilt."""
+    folder, tag = _store(trial_dir(job_dir, trial))
+    try:
+        lines = exchanges.lines(folder, tag)
+    except exchanges.Later as e:
+        raise NotWhole(str(e))
+    return {line["n"]: answer_of(str(line.get("path") or ""), line.get("reply")) for line in lines if isinstance(line.get("n"), int)}
+
+
+def answer_of(path: str, reply) -> dict:
+    """A reply as a record keeps it (``status``, ``streamed``, ``body``), read as :func:`answer` reads one."""
+    reply = reply if isinstance(reply, dict) else {}
+    return answer(path, int(reply.get("status") or 0), str(reply.get("body") or "").encode("utf-8"), bool(reply.get("streamed")))
+
+
+def calls(job_dir: str, trial: str, rule: Optional[Callable[[dict], str]] = None) -> List[dict]:
     """What a trial holds that can be sent again: each call of its exchange record, with ``n``, its path, the
     model, the reply's status, the request's size in bytes, ``whole`` (it rebuilds to its recorded sha256) and,
-    when not, why; the call record's cost and tokens beside."""
+    when not, why; the call record's cost and tokens beside. With ``rule``, each call's ``label``: what the rule
+    reads in its recorded answer."""
+    if rule is not None:
+        answers = recorded(job_dir, trial)
     tdir = trial_dir(job_dir, trial)
     folder, tag = _store(tdir)
     try:
@@ -216,6 +236,8 @@ def calls(job_dir: str, trial: str) -> List[dict]:
                               else "the store's parts do not rebuild the bytes sent")
         except exchanges.Missing as e:
             row["why"] = str(e)
+        if rule is not None:
+            row["label"] = rule(answers.get(n) or {"status": None})
         out.append(row)
     return out
 
@@ -485,14 +507,20 @@ def first_tool_call(a: dict) -> str:
 first_tool_call.rule = {"name": "first tool call", "reads": "the first tool call's name and arguments, as canonical JSON"}
 
 
+READ_FIELDS = ("status", "text", "reasoning", "tool_calls", "body")     # what a rule's command reads of an answer
+
+
 def command_rule(command: str, env=None) -> Rule:
-    """A rule by a command: it reads one reply's body, as it arrived, on stdin and prints its label (its first
-    line counts). It runs without any provider key. A failed answer is its error, as the default rule says it."""
+    """A rule by a command: it reads one answer on stdin, a JSON object of :data:`READ_FIELDS` (the text, the
+    reasoning and the tool calls as read, whatever the protocol or a stream; ``body``, the reply as it arrived),
+    and prints its label (its first line counts). It runs without any provider key. A failed answer is its
+    error, as the default rule says it."""
     def rule(a: dict) -> str:
         if a.get("status") != 200:
             return first_tool_call(a)
+        given = json.dumps({k: a.get(k) for k in READ_FIELDS}, ensure_ascii=False).encode()
         try:
-            got = subprocess.run(command, shell=True, input=(a.get("body") or "").encode(), capture_output=True,
+            got = subprocess.run(command, shell=True, input=given, capture_output=True,
                                  timeout=COMMAND_SECONDS, env=_child_env(env))
         except subprocess.TimeoutExpired:
             return "read failed: no label in time"
@@ -508,14 +536,16 @@ def _tool_of(label: str) -> str:
     return label.split(" ", 1)[0] if label and not label.startswith(("error:", "no call", "read failed", "no label")) else label
 
 
-def count(labels: List[str], recorded: Optional[str] = None) -> List[dict]:
-    """The distinct answers, most frequent first, grouped by tool then arguments: ``label``, ``tool``,
-    ``count`` and whether it is the recorded answer's."""
+def count(labels: List[str], recorded: Optional[str] = None, by_tool: bool = True) -> List[dict]:
+    """The distinct answers, most frequent first: ``label``, ``count`` and whether it is the recorded answer's.
+    ``by_tool`` (for the default rule's labels): grouped by tool then arguments, each with its ``tool``."""
     got: Dict[str, int] = {}
     for x in labels:
         got[x] = got.get(x, 0) + 1
     if recorded is not None:
         got.setdefault(recorded, 0)
+    if not by_tool:
+        return [{"label": x, "count": got[x], "recorded": x == recorded} for x in sorted(got, key=lambda x: (-got[x], x))]
     tool_n: Dict[str, int] = {}
     for x, n in got.items():
         tool_n[_tool_of(x)] = tool_n.get(_tool_of(x), 0) + n
@@ -557,10 +587,20 @@ class Prepared:
     price: dict
     estimate_usd: float                          # one call, as the ledger books it
 
+    def per_call_usd(self) -> float:
+        """One call's estimate, no upper bound: the ledger's booking and, for a request sent unchanged, at least
+        what the recorded call cost."""
+        cost = self.source.record.get("cost_usd")
+        if self.sha256 == self.source.sent_sha256 and isinstance(cost, (int, float)) and not isinstance(cost, bool):
+            return max(self.estimate_usd, float(cost))
+        return self.estimate_usd
+
     def summary(self, times: int = 1, max_usd: Optional[float] = None) -> dict:
-        """What would be sent, its estimated cost K times, and against the cap: nothing of the key but its name."""
+        """What would be sent, its estimated cost K times (:meth:`per_call_usd`), and against the cap: nothing of
+        the key but its name."""
         rec = self.source.record
         recorded_cost = rec.get("cost_usd") if isinstance(rec.get("cost_usd"), (int, float)) else None
+        per = self.per_call_usd()
         return {"source": {"job_dir": self.source.job_dir, "trial": self.source.trial, "route": self.source.route,
                            "call": self.source.call, "path": self.source.path, "sent_sha256": self.source.sent_sha256,
                            "model": self.source.model, "provider": self.source.provider, "cost_usd": recorded_cost},
@@ -570,9 +610,8 @@ class Prepared:
                             "served_by": self.serving.get(self.model), "key_setting": self.key_setting,
                             "key_header": self.key_header, "fields": relay.request_fields(self.request)},
                 "price": self.price, "times": times, "max_usd": max_usd,
-                "estimate_usd": {"per_call": self.estimate_usd, "all": self.estimate_usd * times,
-                                 "recorded_call": recorded_cost},
-                "fits": None if max_usd is None else self.estimate_usd * times <= max_usd}
+                "estimate_usd": {"per_call": per, "all": per * times, "recorded_call": recorded_cost, "upper_bound": False},
+                "fits": None if max_usd is None else per * times <= max_usd}
 
 
 def prepare(src: Source, changes: List[Change] = (), *, prices: Optional[Dict[str, dict]] = None,
@@ -659,6 +698,32 @@ def _now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
+def post(rl: relay.Relay, prep: Prepared, tag: str) -> tuple:
+    """``prep`` sent once through the started relay ``rl`` on its route ``tag``: (the answer read whole, as
+    :func:`answer` gives it, with the route, the seconds, the relay's refusal and the cost; the relay's record of
+    the call). The answer's ``sent_sha256`` is the relay's own record of the bytes it sent."""
+    t0 = time.time()
+    host, port = rl.server.server_address[:2]
+    headers = {k: v for k, v in prep.source.headers.items() if k.lower() not in ("content-length", "host")}
+    conn = http.client.HTTPConnection(host if host not in ("0.0.0.0", "") else "127.0.0.1", port, timeout=relay.TIMEOUT + 60)
+    try:
+        conn.request("POST", f"/{tag}/v1{prep.source.path}", body=prep.raw, headers=headers)
+        r = conn.getresponse()
+        body, status = r.read(), r.status
+        refused, kind = r.getheader("X-Nullius-Refused"), r.getheader("Content-Type") or ""
+    except (OSError, http.client.HTTPException) as e:
+        body, status, refused, kind = json.dumps({"error": {"message": f"the replay's relay: {type(e).__name__}"}}).encode(), 502, None, ""
+    finally:
+        conn.close()
+    a = answer(prep.source.path, status, body, "text/event-stream" in kind)
+    rec = next(iter(rl.calls(tag)[-1:]), {})
+    a.update({"route": tag, "seconds": round(time.time() - t0, 3), "refused": refused,
+              "cost_usd": rec.get("cost_usd"), "cost_from": rec.get("cost_from")})
+    line = next(iter(exchanges.lines(os.path.join(rl.dir, exchanges.FOLDER), tag)), {})
+    a["sent_sha256"] = line.get("sent_sha256")
+    return a, rec
+
+
 def send(prep: Prepared, times: int, max_usd: float, out: str, *, rule: Optional[Rule] = None, concurrency: int = 1,
          env=None, say: Optional[Callable[[str], None]] = None) -> dict:
     """``prep`` sent ``times`` times under a spending cap of ``max_usd``, through a relay of its own, its answers
@@ -699,38 +764,20 @@ def send(prep: Prepared, times: int, max_usd: float, out: str, *, rule: Optional
                      key_header=prep.key_header, ledger=led.path, serving=prep.serving or None, exchanges="whole").start()
     width = max(3, len(str(times)))
     stop, why = threading.Event(), []
-    host, port = rl.server.server_address[:2]
-    headers = {k: v for k, v in prep.source.headers.items() if k.lower() not in ("content-length", "host")}
 
     def one(i: int) -> Optional[dict]:
         if stop.is_set():
             return None
-        tag = f"r{i + 1:0{width}d}"
-        t0 = time.time()
-        conn = http.client.HTTPConnection(host if host not in ("0.0.0.0", "") else "127.0.0.1", port, timeout=relay.TIMEOUT + 60)
-        try:
-            conn.request("POST", f"/{tag}/v1{prep.source.path}", body=prep.raw, headers=headers)
-            r = conn.getresponse()
-            body, status = r.read(), r.status
-            refused, kind = r.getheader("X-Nullius-Refused"), r.getheader("Content-Type") or ""
-        except (OSError, http.client.HTTPException) as e:
-            body, status, refused, kind = json.dumps({"error": {"message": f"the replay's relay: {type(e).__name__}"}}).encode(), 502, None, ""
-        finally:
-            conn.close()
-        a = answer(prep.source.path, status, body, "text/event-stream" in kind)
-        rec = next(iter(rl.calls(tag)[-1:]), {})
-        a.update({"send": i + 1, "route": tag, "seconds": round(time.time() - t0, 3), "refused": refused,
-                  "cost_usd": rec.get("cost_usd"), "cost_from": rec.get("cost_from")})
-        if refused:
+        a, rec = post(rl, prep, f"r{i + 1:0{width}d}")
+        a["send"] = i + 1
+        if a["refused"]:
             stop.set()
-            why.append(f"send {i + 1} was refused ({refused}): " + str(rec.get("error") or ""))
-        elif status in STOP_STATUS:
+            why.append(f"send {i + 1} was refused ({a['refused']}): " + str(rec.get("error") or ""))
+        elif a["status"] in STOP_STATUS:
             stop.set()
-            why.append(f"send {i + 1}: the provider refused the key (HTTP {status})")
+            why.append(f"send {i + 1}: the provider refused the key (HTTP {a['status']})")
         else:
             a["label"] = rule(a)
-        line = next(iter(exchanges.lines(os.path.join(rl.dir, exchanges.FOLDER), tag)), {})
-        a["sent_sha256"] = line.get("sent_sha256")
         return a
 
     try:
@@ -755,7 +802,7 @@ def send(prep: Prepared, times: int, max_usd: float, out: str, *, rule: Optional
                           "refused": sum(1 for a in answers if a.get("refused")), "not_sent": times - len(answers)},
                 # the relay's own record of each send that went out: its bytes are the prepared request's
                 "sent_as_prepared": all(a.get("sent_sha256") == prep.sha256 for a in answers if not a.get("refused")),
-                "spend": spend, "counts": count(labels, recorded),
+                "spend": spend, "counts": count(labels, recorded, by_tool=rule is first_tool_call),
                 "same_as_recorded": sum(1 for x in labels if x == recorded)})
     _write_json(os.path.join(out, "replay.json"), doc)
     if say:

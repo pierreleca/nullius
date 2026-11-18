@@ -326,10 +326,11 @@ class Sends(ReplayCase):
 
     def test_a_rule_given_as_a_command_reads_each_answer_without_the_key(self):
         script = os.path.join(self.tmp, "read.py")
-        Path(script).write_text("import json, os, sys\nb = json.load(sys.stdin)\n"
-                                "print(str(len(b['content'])) + ' ' + os.environ.get('OPENROUTER_API_KEY', 'no key'))\n")
+        Path(script).write_text("import json, os, sys\na = json.load(sys.stdin)\n"     # the answer read, and its body as it arrived
+                                "print(a['reasoning'], a['tool_calls'][0]['name'], len(json.loads(a['body'])['content']),"
+                                " os.environ.get('OPENROUTER_API_KEY', 'no key'))\n")
         doc = self.send(self.prepared(), times=2, rule=replay.command_rule(f"{sys.executable} {script}"))
-        self.assertEqual([(r["label"], r["count"]) for r in doc["counts"]], [("2 no key", 2)])
+        self.assertEqual(doc["counts"], [{"label": "look click 2 no key", "count": 2, "recorded": True}], "by the whole label")
         self.assertEqual(doc["rule"], {"name": "command", "command": f"{sys.executable} {script}"})
 
     def test_the_key_is_in_no_file_and_nothing_is_written_in_the_runs_tree(self):
