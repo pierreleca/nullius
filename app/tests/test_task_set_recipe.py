@@ -106,8 +106,9 @@ class OnAHost(Scratch):
                                        sets=payload.recipe_sets(r)), (key, here))
         carried = Path(here) / "app/nullius/catalogue/sets/fakebench/settings.json"
         self.assertEqual(json.loads(carried.read_text())["id"], entry["id"])
-        with self.assertRaises(ValueError):
-            payload.build(str(self.tmp / "cache"), package=empty, catalogue=str(self.cat), sets=[("fakebench", "gone")])
+        for name in ("gone", "../settings"):
+            with self.assertRaises(ValueError):
+                payload.build(str(self.tmp / "cache"), package=empty, catalogue=str(self.cat), sets=[("fakebench", name)])
         # on the host: the snapshot's catalogue copied for the run (execution: cp -R .../app/nullius/catalogue), read there
         run_catalogue = self.tmp / "host" / "runs" / "fake-sets" / "catalogue"
         shutil.copytree(Path(here) / "app/nullius/catalogue", run_catalogue)

@@ -254,7 +254,10 @@ def build(cache: str, *, package: Path | None = None, catalogue: str | None = No
                 continue  # Unfinished JSON drafts are not runnable catalogue entries.
             files.update({f"catalogue/{kind}/{name}/{r}": value for r, value in contents.items()})
     for bench, name in sets or ():
-        task_sets.check_name(name)
+        try:
+            task_sets.check_name(name)
+        except task_sets.Refused as e:
+            raise ValueError(str(e)) from None
         relative = f"sets/{bench}/{name}.json"
         if not _KEY.fullmatch(bench) or "/" in name or not (user / relative).is_file():
             raise ValueError(f"the task set {name} of {bench} is not in the catalogue")
