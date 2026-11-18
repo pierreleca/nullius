@@ -10,6 +10,7 @@ import http.client
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -555,6 +556,18 @@ class CredentialChecks(ReplayCase):
                     mock.patch.object(replay, "_child_env", lambda env, drop=(): dict(os.environ if env is None else env)):
                 case.run(result)
                 self.assertEqual((len(result.failures), len(result.errors)), (1, 0))
+
+
+class ReadingPage(unittest.TestCase):
+    def test_the_documented_reader_consumes_the_parsed_answer(self):
+        page = (APP.parent / "docs" / "cli" / "replay.md").read_text()
+        self.assertIn("no release used the earlier form", page)
+        script = re.search(r'```python title="read_action.py"\n(.*?)```', page, re.S).group(1)
+        body = json.dumps({"choices": [{"message": {"content": '{"action":"click"}'}}]}).encode()
+        answer = replay.answer("/chat/completions", 200, body, False)
+        got = subprocess.run([sys.executable, "-c", script], input=json.dumps(answer),
+                             capture_output=True, text=True, timeout=10)
+        self.assertEqual((got.returncode, got.stdout, got.stderr), (0, "click\n", ""))
 
 
 if __name__ == "__main__":

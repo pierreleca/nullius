@@ -45,6 +45,8 @@ A command given to `--through` or `--read` runs without any provider key in its 
 
 ## Answers
 
+A reading command receives the parsed answer (`status`, `text`, `reasoning`, `tool_calls`) with the raw reply in `body`; no release used the earlier form that supplied only the raw reply.
+
 | Item | Detail |
 | --- | --- |
 | The default rule | The first tool call's name and arguments, as canonical JSON; `no call`; a failed send, its error |
@@ -116,6 +118,16 @@ nullius standard recount <dir> [--read CMD] [--yes REGEX] [--compare A B] [--jso
 ### A worked study
 
 Four calls of two trials, sent four times as recorded and four times with a sentence added to the system text, read by the agent's own parser:
+
+For an agent that writes a JSON object with an `action` field, the reading script is:
+
+```python title="read_action.py"
+import json
+import sys
+
+answer = json.load(sys.stdin)
+print(json.loads(answer["text"])["action"])
+```
 
 ```bash
 nullius standard study studies/one-action --job jobs_standard/JOB --trial TRIAL-1 --trial TRIAL-2 --every 4 \
