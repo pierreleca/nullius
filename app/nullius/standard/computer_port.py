@@ -102,7 +102,8 @@ VERSIONS = (1, 2)
 NAMES_2 = ["info", "screenshot", "upload", "prepare", "click", "move", "drag", "scroll", "type", "key", "wait", "step",
            "done", "fail"]
 WINDOW = ("upload", "prepare")                       # version 2: the tools of the window before the task
-STEP_FILES = 8                                       # the most files a step or a prepare of version 2 names
+STEP_FILES = 32                                      # the most files a step or a prepare of version 2 names
+FILES_ROOM = LINE_BYTES - 64 * 1024                  # of an answer, what its files and image may take
 TASK_GIVEN = b"task-given"                           # the lifeline's message: the agent is being given its task
 PREPARE = "import pyautogui\nimport time\npyautogui.FAILSAFE = False\n{code}"   # a prepare's action, as a step's is
 SCREEN_TOOLS = ("click", "move", "drag", "scroll", "type", "key", "wait")   # answered with the screen after the pause
@@ -219,11 +220,11 @@ V2_TEXTS = {
               "run already holds a file of that sha256, it may be given with no data, and it starts the file.",
     "prepare": "Before the task alone, in the window between the session's start and the task: runs actions in the "
                "desktop, each a line of Python with pyautogui and time imported as a step's are, with no pause after "
-               "them, then reads files, at most 8 paths inside folder. Returns {files}: each in base64, null when there "
+               "them, then reads files, at most 32 paths inside folder. Returns {files}: each in base64, null when there "
                "is no such file. Not a step.",
     "step": "One step of several actions, run in order: each is a line of Python run in the desktop with pyautogui and "
             "time imported, or WAIT. An empty list is a step with no action. With end, done or fail, the actions run "
-            "and then the task ends, in this one step. files, at most 8 paths inside folder, are read once the actions "
+            "and then the task ends, in this one step. files, at most 32 paths inside folder, are read once the actions "
             "and their pauses have run: the answer's files holds each in base64, null when there is no such file. "
             "Returns the step's observation as a PNG image when screenshot is true.",
 }
@@ -251,6 +252,13 @@ def _version_2(table):
 
 def listed(screen, version=1) -> list:
     return [{"name": n, "description": d, "inputSchema": s} for n, d, s in tools(tuple(screen), version)]
+
+
+def _framed(named, got):
+    """The bytes one file takes in an answer: its entry in the files object, framed once more as the JSON text of the
+    answer's content (each quote and backslash escaped)."""
+    text = json.dumps({named: got})
+    return len(text) + text.count('"') + text.count("\\")
 
 
 def inside(folder, path, name):
@@ -538,7 +546,19 @@ class Bridge:
                 self.seen, self.unseen = None, f"{type(e).__name__}: {e}"
         if call.files is None:
             return None
-        return {named: self._file(path) for named, path in call.files}
+        return self._files(call.files, self.seen if call.screen else None)
+
+    def _files(self, named_paths, image=None):
+        """Each file read, in order, as long as the answer holds it: one that would take the answer past LINE_BYTES,
+        with ``image`` in it, is an error, and the files after it are still tried."""
+        room, out = FILES_ROOM - (4 * -(-len(image) // 3) if image else 0), {}
+        for named, path in named_paths:
+            got = self._file(path)
+            if isinstance(got, str) and _framed(named, got) > room:
+                got = {"error": f"the answer would pass {LINE_BYTES} bytes with this file"}
+            room -= _framed(named, got)
+            out[named] = got
+        return out
 
     def _file(self, path):
         try:
@@ -563,7 +583,7 @@ class Bridge:
         for i, code in enumerate(call.actions):
             if code.strip() != "WAIT" and self.desktop.python(PREPARE.format(code=code)) is None:
                 raise Refused(f"the desktop did not end actions[{i}] in time; the actions after it were not run")
-        return {"files": {named: self._file(path) for named, path in call.files or []}}
+        return {"files": self._files(call.files or [])}
 
     def close_window(self):
         """Version 2: the agent is being given its task; upload and prepare are refused from now on, and acting calls

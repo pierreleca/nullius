@@ -144,7 +144,7 @@ class Tools(Port2):
         listed = {t["name"]: t for t in c.ask("tools/list")["result"]["tools"]}
         self.assertEqual(list(listed), ["info", "screenshot", "upload", "prepare", "click", "move", "drag", "scroll",
                                         "type", "key", "wait", "step", "done", "fail"])
-        self.assertEqual(listed["step"]["inputSchema"]["properties"]["files"]["maxItems"], 8)
+        self.assertEqual(listed["step"]["inputSchema"]["properties"]["files"]["maxItems"], 32)
         self.assertEqual(sorted(listed["prepare"]["inputSchema"]["properties"]), ["actions", "files"])
         init = c.initialize()["result"]
         self.assertEqual(init["serverInfo"], {"name": "computer", "version": "2"})
@@ -334,6 +334,29 @@ class StepFiles(Port2):
         got = c.call("step", actions=[], files=["/agent/small"])
         self.assertEqual(value(got), {"steps_left": 1, "done": False, "files": {"/agent/small": {
             "error": "the desktop could not read it: RuntimeError: read failed in the desktop"}}})
+
+    def test_a_step_names_at_most_32_files(self):
+        c = self.start(steps=3)
+        names = [f"/agent/f{i}" for i in range(33)]
+        self.assertEqual(error(c.call("step", actions=[], files=names)), "files holds 0 to 32 items")
+        self.assertEqual(self.left(c), 3)
+        got = value(c.call("step", actions=[], files=names[:32]))
+        self.assertEqual((got["steps_left"], got["files"]), (2, dict.fromkeys(names[:32])))
+
+    def test_files_that_would_take_the_answer_past_its_bound_are_errors_and_the_others_come(self):
+        c = self.start(steps=3)
+        big = b"y" * (11 * 1024 * 1024)                          # 11 MiB: two of them pass 24 MiB in base64
+        for name in ("a", "b", "c"):
+            self.put(f"/agent/{name}", big)
+        self.put("/agent/small", b"hi")
+        got = c.call("step", seconds=60, actions=["pyautogui.press('a')"], screenshot=True,
+                     files=["/agent/a", "/agent/b", "/agent/small", "/agent/c"])
+        self.assertFalse(got["isError"])
+        over = {"error": f"the answer would pass {cp.LINE_BYTES} bytes with this file"}
+        self.assertEqual(value(got)["files"], {"/agent/a": base64.b64encode(big).decode(), "/agent/b": over,
+                                               "/agent/small": base64.b64encode(b"hi").decode(), "/agent/c": over})
+        self.assertEqual(image(got), shot(1))
+        self.assertEqual(self.left(c), 2)
 
     def test_the_files_are_read_once_the_actions_and_their_pauses_have_run(self):
         c = self.start(steps=3)
