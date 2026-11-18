@@ -12,7 +12,7 @@ Open-ended tasks on a real Ubuntu desktop and its applications, each in a VM of 
 <tr><th>Runs on</th><td>Nullius</td></tr>
 <tr><th>Tasks</th><td>369</td></tr>
 <tr><th>Paper</th><td><a href="https://arxiv.org/abs/2404.07972">OSWorld: Benchmarking Multimodal Agents for Open-Ended Tasks in Real Computer Environments</a>, arXiv · 2024</td></tr>
-<tr><th>Needs, ports proven</th><td><code>agent.<wbr>computer/<wbr>v1</code></td></tr>
+<tr><th>Needs, ports proven</th><td><code>agent.<wbr>computer/<wbr>v2</code></td></tr>
 </tbody></table>
 
 ## Datasets
@@ -49,7 +49,7 @@ Open-ended tasks on a real Ubuntu desktop and its applications, each in a VM of 
 
 ## Good to know
 
-- An agent runs it through the computer port: the agent's tool calls drive OSWorld's own loop, one step for each acting call. Steps (100) and Pause (3.0 seconds) set that loop.
+- An agent runs it through version 2 of the computer port: the agent's tool calls drive OSWorld's own loop, one step for each acting call. A step's observation is the screenshot that loop hands its agent for the next decision, with no capture added; the files a step names are read once its actions and their pauses have run. Steps (100) and Pause (3.0 seconds) set that loop.
 - Original runs one of OSWorld's own agents, chosen by the Agent option (M3 by default), with a model it is published with.
 - Providers: OpenAI for OpenAI CUA; OpenAI-compatible for Muse Spark (Meta's API) and for EvoCUA, AutoGLM-OS and Mano (your model server); OpenRouter for the others.
 - Only M3, PromptAgent and Qwen-CUA have completed tasks through Nullius. The other agents were checked up to their first model call.
@@ -68,7 +68,7 @@ Open-ended tasks on a real Ubuntu desktop and its applications, each in a VM of 
 
 ## Nullius limitations
 
-- An agent needs the computer port, proven by its conformance kit. The agent side has been checked on a fake desktop alone.
+- An agent needs version 2 of the computer port, proven by its conformance kit. The agent side has been checked on a fake desktop alone.
 - Preparing the VM image (its lock and its download) is not bounded by a unit's setup time; the core's own limit on setup ends it.
 - A VM start that hangs holds the start gate until its unit's setup time ends; units waiting for the gate fail at the end of theirs.
 - On the local backend an agent runs as you and can write where you can, the runner's folder included.

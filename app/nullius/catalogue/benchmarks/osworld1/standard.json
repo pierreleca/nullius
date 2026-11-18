@@ -5,7 +5,7 @@
   "summary": "Each task is a unit: a real Ubuntu desktop in its own VM, set up by the task's config. One of OSWorld's own agents acts on it from its observations, or an agent acts through the computer port, its tool calls the steps of OSWorld's own loop; OSWorld's own evaluator reads the VM's final state.",
   "family": "agent",
   "needs": [
-    "agent.computer/v1"
+    "agent.computer/v2"
   ],
   "upstream": {
     "repository": "https://github.com/xlang-ai/OSWorld",
@@ -27,7 +27,8 @@
       "locked": true
     },
     "participant": true,
-    "unit_end": true
+    "unit_end": true,
+    "task_given": true
   },
   "mcp_servers": {
     "computer": {
