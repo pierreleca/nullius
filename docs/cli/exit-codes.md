@@ -26,8 +26,8 @@ One exception: `conform` without `--port` passes over a kit refused for what its
 | Streams | stdout for output, stderr for diagnostics; `--json` is one document |
 | Job id | The job directory's name, everywhere |
 | Secrets | Saved settings load before unified dispatch; read commands make no model call and never print credentials. Job content is redacted (`app/nullius/redact.py`) |
-| Writes | Reads write nothing, open no socket; import under `-o`; the standard its jobs, and a user definition on `new`, `prove`, `conform`, `fidelity`; `replay` its own folder; migration writes only with `--apply` |
-| Paid actions | Will need `--confirm`. There is no judge command yet. `standard replay` sends only under its required `--max-usd`; `--dry-run` sends nothing |
+| Writes | Reads write nothing, open no socket; import under `-o`; the standard its jobs, and a user definition on `new`, `prove`, `conform`, `fidelity`; `replay` and `study` their own folder, `recount` a file in it; migration writes only with `--apply` |
+| Paid actions | Will need `--confirm`. There is no judge command yet. `standard replay` and `standard study` send only under their required `--max-usd`; `--dry-run` sends nothing |
 
 <div class="grid cards" markdown>
 
