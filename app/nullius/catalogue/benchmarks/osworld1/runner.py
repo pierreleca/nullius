@@ -2,7 +2,7 @@
 they are, with the computer port's bridge as the loop's agent (nullius.standard.computer_port).
 
     runner.py --example TASK_JSON --result-dir DIR --socket PATH --ready FILE --lifeline FD --steps N --pause SECONDS
-              --vm VM_IMAGE --calls FILE [--held FOLDER]
+              --vm VM_IMAGE --calls FILE [--held FOLDER] [--progress PROGRESS]
 
 The driver starts it in an agent's unit's setup, in the unit's runner folder (the trial's .work/osworld/), with the
 upstream's folder and the nullius package on its import path. It builds the upstream's DesktopEnv as the null control
@@ -17,6 +17,7 @@ replaced.
   the steps left and evaluates the desktop as it is); its close stops the runner as SIGTERM does.
 - FILE, the call log: one line per tool call, {tool, start, end, isError}.
 - FOLDER, the run's folder of files sent once, when the driver gives one (computer_port.Held).
+- PROGRESS, the progress file the bridge keeps, when the driver gives one: {steps, steps_limit, ended, open}.
 
 A stop is taken once. The clean-up (the bridge's end and the server's close, then the desktop's close within
 CLOSE_SECONDS) takes at most STOP_SECONDS; past it the runner exits 1 all the same, and the driver, which lets a
@@ -98,6 +99,7 @@ def main(argv=None):
     for name in ("--example", "--result-dir", "--socket", "--ready", "--vm", "--calls"):
         p.add_argument(name, required=True)
     p.add_argument("--held")
+    p.add_argument("--progress")
     p.add_argument("--lifeline", type=int, required=True)
     p.add_argument("--steps", type=int, required=True)
     p.add_argument("--pause", type=float, required=True)
@@ -140,7 +142,8 @@ def run(a, port, stop, turn):
                          enable_proxy=False)
         os.makedirs(where, exist_ok=True)
         bridge = port.Bridge(Desktop(env, os.path.dirname(os.path.abspath(a.calls))), a.steps, a.pause, SCREEN,
-                             PYTHON_SECONDS, on_first=first, held=port.Held(a.held) if a.held else None)
+                             PYTHON_SECONDS, on_first=first, held=port.Held(a.held) if a.held else None,
+                             progress=a.progress)
         server = port.Server(bridge, a.socket, a.calls)
         turn.bridge = bridge
         lib_run_single.run_single_example(bridge, env, example, a.steps, example["instruction"],

@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import contextlib
 import hashlib
+import io
 import json
 import os
 import select
@@ -190,14 +191,16 @@ class Port(unittest.TestCase):
     """A unit: a fake desktop, the bridge over it, the server at a socket of the test's and the stand-in loop in a
     thread, as a runner holds them."""
 
-    def start(self, steps=3, pause=0.05, held=None, go=True):
+    def start(self, steps=3, pause=0.05, held=None, go=True, progress=False):
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp, True)
         root = os.path.join(self.tmp, "desktop")
         os.mkdir(root)
         self.desktop = FakeDesktop(root)
         self.first = threading.Event()
-        self.bridge = cp.Bridge(self.desktop, steps, pause, (1920, 1080), 30, on_first=self.first.set, held=held)
+        self.progress = os.path.join(self.tmp, "progress.json") if progress else None
+        self.bridge = cp.Bridge(self.desktop, steps, pause, (1920, 1080), 30, on_first=self.first.set, held=held,
+                                progress=self.progress)
         folder = os.path.join(self.tmp, "socket")
         os.mkdir(folder, 0o700)
         self.socket, self.log = os.path.join(folder, "s"), os.path.join(self.tmp, "calls.jsonl")
@@ -300,7 +303,11 @@ class Tools(Port):
                                   ("type", {"text": ""}, "text is a text, not empty"),
                                   ("scroll", {"x": 1, "y": 1, "dy": 0}, "dy or dx is not 0"),
                                   ("step", {"actions": ["DONE"]}, "the task's end is the tool done or fail"),
+                                  ("step", {"actions": ["FAIL"], "end": "fail"}, "the task's end is the tool done or fail"),
                                   ("step", {"actions": "pyautogui.click()"}, "actions is a list"),
+                                  ("step", {"actions": [], "end": "stop"}, "end is one of done, fail"),
+                                  ("step", {"actions": [], "end": "DONE"}, "end is one of done, fail"),
+                                  ("step", {"actions": [], "end": True}, "end is a text"),
                                   ("upload", {"path": "a", "data": "!!"}, "data is base64"),
                                   ("upload", {"path": "a", "sha256": "ABC"}, "sha256 is 64 lowercase")]:
             self.assertIn(words, error(c.call(tool, **args)), tool)
@@ -408,6 +415,36 @@ class TurnEnd(Port):
         self.assertEqual(self.ran, ["FAIL", ("evaluated", 1)])
         self.assertIn("the task has ended (fail)", error(c.call("click", x=1, y=1)))
 
+    def test_a_step_with_an_end_runs_its_actions_then_ends_the_task_in_that_one_step(self):
+        for end, final in (("done", "DONE"), ("fail", "FAIL")):
+            with self.subTest(end=end):
+                c = self.start(steps=5)
+                c.call("click", x=1, y=1)
+                got = c.call("step", actions=["pyautogui.press('a')", "WAIT"], response="last", end=end)
+                self.assertEqual((value(got), image(got)), ({"steps_left": 3, "done": True}, None))
+                self.assertEqual(self.evaluated(), 2)                    # the click's step, then the step and its end
+                self.assertEqual(self.ran, ["pyautogui.click(1, 1, clicks=1, button='left')", "pyautogui.press('a')",
+                                            "WAIT", final, ("evaluated", 2)])
+                self.assertEqual(error(c.call("click", x=1, y=1)), f"the task has ended ({end})")
+                self.assertEqual(error(c.call("screenshot")), f"the task has ended ({end})")
+                self.assertEqual(value(c.call("info"))["steps_left"], 3)
+
+    def test_a_step_with_an_end_and_no_action_is_the_end_alone(self):
+        c = self.start(steps=3)
+        got = c.call("step", actions=[], end="fail", screenshot=True)
+        self.assertEqual((value(got), image(got)), ({"steps_left": 2, "done": True}, PNG))
+        self.assertEqual(self.evaluated(), 1)
+        self.assertEqual(self.ran, ["FAIL", ("evaluated", 1)])
+
+    def test_a_step_with_an_end_on_the_last_step_ends_by_its_end_not_by_the_budget(self):
+        c = self.start(steps=2)
+        c.call("click", x=1, y=1)
+        self.assertEqual(value(c.call("step", actions=["pyautogui.press('a')"], end="done")),
+                         {"steps_left": 0, "done": True})
+        self.assertEqual(self.evaluated(), 2)
+        self.assertEqual(self.ran[-2:], ["DONE", ("evaluated", 2)])
+        self.assertEqual(error(c.call("click", x=1, y=1)), "the task has ended (done)")
+
     def test_a_turn_end_on_the_lifeline_ends_the_turn_and_its_close_stops_the_runner(self):
         self.start(steps=2)
         read, write = os.pipe()
@@ -422,6 +459,104 @@ class TurnEnd(Port):
         os.close(read)
         self.assertFalse(reader.is_alive())
         kill.assert_called_once_with(os.getpid(), signal.SIGTERM)
+
+
+class Progress(Port):
+    """The progress file the bridge keeps: the steps taken, the budget, what ended the loop and the calls waiting at
+    the desktop. An answer is written to the client before the file follows it, so each state is waited for."""
+
+    def count(self):
+        with open(self.progress) as f:
+            return json.load(f)
+
+    def says(self, steps, limit, ended="", open_=0):
+        want = {"steps": steps, "steps_limit": limit, "ended": ended, "open": open_}
+        self.assertTrue(until(lambda: self.count() == want), f"{self.count()} is not {want}")
+
+    def test_the_file_says_each_state_from_setup_to_done(self):
+        c = self.start(steps=4, go=False, progress=True)
+        self.assertEqual(self.count(), {"steps": 0, "steps_limit": 4, "ended": "", "open": 0})   # after setup
+        shot = c.start("screenshot")                             # waits for the desktop to be ready
+        self.says(0, 4, open_=1)
+        self.go.set()
+        c.result(shot)
+        self.says(0, 4)
+        c.call("click", x=1, y=1)
+        self.says(1, 4)
+        self.desktop.gate.clear()                                # the next step is held in the loop
+        held = c.start("click", x=2, y=2)
+        self.says(2, 4, open_=1)
+        self.desktop.gate.set()
+        c.result(held)
+        self.says(2, 4)
+        c.call("done")
+        self.says(3, 4, "done")
+        self.evaluated()
+        self.says(3, 4, "done")
+
+    def test_the_file_says_what_ended_the_loop(self):
+        for ended, calls in (("fail", [("fail", {})]),
+                             ("done", [("step", {"actions": ["WAIT"], "end": "done"})]),
+                             ("fail", [("click", {"x": 1, "y": 1}), ("step", {"actions": [], "end": "fail"})]),
+                             ("steps", [("click", {"x": 1, "y": 1}), ("step", {"actions": ["WAIT"]})])):
+            with self.subTest(ended=ended, calls=[tool for tool, _ in calls]):
+                c = self.start(steps=2, progress=True)
+                for tool, args in calls:
+                    self.assertFalse(c.call(tool, **args)["isError"])
+                self.evaluated()
+                self.says(len(calls), 2, ended)
+
+    def test_a_turn_that_ended_with_no_stop_is_said(self):
+        c = self.start(steps=5, progress=True)
+        c.call("click", x=1, y=1)
+        self.bridge.end_turn()
+        self.assertEqual(self.evaluated(), 5)
+        self.says(1, 5, "turn")
+        self.assertEqual(error(c.call("click", x=1, y=1)), "the agent's turn has ended")
+        self.says(1, 5, "turn")
+
+    def test_a_done_taken_before_the_turns_end_is_what_ended_the_loop(self):
+        c = self.start(steps=5, go=False, progress=True)
+        final = c.start("done")
+        self.says(0, 5, open_=1)
+        self.bridge.end_turn()
+        self.go.set()
+        self.assertEqual(value(c.result(final))["done"], True)
+        self.evaluated()
+        self.says(1, 5, "done")
+
+    def test_a_reader_in_a_loop_never_reads_part_of_the_file(self):
+        c = self.start(steps=60, pause=0, progress=True)
+        seen, failures, stop = [], [], threading.Event()
+
+        def read():
+            while not stop.is_set():
+                try:
+                    with open(self.progress) as f:
+                        seen.append(json.load(f))
+                except (OSError, ValueError) as e:
+                    failures.append(repr(e))
+
+        reader = threading.Thread(target=read, daemon=True)
+        reader.start()
+        try:
+            for i in range(59):
+                c.call("click", x=i, y=i)
+            c.call("done")
+            self.evaluated()
+        finally:
+            stop.set()
+            reader.join(5)
+        self.assertEqual(failures, [])
+        self.assertTrue(all(set(s) == {"steps", "steps_limit", "ended", "open"} for s in seen))
+        self.assertGreater(len({s["steps"] for s in seen}), 10)
+        self.says(60, 60, "done")
+
+    def test_a_bridge_given_no_path_writes_no_file(self):
+        c = self.start(steps=2)
+        c.call("done")
+        self.evaluated()
+        self.assertEqual(sorted(os.listdir(self.tmp)), ["calls.jsonl", "desktop", "socket"])
 
 
 class Errors(Port):
@@ -759,6 +894,12 @@ class Descriptions(Bare):
         self.assertIn("click, move, drag, scroll, type, key and wait return the screen as a PNG image", instructions)
         self.assertIn("step does when screenshot is true", instructions)
         self.assertIn("done and fail answer before they run, with no image", instructions)
+        self.assertIn("A step with end, done or fail, runs its actions and then ends the task, in that one step",
+                      instructions)
+        self.assertIn("With end, done or fail, the actions run and then the task ends, in this one step",
+                      listed["step"]["description"])
+        self.assertEqual(listed["step"]["inputSchema"]["properties"]["end"]["enum"], ["done", "fail"])
+        self.assertEqual(listed["step"]["inputSchema"]["required"], ["actions"])
 
 
 class Wires(Bare):
@@ -985,6 +1126,128 @@ class TurnEndAndSteps(Bare):
                 self.assertEqual(list(actions), [action])
                 self.assertEqual(final.answers[0][0]["done"], True)
                 self.assertEqual(b.predict("", {}), ("", []))
+
+
+class StepEnd(Bare):
+    def test_one_predict_hands_the_actions_then_the_end_once_the_call_is_answered(self):
+        b = self.bridge()
+        call = self.call(b, "step", actions=["first()", "second()"], response="words", end="done")
+        response, actions = b.predict("", {})
+        self.assertEqual((response, next(actions), next(actions)), ("words", "first()", "second()"))
+        self.assertEqual(call.answers, [])                       # held while the loop runs the second action
+        self.assertEqual(next(actions), "DONE")
+        self.assertEqual(call.answers, [({"steps_left": 4, "done": True}, None, None)])
+        self.assertEqual(list(actions), [])
+        self.assertEqual((b.used, b.ended), (1, "the task has ended (done)"))
+
+    def test_a_step_whose_actions_the_loop_did_not_run_to_their_end_hands_no_end(self):
+        b = self.bridge()
+        call = self.call(b, "step", actions=["first()", "second()"], end="fail")
+        _, actions = b.predict("", {})
+        self.assertEqual(next(actions), "first()")
+        actions.close()                                          # the loop gave the step up: an action failed
+        self.assertEqual(call.answers, [(None, None, "the step was not run to its end")])
+        self.assertIsNone(b.ended)
+        click = self.call(b, "click", x=1, y=1)                  # the task goes on
+        _, actions = b.predict("", {})
+        self.assertEqual(list(actions), ["pyautogui.click(1, 1, clicks=1, button='left')"])
+        self.assertEqual(click.answers[0][0], {"steps_left": 3, "done": False})
+
+    def test_the_turns_end_during_the_actions_refuses_the_step_and_its_end(self):
+        b = self.bridge()
+        call = self.call(b, "step", actions=["first()", "second()"], end="done")
+        _, actions = b.predict("", {})
+        self.assertEqual(next(actions), "first()")
+        b.end_turn()
+        self.assertEqual(list(actions), [])
+        self.assertEqual(call.answers, [(None, None, "the agent's turn has ended")])
+        self.assertEqual(b.predict("", {}), ("", []))
+
+    def test_a_progress_file_that_cannot_be_written_leaves_the_task_as_it_is(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        with mock.patch.object(cp.sys, "stderr", io.StringIO()) as said:
+            b = cp.Bridge(FakeDesktop(tmp), 3, 0, (100, 100), 30, progress=os.path.join(tmp, "no-such", "progress.json"))
+            self.addCleanup(b.finish)
+            call = self.call(b, "click", x=1, y=1)
+            _, actions = b.predict("", {})
+            self.assertEqual(len(list(actions)), 1)
+        self.assertEqual(call.answers[0][0], {"steps_left": 2, "done": False})
+        self.assertEqual(said.getvalue().count("the progress file was not written"), 1)
+
+    def test_a_step_with_no_end_hands_no_end(self):
+        b = self.bridge()
+        call = self.call(b, "step", actions=["first()"])
+        _, actions = b.predict("", {})
+        self.assertEqual(list(actions), ["first()"])
+        self.assertEqual(call.answers, [({"steps_left": 4, "done": False}, None, None)])
+        self.assertIsNone(b.ended)
+
+
+class ProgressFiles(unittest.TestCase):
+    def setUp(self):
+        self.tmp = self.enterContext(tempfile.TemporaryDirectory())
+        self.folder = os.path.join(self.tmp, "runner")
+        os.mkdir(self.folder)
+        self.path = os.path.join(self.folder, "progress.json")
+
+    def bridge(self):
+        b = cp.Bridge(FakeDesktop(self.tmp), 3, 0, (100, 100), 30, progress=self.path)
+        self.addCleanup(b.finish)
+        return b
+
+    def state(self):
+        with open(self.path) as f:
+            return json.load(f)
+
+    def test_a_hard_link_beside_progress_is_not_written_through(self):
+        outside = os.path.join(self.tmp, "record")
+        with open(outside, "w") as f:
+            f.write("keep this record")
+        os.link(outside, self.path + ".part")
+        self.bridge()
+        with open(outside) as f:
+            self.assertEqual(f.read(), "keep this record")
+        self.assertEqual(self.state(), {"steps": 0, "steps_limit": 3, "ended": "", "open": 0})
+        self.assertEqual(sorted(os.listdir(self.folder)), ["progress.json", "progress.json.part"])
+
+    def test_a_fifo_beside_progress_does_not_wait_for_a_reader(self):
+        os.mkfifo(self.path + ".part")
+        code = ("import sys\nfrom tests.test_standard_computer_port import cp, FakeDesktop\n"
+                "cp.Bridge(FakeDesktop(sys.argv[1]), 3, 0, (100, 100), 30, progress=sys.argv[2]).finish()\n")
+        try:
+            result = subprocess.run([sys.executable, "-c", code, self.tmp, self.path],
+                                    env=dict(os.environ, PYTHONPATH=APP), stdin=subprocess.DEVNULL,
+                                    capture_output=True, text=True, timeout=5)
+        except subprocess.TimeoutExpired:
+            self.fail("the progress write waited for a FIFO reader")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.state(), {"steps": 0, "steps_limit": 3, "ended": "", "open": 0})
+        self.assertEqual(sorted(os.listdir(self.folder)), ["progress.json", "progress.json.part"])
+
+    def test_a_failed_progress_write_closes_and_removes_its_temporary_file(self):
+        b = self.bridge()
+        opened, real = [], cp.tempfile.mkstemp
+
+        def mkstemp(**kw):
+            opened.append(real(**kw))
+            return opened[-1]
+
+        for module, name in ((cp.os, "fdopen"), (cp.json, "dump"), (cp.os, "replace")):
+            with self.subTest(operation=name):
+                before = self.state()
+                b.used += 1
+                with mock.patch.object(cp.tempfile, "mkstemp", mkstemp), \
+                        mock.patch.object(module, name, side_effect=OSError("write failed")), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    b._progress()
+                self.assertEqual(self.state(), before)
+                self.assertEqual(os.listdir(self.folder), ["progress.json"])
+                with self.assertRaises(OSError):
+                    os.fstat(opened[-1][0])
+                b._progress()
+                self.assertEqual(self.state(), dict(before, steps=b.used))
+                self.assertEqual(os.listdir(self.folder), ["progress.json"])
 
 
 class Uploads(Bare):
@@ -1249,6 +1512,18 @@ class UpstreamLoop(unittest.TestCase):
         self.assertEqual([e["seconds"] for e in events if e["event"] == "wait"], [60, 20])
         with open(self.log) as f:
             self.assertEqual([json.loads(line)["tool"] for line in f], ["screenshot", "click", "step", "done"])
+
+    def test_a_step_with_an_end_is_one_step_of_the_upstreams_loop(self):
+        p, c = self.run_unit(steps=5)
+        self.assertEqual(value(c.call("click", x=10, y=20))["steps_left"], 4)
+        self.assertEqual(value(c.call("step", actions=["pyautogui.press('enter')"], response="enter", end="done")),
+                         {"steps_left": 3, "done": True})
+        result, traj, events = self.ended(p)
+        self.assertEqual(result, "1.0\n")
+        self.assertEqual([(t["step_num"], t["action"], t["response"]) for t in traj],
+                         [(1, "pyautogui.click(10, 20, clicks=1, button='left')", ""),
+                          (2, "pyautogui.press('enter')", "enter"), (2, "DONE", "enter")])
+        self.assertEqual([e["last"] for e in events if e["event"] == "evaluate"], ["DONE"])
 
     def test_a_turn_that_ends_with_no_done_has_the_desktop_evaluated_as_it_is(self):
         p, c = self.run_unit(steps=4)

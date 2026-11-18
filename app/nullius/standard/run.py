@@ -425,6 +425,138 @@ class Licences:
         return {"kind": kind, "value": text} if text else None
 
 
+TICK_SECONDS = 5.0                    # how often the live feed is told the counts of each running unit (Ticker)
+PROGRESS_BYTES = 4096                 # the most of a progress file read: it holds a few small numbers
+
+
+class Ticker:
+    """The job's one thread that tells the live feed the counts of each running unit (``trial.progress``).
+
+    Every ``every`` seconds, for each unit it watches, it reads the unit's progress file when its setup named one
+    (``progress``, a path inside the trial: ``{steps, steps_limit, ...}``) and the lines the unit's relay added to
+    the record of its agent's calls since the last read. It sends an event only when a value changed: ``step`` and
+    ``step_limit``; ``calls``, the calls answered, counted as a cap on them counts them, and ``calls_limit`` when the
+    run has that cap; the tokens and the cost, as the unit's end gives them. A progress file that is missing, half
+    written, not a plain file inside the trial or not readable gives nothing and is no error, and the last value
+    read stays; a record line not yet ended is read once it is. A unit's last counts are read and sent as it stops
+    being watched (:meth:`drop`), before its end is told."""
+
+    def __init__(self, feed, every: Optional[float] = None):
+        self.feed, self.every = feed, TICK_SECONDS if every is None else every
+        self.units: Dict[str, dict] = {}          # by trial name: what is read of it, and what was last sent
+        self.lock = threading.Lock()
+        self.ended = threading.Event()
+        self.thread: Optional[threading.Thread] = None
+
+    def start(self) -> "Ticker":
+        self.thread = threading.Thread(target=self._run, name="feed-ticker", daemon=True)
+        self.thread.start()
+        return self
+
+    def _run(self) -> None:
+        while not self.ended.wait(self.every):
+            self.tick()
+
+    def close(self) -> None:
+        """The job's end: the thread stops, waited for one tick at most."""
+        self.ended.set()
+        if self.thread is not None:
+            self.thread.join(self.every)
+
+    def watch(self, name: str, *, task: str, agent: str, trial: str, record: Optional[str] = None,
+              progress=None, calls_limit: Optional[int] = None) -> None:
+        """A unit to read from now on: ``record``, its relay's record of its agent's calls; ``progress``, the
+        path its setup named, relative to ``trial`` (any other value is not read)."""
+        path = None
+        if isinstance(progress, str) and progress and not os.path.isabs(progress):
+            norm = os.path.normpath(progress)
+            if norm != os.pardir and not norm.startswith(os.pardir + os.sep):
+                path = os.path.join(trial, norm)
+        with self.lock:
+            self.units[name] = {"task": task, "agent": agent, "trial": trial, "record": record, "progress": path,
+                                "calls_limit": calls_limit, "at": 0, "counts": None, "steps": None, "sent": None}
+
+    def drop(self, name: str) -> None:
+        """A unit that ended: its last counts read and sent, then it is read no more."""
+        with self.lock:
+            u = self.units.pop(name, None)
+            if u is not None:
+                self._read(name, u)
+
+    def tick(self) -> None:
+        with self.lock:
+            for name, u in self.units.items():
+                self._read(name, u)
+
+    def _read(self, name: str, u: dict) -> None:
+        self._steps(u)
+        self._calls(u)
+        n, steps = u["counts"], u["steps"] or (None, None)
+        values = {"step": steps[0], "step_limit": steps[1],
+                  **({"calls": n["calls"], "calls_limit": u["calls_limit"], "n_input_tokens": n["input"],
+                      "n_cache_tokens": n["cached"], "n_output_tokens": n["output"], "cost_usd": n["cost"]} if n else {})}
+        if all(v is None for v in values.values()) or values == u["sent"]:
+            return
+        try:
+            self.feed.emit("trial.progress", name, task=u["task"], agent=u["agent"], **values)
+        except Exception:                        # noqa: BLE001 - a count the board misses is no unit's error
+            return
+        u["sent"] = values
+
+    @staticmethod
+    def _steps(u: dict) -> None:
+        """The progress file's steps and limit, when it reads as one; the values before it otherwise."""
+        path = u["progress"]
+        if path is None:
+            return
+        try:
+            if not os.path.realpath(path).startswith(os.path.realpath(u["trial"]) + os.sep):
+                return                           # a link out of the trial is not followed
+            # not a link, and never waited on: a pipe left at the path cannot hold the thread
+            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+            try:
+                raw = os.read(fd, PROGRESS_BYTES + 1) if stat.S_ISREG(os.fstat(fd).st_mode) else b""
+            finally:
+                os.close(fd)
+            got = json.loads(raw) if 0 < len(raw) <= PROGRESS_BYTES else None
+        except (OSError, ValueError):
+            return
+        whole = lambda v, least: isinstance(v, int) and not isinstance(v, bool) and v >= least
+        if isinstance(got, dict) and whole(got.get("steps"), 0):
+            u["steps"] = (got["steps"], got["steps_limit"] if whole(got.get("steps_limit"), 1) else None)
+
+    @staticmethod
+    def _calls(u: dict) -> None:
+        """The record's lines ended since the last read, added to the unit's counts."""
+        if u["record"] is None:
+            return
+        try:
+            with open(u["record"], "rb") as f:
+                f.seek(u["at"])
+                got = f.read()
+        except OSError:
+            return
+        end = got.rfind(b"\n") + 1               # a line the relay is still writing is read at the next look
+        u["at"] += end
+        n = u["counts"] = u["counts"] or {"calls": 0, "input": 0, "cached": 0, "output": 0, "cost": None}
+        number = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)
+        for line in got[:end].splitlines():
+            try:
+                c = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(c, dict) or c.get("status") != 200:
+                continue
+            reply = c.get("reply") if isinstance(c.get("reply"), dict) else {}
+            usage = reply.get("usage") if isinstance(reply.get("usage"), dict) else {}
+            for k in ("input", "cached", "output"):
+                n[k] += usage[k] if number(usage.get(k)) else 0
+            if number(c.get("cost_usd")):
+                n["cost"] = (n["cost"] or 0) + c["cost_usd"]
+            if c.get("model") and not relay._free(str(c.get("path") or "")):
+                n["calls"] += 1
+
+
 class Run:
     timeouts: Dict[str, float] = {}           # the run's own time limits by phase (__init__), none by default
     forced_turns: Optional[int] = None
@@ -895,6 +1027,7 @@ class Run:
         self.loopback = None
         self.pace = pacing.Pace(self._stopped, self._halt)
         self._running = 0
+        self.ticker = Ticker(self.feed)          # each running unit's steps and calls, told to the live board
         again: Dict[str, dict] = {}              # an attempt's last try, by its trial's name, when it was retried
 
         def work_unit(iur):
@@ -918,6 +1051,7 @@ class Run:
         pool = ThreadPoolExecutor(self.concurrency)
         futures = []
         try:
+            self.ticker.start()
             # a model server on this machine's loopback, which the relays' containers cannot reach as written
             if self.backend == "container" and self.base and container.on_loopback(self.base):
                 self.loopback = container.Loopback(self.base, image=self.image, job=self.name).start()
@@ -941,6 +1075,7 @@ class Run:
         finally:
             # a Stop or Ctrl-C: the units not begun are not begun, those running end with their agents
             pool.shutdown(wait=True, cancel_futures=True)
+            self.ticker.close()
             self.let_go()
             begun = [not f.cancelled() and f.exception() is None and f.result() is not None for f in futures]
             results = [again.get(f.result()["trial_name"], f.result()) for f, ran in zip(futures, begun) if ran]
@@ -1263,6 +1398,17 @@ class Run:
         if self.feed is not None:
             self.feed.emit("trial.phase", name, task=unit, agent=self.other["key"], phase=phase, timeout_sec=timeout)
 
+    def watch(self, name: str, unit: str, trial: str, setup: dict, rl, tag: str) -> None:
+        """A unit whose counts the live feed is told while it runs (:class:`Ticker`): the progress file its setup
+        named, and its relay's record of its agent's calls. A relay in a container writes that record into the
+        trial, as this machine's user, so the same file is read on every backend."""
+        if getattr(self, "ticker", None) is None:
+            return
+        record = getattr(rl, "dir", None) if rl is not None else None
+        self.ticker.watch(name, task=unit, agent=self.other["key"], trial=trial, progress=setup.get("progress"),
+                          record=os.path.join(record, tag + ".jsonl") if record else None,
+                          calls_limit=getattr(self, "max_calls", None))
+
     def over_acp(self) -> bool:
         """Whether the unit's other is an agent driven over ACP: the one kind with a setup of its own,
         its start and its session. A command agent starts and runs in one call, an upstream setup and a
@@ -1350,6 +1496,7 @@ class Run:
                 raise _Ended("EnvironmentSetupError", f"the unit's relay: {e}")
             if rl is not None:
                 rl.unit_secrets = self.agent_licences(env_def, rl)
+            self.watch(name, unit, trial, setup, rl, tag)
             if own:
                 self.phase(name, unit, "env_setup", self.phase_limit("image", IMAGE_SECONDS))     # its image, pulled or built when not here yet
                 box = self.own_box(tag, setup, rl, home)
@@ -1417,6 +1564,8 @@ class Run:
                 rl.stop()
                 for ln in getattr(rl, "mcp_listeners", None) or []:
                     ln.stop()
+            if getattr(self, "ticker", None) is not None:
+                self.ticker.drop(name)           # its last counts, on the feed before its end
         calls = rl.calls(tag) if rl is not None else []
         failed = relay.failure(calls)
         if failed and failed[0] not in (ledgers.ERROR, ledgers.UNIT_ERROR, relay.CALLS_ERROR) and exc is None \

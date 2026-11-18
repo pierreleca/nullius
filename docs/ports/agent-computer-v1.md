@@ -31,11 +31,11 @@ One call is one step. Points use `x` and `y` in screenshot pixels at the screen'
 | `type` | `text` | The text typed key by key |
 | `key` | `keys`: a list pressed together, such as `["ctrl", "s"]` | The chord |
 | `wait` | none | No action, the pause alone |
-| `step` | `actions`: a list of texts, each Python run in the desktop with `pyautogui` and `time` imported, or `WAIT`; `response`, the agent's words, optional; `screenshot`, default false | The actions in order, as one step. An empty list is a step with no action |
+| `step` | `actions`: a list of texts, each Python run in the desktop with `pyautogui` and `time` imported, or `WAIT`; `response`, the agent's words, optional; `screenshot`, default false; `end`, optional: `done` or `fail` | The actions in order, as one step. An empty list is a step with no action. With `end`, the task then ends in that step, as by `done` or `fail` |
 | `done` | `message`, optional | The task is complete |
 | `fail` | `reason`, optional | The task cannot be done |
 
-A call of `click`, `move`, `drag`, `scroll`, `type`, `key`, `wait` or `step` answers once its actions have run and their pauses have passed, with `{steps_left, done}`; `done` is true once the task takes no more calls. Each adds the screen as a PNG image; `step` adds it only when `screenshot` is true. `done` and `fail` return `{steps_left, done}` with no image as the benchmark takes them, before it runs them: the benchmark's loop asks for nothing after them.
+A call of `click`, `move`, `drag`, `scroll`, `type`, `key`, `wait` or `step` answers once its actions have run and their pauses have passed, with `{steps_left, done}`; `done` is true once the task takes no more calls. Each adds the screen as a PNG image; `step` adds it only when `screenshot` is true. `done` and `fail` return `{steps_left, done}` with no image as the benchmark takes them, before it runs them: the benchmark's loop asks for nothing after them. A `step` with `end` answers once its actions have run, with `done` true, and the benchmark then takes its end. `DONE` or `FAIL` among the actions is refused.
 
 ## Rules
 
@@ -46,7 +46,7 @@ A call of `click`, `move`, `drag`, `scroll`, `type`, `key`, `wait` or `step` ans
 | The limits | In `initialize`'s `instructions`, in `info`, and as `steps_left` in every acting result |
 | The step budget | [OSWorld1](../benchmarks/supported/osworld1.md#options). The benchmark's loop stops at its budget. After the last step, every tool but `info` answers with an error, and the benchmark evaluates the desktop as it is. An acting call sent while every step is taken is refused at once |
 | Model calls | A benchmark may bound the agent's model calls at its step budget |
-| The turn's end | A turn that ends with neither `done` nor `fail` ends the task, and the benchmark evaluates the desktop as it is. The driver tells the runner in one message. That message ends the wait for the agent's next call. The actions of a step not yet run are not run, and that call is refused. A `done` or `fail` taken before the message still reaches the benchmark. Each step left then passes with no action. The benchmark's loop counts those steps up to its budget, and its own records list no action for them. The call log holds the agent's own steps |
+| The turn's end | A turn that ends with neither `done` nor `fail` ends the task, and the benchmark evaluates the desktop as it is. The driver tells the runner in one message. That message ends the wait for the agent's next call. The actions of a step not yet run are not run, and that call is refused, its `end` with it. A `done` or `fail` taken before the message still reaches the benchmark. Each step left then passes with no action. The benchmark's loop counts those steps up to its budget, and its own records list no action for them. The call log holds the agent's own steps |
 | Input | Pointer and keyboard input goes through the acting tools. Input sent through `python` is outside the port |
 | One at a time | The server runs one desktop operation at a time, in the order the calls arrive. A call sent during a step waits for it |
 | Before the desktop is ready | `initialize`, `tools/list` and `info` answer at once; any other call waits. The session starts once the desktop is ready |
@@ -63,8 +63,9 @@ The shared code is `app/nullius/standard/computer_port.py`, with the standard li
 | Piece | What the runner gives or does |
 | --- | --- |
 | `Desktop` | Five methods over its desktop: `python(code)`, `upload(path, data)`, `read(path)`, `capture()`, `password()` |
-| `Bridge` | Handed to the benchmark's own loop as its agent: `reset` does nothing, and each `predict` returns the actions of the agent's next acting call. Given the loop's step budget and pause, the screen's size and `python_seconds`; `finish` once the loop has returned |
+| `Bridge` | Handed to the benchmark's own loop as its agent: `reset` does nothing, and each `predict` returns the actions of the agent's next acting call. Given the loop's step budget and pause, the screen's size, `python_seconds` and the path of the progress file; `finish` once the loop has returned |
 | `Server` | The MCP server at a Unix socket in a folder of the user's alone, with the path of the call log |
+| The progress file | `{steps, steps_limit, ended, open}` in the runner's folder, rewritten whole at each change. `ended` is empty while the loop runs, then `done`, `fail`, `steps` or `turn`; `open` counts the calls waiting at the desktop. Setup's reply names it as `progress`, a path inside the trial; the score says the first three |
 | `Held` | The run's folder for files sent once, when the runner keeps one. A file is kept through a temporary file of its own, and read only when it is no link |
 | The session's server | Setup's `mcp` entry runs `computer_pipe.py SOCKET`, which joins the session's stdio to the socket |
 | `ready`, `lifeline`, `Stop` | The ready file, written at the loop's first `predict`; the lifeline from the driver, whose line `turn-end` is the turn's end and whose close is a stop; the one stop, whose last resort gives its own callback half a second before it exits |

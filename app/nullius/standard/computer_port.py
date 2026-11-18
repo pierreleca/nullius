@@ -12,9 +12,11 @@ imports it with the package's folder on its path.
 - ``Bridge``: the loop's agent. Each ``predict`` hands the loop the actions of the agent's next acting call (one
   step), and serves the reading calls that come before it, in the thread of the loop: one desktop operation at a time,
   in the order the calls arrived. An acting call is held until the loop has run its actions and their pause, then
-  answered. Once the steps are used up, every call but ``info`` is refused. The turn's end (``end_turn``) ends the
+  answered; a ``step`` with an ``end`` then hands the loop its DONE or FAIL, in the same step. Once the steps are used
+  up, every call but ``info`` is refused. The turn's end (``end_turn``) ends the
   wait for the agent's next call and the actions of a step not yet run; a ``done`` or ``fail`` already taken still
-  reaches the loop, and each later ``predict`` gives the loop no action.
+  reaches the loop, and each later ``predict`` gives the loop no action. Given a path, it keeps the progress file
+  there: the steps taken, the budget, what ended the loop and the calls waiting at the desktop.
 - ``Server``: the MCP server over a Unix socket: JSON-RPC 2.0, one message a line; every connection of the unit's
   session accepted, the task's state kept in the bridge, outside them; each connection's answers written by a thread
   of its own, at most OUT_BYTES waiting, so that a client that stops reading holds up nothing else; one line per tool
@@ -155,13 +157,18 @@ def tools(screen):
                        "items": {"type": "string", "minLength": 1, "maxLength": 32}}}, ["keys"])),
         ("wait", "One step: no action, the pause alone. Returns the screen as a PNG image after the pause.", obj({})),
         ("step", "One step of several actions, run in order: each is a line of Python run in the desktop with "
-                 "pyautogui and time imported, or WAIT. An empty list is a step with no action. Returns the screen "
-                 "as a PNG image after the actions and pauses when screenshot is true.",
+                 "pyautogui and time imported, or WAIT. An empty list is a step with no action. With end, done or "
+                 "fail, the actions run and then the task ends, in this one step. Returns the screen as a PNG image "
+                 "after the actions and pauses when screenshot is true.",
          obj({"actions": {"type": "array", "items": {
                  "type": "string", "pattern": NOT_BLANK,
                  "not": {"pattern": f"^{BLANK}*(DONE|FAIL){BLANK}*$",
-                         "description": "the task's end is the tool done or fail, not an action of step"}}},
-              "response": {"type": "string"}, "screenshot": {"type": "boolean"}}, ["actions"])),
+                         "description": "the task's end is the tool done or fail, or the argument end, not an action "
+                                        "of step"}}},
+              "response": {"type": "string"}, "screenshot": {"type": "boolean"},
+              "end": {"type": "string", "enum": ["done", "fail"],
+                      "description": "Once the actions have run: done, the task is complete; fail, it cannot be done"}},
+             ["actions"])),
         ("done", "The last step: the task is complete. Returns {steps_left, done}, with no image.",
          obj({"message": {"type": "string"}})),
         ("fail", "The last step: the task cannot be done. Returns {steps_left, done}, with no image.",
@@ -244,14 +251,16 @@ def _valid(value, schema, tool, name):
 
 class Call:
     """One tools/call: its tool and arguments, when it came, and how it is answered (once). ``checked`` adds what
-    the call stands for: its arguments as checked, its actions, its response, whether its answer has the screen, and
-    an upload's data, decoded."""
+    the call stands for: its arguments as checked, its actions, its response, whether its answer has the screen, a
+    step's end (``done``, ``fail`` or None), and an upload's data, decoded."""
 
     def __init__(self, tool, args, reply):
         self.tool, self.args, self._reply = tool, args, reply
         self.start = time.time()
         self.clean, self.actions, self.response, self.screen, self.data = {}, [], "", False, None
+        self.end = None
         self.answered = False
+        self.on_answer = None                        # called once the call is answered (the bridge's count of it)
         self._lock = threading.Lock()
 
     def answer(self, value=None, image=None, error=None):
@@ -259,7 +268,11 @@ class Call:
             if self.answered:
                 return
             self.answered = True
-        self._reply(self, value, image, error)
+        try:
+            self._reply(self, value, image, error)
+        finally:
+            if self.on_answer is not None:
+                self.on_answer()
 
 
 def checked(call, screen) -> None:
@@ -288,6 +301,7 @@ def checked(call, screen) -> None:
         call.actions = ["WAIT"]
     elif tool == "step":
         call.actions, call.response, call.screen = list(a["actions"]), a.get("response", ""), a.get("screenshot", False)
+        call.end = a.get("end")
     elif tool in FINAL:
         call.actions, call.response = [FINAL[tool]], a.get("message" if tool == "done" else "reason", "")
     elif tool == "upload" and "data" in a:
@@ -344,9 +358,13 @@ class Bridge:
 
     ``steps`` is the loop's budget, ``pause`` the seconds it waits after each action, ``screen`` the screen's size in
     pixels, ``python_seconds`` how long the desktop waits for a reply to python. ``on_first`` is called at the loop's
-    first ``predict``, before any call is served (a runner writes its ready file there). ``held`` is a Held, or None."""
+    first ``predict``, before any call is served (a runner writes its ready file there). ``held`` is a Held, or None.
+    ``progress``, when given, is the path of the progress file: ``{steps, steps_limit, ended, open}``, the steps
+    taken, the budget, what ended the loop (empty while it runs, ``done``, ``fail``, ``steps`` or ``turn``) and the
+    calls taken in and not yet answered, which wait at the desktop. It is rewritten whole at each change, so that a
+    reader sees one state or the next, never part of one."""
 
-    def __init__(self, desktop, steps, pause, screen, python_seconds, on_first=None, held=None):
+    def __init__(self, desktop, steps, pause, screen, python_seconds, on_first=None, held=None, progress=None):
         self.desktop, self.steps, self.pause = desktop, int(steps), pause
         self.screen, self.python_seconds = (int(screen[0]), int(screen[1])), python_seconds
         self.on_first, self.held = on_first, held
@@ -356,10 +374,15 @@ class Bridge:
         self.calls = collections.deque()             # calls waiting for the loop, in the order they came
         self.running = None                          # the acting call the loop is running
         self.ended = None                            # why no call is taken any more
+        self.ended_by = ""                           # what ended the loop: done, fail, steps or turn
+        self.open = 0                                # calls taken in and not yet answered
         self.turn_ended = False
         self.first = True
         self.partial = {}                            # this unit's uploads being kept: path -> [sha256, hash, bytes]
         self.change = threading.Condition()
+        self.progress, self.written, self.unwritten = progress, None, False
+        self.counted = threading.Lock()              # the count of calls waiting and the progress file; taken last
+        self._progress()
 
     # -- the loop's agent -------------------------------------------------------------------------------------------
     def reset(self, *_, **__):
@@ -394,17 +417,20 @@ class Bridge:
             call = self.calls.popleft()
             if call.tool in FINAL:
                 self.used += 1
+                self.ended_by = call.tool
                 refused = self._end(f"the task has ended ({call.tool})")
             elif call.tool in ACTING:
                 self.used += 1
                 self.running = call
+            self._progress()
         for c in refused:
             c.answer(error=self.ended)
         return call
 
     def _run(self, call):
         """The call's actions, one at a time as the loop asks, none once the turn has ended; once the loop asks past
-        the last, it has run them all and their pause, and the call is answered."""
+        the last, it has run them all and their pause, and the call is answered. A step with an end then gives the
+        loop its DONE or FAIL, in the same step; one not run to its end gives none."""
         ran = False
         try:
             for action in call.actions:
@@ -415,11 +441,21 @@ class Bridge:
                 ran = True
         finally:
             self._ran(call, ran)
+        if ran and call.end:
+            yield FINAL[call.end]
 
     def _ran(self, call, ran):
         with self.change:
             self.running = None
-            refused = self._end("the steps are used up") if self.used >= self.steps else []
+            if ran and call.end:                     # the task has ended, as after done or fail
+                self.ended_by = call.end
+                refused = self._end(f"the task has ended ({call.end})")
+            elif self.used >= self.steps:
+                self.ended_by = self.ended_by or "steps"
+                refused = self._end("the steps are used up")
+            else:
+                refused = []
+            self._progress()
             value = {"steps_left": self.steps - self.used, "done": self.ended is not None}
             turn_ended = self.turn_ended
         if not ran:
@@ -523,9 +559,16 @@ class Bridge:
                     self.booked += 1
             if refusal is None:
                 self.calls.append(call)
+                call.on_answer = self._answered
+                self._progress(opened=1)
                 self.change.notify_all()
         if refusal is not None:
             call.answer(error=refusal)
+
+    def _answered(self):
+        """A call taken in has been answered. Not under the condition: an answer may be given while another thread
+        holds it."""
+        self._progress(opened=-1)
 
     def info(self):
         with self.change:
@@ -540,7 +583,8 @@ class Bridge:
                 f"Look at a screenshot before the first pointing action. Each call of click, move, drag, scroll, "
                 f"type, key, wait, step, done or fail is one step. After the actions and their {self.pause:g} s pauses, "
                 f"click, move, drag, scroll, type, key and wait return the screen as a PNG image; step does when "
-                f"screenshot is true. done and fail answer before they run, with no image. "
+                f"screenshot is true. done and fail answer before they run, with no image. A step with end, done "
+                f"or fail, runs its actions and then ends the task, in that one step. "
                 f"There are {self.steps} steps in all, and steps_left in each acting answer. Once they are used "
                 f"up, every call but info is refused. Pointer and keyboard input goes through those tools, not through "
                 f"python. A turn that ends with neither done nor fail ends the task as the desktop then is.")
@@ -551,6 +595,9 @@ class Bridge:
         with self.change:
             self.turn_ended = True
             refused = self._end("the agent's turn has ended", keep_final=True)
+            if not self.ended_by and not self.calls:  # no done or fail kept for the loop
+                self.ended_by = "turn"
+            self._progress()
         for c in refused:
             c.answer(error=self.ended)
 
@@ -576,6 +623,36 @@ class Bridge:
             self.calls.append(final)
         self.change.notify_all()
         return refused
+
+    def _progress(self, opened=0):
+        """``opened`` added to the calls waiting, then the progress file rewritten whole when its state changed,
+        through a part file replaced at once. Each change of the state is followed by a call here, so the last
+        write holds the last state. A write that fails leaves the task as it is, and is said once."""
+        with self.counted:
+            self.open += opened
+            if self.progress is None:
+                return
+            state = {"steps": self.used, "steps_limit": self.steps, "ended": self.ended_by, "open": self.open}
+            if state == self.written:
+                return
+            fd = part = None
+            try:
+                fd, part = tempfile.mkstemp(prefix=".progress-", dir=os.path.dirname(self.progress))
+                f, fd = os.fdopen(fd, "w", encoding="utf-8"), None
+                with f:
+                    json.dump(state, f)
+                os.replace(part, self.progress)
+                self.written = state
+            except OSError as e:
+                if not self.unwritten:
+                    self.unwritten = True
+                    sys.stderr.write(f"computer: the progress file was not written: {type(e).__name__}: {e}\n")
+            finally:
+                if fd is not None:
+                    os.close(fd)
+                if part is not None:
+                    with contextlib.suppress(OSError):
+                        os.unlink(part)
 
 
 def frame(message) -> bytes:
