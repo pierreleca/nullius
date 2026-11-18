@@ -136,6 +136,26 @@ class Units(unittest.TestCase):
         self.assertFalse(got["passed"])
         self.assertIsNone(u.shown)
 
+    def test_late_fails_without_a_prior_step_when_the_start_picture_is_delayed(self):
+        original = Fake.python
+
+        def delayed(d, code, seconds=None):
+            if "os.makedirs(p, 0o700)" in code:
+                self.assertTrue(v1.OPEN["late"].up.wait(5))
+            return original(d, code, seconds)
+
+        with mock.patch.object(Fake, "python", delayed):
+            ws, s = self.unit("late")
+            u, c = v1.OPEN["late"], self.client(s)
+            driver.task_given("late", ws)
+            self.assertFalse(c.call("screenshot")[0])
+            self.assertEqual(u.bridge.used, 0)
+            self.assertFalse(c.call("click", dict(zip("xy", v1.centre(u.boxes[u.expected["target"]]))))[0])
+            got = driver.score("late", ws, [], "done")
+        self.assertEqual(got["detail"]["steps_used"], 1)
+        self.assertFalse(got["passed"])
+        self.assertIn("without looking again by a step", got["detail"]["why"])
+
 
 if __name__ == "__main__":
     unittest.main()

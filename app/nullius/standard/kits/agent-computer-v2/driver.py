@@ -90,7 +90,7 @@ class Server(port.Server):
 
 
 class Pictures(v1.KitDesktop):
-    """The unit's desktop as the bridge reaches it, each picture's start and end kept on the driver's clock."""
+    """The unit's desktop, with each step's picture timed on the driver's clock."""
 
     def __init__(self, d, unit):
         super().__init__(d)
@@ -99,7 +99,8 @@ class Pictures(v1.KitDesktop):
     def capture(self):
         t = time.monotonic()
         png = super().capture()
-        self.unit.pictures.append((t, time.monotonic()))
+        if self.unit.bridge.running is not None:
+            self.unit.pictures.append((t, time.monotonic()))
         return png
 
 
