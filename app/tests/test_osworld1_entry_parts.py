@@ -264,7 +264,7 @@ class StartAndReap(unittest.TestCase):
 
     def test_a_runner_that_does_not_start_leaves_no_pipe_end_and_no_folder(self):
         self.d._task = lambda unit: ("os", "a", {"instruction": "x"})
-        self.d._workspace = lambda where: "vm"
+        self.d._workspace = lambda where, vm_root=None: "vm"
         self.d.START_LOCK = os.path.join(self.tmp, "start.lock")
         sock = os.path.join(self.tmp, "socket")
         os.mkdir(sock)
@@ -329,7 +329,7 @@ class Bounds(unittest.TestCase):
         with open(path, "w") as f:
             f.write("import json, os, sys, time\n"
                     "a = sys.argv[1:]\nget = lambda k: a[a.index(k) + 1]\n"
-                    f"open({os.path.join(self.tmp, 'begun')!r}, 'w').close()\n"
+                    f"json.dump(a, open({os.path.join(self.tmp, 'begun')!r}, 'w'))\n"
                     f"while not os.path.exists({self.go!r}):\n    time.sleep(0.02)\n"
                     "print('INFO: Started container with ports - VNC: 1', flush=True)\n"
                     "json.dump({'ok': True, 'password': 'pw'}, open(get('--ready') + '.part', 'w'))\n"
@@ -337,10 +337,79 @@ class Bounds(unittest.TestCase):
                     "os.read(int(get('--lifeline')), 1)\n")
         self.d.RUNNER_FILE = path
         self.d._task = lambda unit: ("os", "a", {"instruction": "x"})
-        self.d._workspace = lambda where: "vm"
+        self.d._workspace = lambda where, vm_root=None: "vm"
         quiet(self.d)
         self.d.START_LOCK = os.path.join(self.tmp, "start.lock")
         self.addCleanup(lambda: [self.d._reap_runner(w, seconds=0) for w in list(self.d.RUNNERS)])
+
+    def test_the_step_option_reaches_the_runner_with_the_port_default(self):
+        from nullius.standard import definitions
+        self.stand_in_runner()
+        open(self.go, "w").close()
+        ws = os.path.join(self.tmp, "job", "trial", "workspace")
+        bench = definitions.get("benchmark", "osworld1")
+        for given, expected in (({}, "100"), ({"max_steps": "default"}, "100"),
+                                ({"max_steps": "1"}, "1"), ({"max_steps": "1500"}, "1500"),
+                                ({"max_steps": "9999"}, "9999")):
+            with self.subTest(given=given):
+                values, bad = definitions.bench_options_of(bench, "test_small", given, kind="agent")
+                self.assertEqual(bad, [])
+                with mock.patch.dict(os.environ, {"NULLIUS_OPTION_MAX_STEPS": values["max_steps"]}):
+                    self.d._start_runner("os__a", ws, "x", time.time() + 30)
+                with open(os.path.join(self.tmp, "begun")) as f:
+                    argv = json.load(f)
+                self.assertEqual(argv[argv.index("--steps") + 1], expected)
+                self.d._reap_runner(self.d._runner_dir(ws))
+
+    def test_a_late_reaper_removes_only_its_setup_at_the_same_trial_path(self):
+        workspace, remove, passes = self.d._workspace, self.d._remove_vms, self.d._remove_passes
+        self.stand_in_runner()
+        self.d._workspace, self.d._remove_vms, self.d._remove_passes = workspace, remove, passes
+        open(self.go, "w").close()
+        image = os.path.join(self.tmp, "Ubuntu.qcow2")
+        open(image, "w").close()
+        self.d.vm_image = lambda: image
+        ws = os.path.join(self.tmp, "job", "trial", "workspace")
+        where = self.d._runner_dir(ws)
+        self.d._start_runner("os__a", ws, "x", time.time() + 30)
+        first = self.d.RUNNERS[where]
+        with mock.patch.object(self.d, "_spawn_reaper") as spawn:
+            self.d._hand_over(where)
+        first["p"].wait(timeout=10)
+        self.d._start_runner("os__a", ws, "x", time.time() + 30)
+        second = self.d.RUNNERS[where]
+        with open(os.path.join(self.tmp, "begun")) as f:
+            argv = json.load(f)
+        current_vm = argv[argv.index("--vm") + 1]
+        self.assertTrue(current_vm.startswith(second["sock_dir"] + os.sep))
+        self.assertNotEqual(first["sock_dir"], second["sock_dir"])
+        mounts = {key: os.path.join(entry["sock_dir"], "vm", "Ubuntu.qcow2")
+                  for key, entry in (("first", first), ("second", second))}
+        removed = []
+
+        def docker(argv, **kw):
+            if argv[1] == "ps":
+                out = " ".join(mounts)
+            elif argv[1] == "inspect":
+                out = mounts[argv[-1]]
+            else:
+                self.assertEqual(argv[1:3], ["rm", "-f"])
+                for key in argv[3:]:
+                    removed.append(key)
+                    mounts.pop(key)
+                out = ""
+            return subprocess.CompletedProcess(argv, 0, stdout=out)
+
+        with mock.patch.object(self.d.shutil, "which", return_value="docker"), \
+                mock.patch.object(self.d.subprocess, "run", side_effect=docker), \
+                mock.patch.object(self.d.time, "sleep"):
+            self.d.reap_runner(*spawn.call_args.args)
+        self.assertEqual(removed, ["first"])
+        self.assertEqual(mounts, {"second": current_vm})
+        self.assertFalse(os.path.exists(first["sock_dir"]))
+        self.assertTrue(os.path.exists(current_vm))
+        self.assertIsNone(second["p"].poll())
+        self.assertIs(self.d.RUNNERS[where], second)
 
     def gate_free(self):
         with open(self.d.START_LOCK, "a") as f:
@@ -474,6 +543,38 @@ class Bounds(unittest.TestCase):
         self.d.RUNNERS[where] = {"p": p, "sock_dir": sock, "life": None, "start": self.d._start_time(p.pid)}
         return where, p, sock
 
+    def test_unit_end_reports_a_vm_removal_timeout_and_keeps_it_for_the_reaper(self):
+        where, p, sock = self.owned_runner()
+        ws = os.path.join(self.tmp, "trial", "workspace")
+        with mock.patch.object(self.d.shutil, "which", return_value="docker"), \
+                mock.patch.object(self.d.subprocess, "run", side_effect=subprocess.TimeoutExpired("docker", 0.1)):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self.d.end("os__a", ws)
+        self.assertIn(where, self.d.RUNNERS)
+        self.assertTrue(os.path.isdir(sock))
+        with mock.patch.object(self.d, "_spawn_reaper") as reap:
+            self.d._reap_at_exit()
+        self.assertEqual(reap.call_args.args[2:4], (where, sock))
+        self.assertEqual(self.d.RUNNERS, {})
+
+    def test_unit_end_reports_a_failed_vm_removal_command(self):
+        where, p, sock = self.owned_runner()
+        run = subprocess.run
+
+        def docker(argv, **kw):
+            if argv[1] == "ps":
+                return subprocess.CompletedProcess(argv, 0, stdout="container\n")
+            if argv[1] == "inspect":
+                return subprocess.CompletedProcess(argv, 0, stdout=os.path.join(sock, "vm", "Ubuntu.qcow2"))
+            self.assertEqual(argv[1:3], ["rm", "-f"])
+            return run([sys.executable, "-c", "raise SystemExit(1)"], **kw)
+
+        with mock.patch.object(self.d.shutil, "which", return_value="docker"), \
+                mock.patch.object(self.d.subprocess, "run", side_effect=docker):
+            with self.assertRaises(subprocess.CalledProcessError):
+                self.d.end("os__a", os.path.join(self.tmp, "trial", "workspace"))
+        self.assertIn(where, self.d.RUNNERS)
+
     def test_a_removal_the_drivers_end_cuts_is_handed_to_a_reaper(self):
         where, p, sock = self.owned_runner()
         release = threading.Event()
@@ -525,7 +626,8 @@ class Bounds(unittest.TestCase):
         os.chmod(os.path.join(bin_dir, "docker"), 0o755)
         t0 = time.monotonic()
         with mock.patch.dict(os.environ, {"PATH": bin_dir + os.pathsep + os.environ.get("PATH", "")}):
-            self.d._remove_vms(self.tmp, 0.5)
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self.d._remove_vms(self.tmp, 0.5)
         self.assertLess(time.monotonic() - t0, 5)
 
 

@@ -135,8 +135,14 @@ class RecordDownload(unittest.TestCase):
         path = trial / "verifier/computer-calls.jsonl"
         path.parent.mkdir(exist_ok=True)
         path.write_text('{"tool":"click","note":"sk-abcdefgh1234567890"}\n')
-        page = self.get("/trial/tb-agent/good__x")
-        self.assertIn("Computer tool calls", page.get_data(as_text=True))
+        for name in ("verifier/osworld/computer-calls.jsonl", ".work/osworld/computer-calls.jsonl"):
+            calls = trial / name
+            calls.parent.mkdir(parents=True, exist_ok=True)
+            calls.write_text(path.read_text())
+        page = self.get("/trial/tb-agent/good__x").get_data(as_text=True)
+        self.assertIn("Computer tool calls", page)
+        self.assertIn("OSWorld runner tool calls", page)
+        self.assertNotIn("OSWorld computer tool calls", page)
         download = self.get("/trial/tb-agent/good__x/artifact/computer-calls/download")
         self.assertEqual(download.status_code, 200)
         self.assertIn("[REDACTED]", download.get_data(as_text=True))
