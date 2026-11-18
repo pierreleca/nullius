@@ -332,10 +332,10 @@ def compare():
         if ref is not None
     ]
     summary = summary_rows(chosen) if view.cohort == "whole" or view.shared_tasks else []
-    # There is no truthful wall-clock interval for a subset of parallel trials.
+    # A matched cohort has no recorded planned trial count or wall-clock interval.
     # Whole-run intervals keep their existing ranking, explicitly labelled.
     if view.cohort == "matched":
-        summary = [row for row in summary if row["label"] != "Wall time"]
+        summary = [row for row in summary if row["label"] not in {"Wall time", "Mean over planned"}]
     else:
         for row in summary:
             if row["label"] == "Wall time":

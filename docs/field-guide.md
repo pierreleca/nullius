@@ -135,7 +135,7 @@ How the agent worked, not whether it won. Computed over layer 3.
 | `adjusted_solve_rate` | Resolved ÷ non-infrastructure trials. Only rate limits, API errors, setup errors, spending caps and stopped runs leave the denominator; unknowns remain. Read alongside the raw rate and infrastructure count. | derived | any |
 | `n_infra` | Trials removed from the adjusted denominator as infrastructure failures or run-imposed interruptions. | derived | any |
 | `mean_score` | The mean graded score, weighted by each trial's number of scored parts when present. When no trial passes or fails, it is the headline and the rates read —. | derived | mixed |
-| `mean_score_planned` | The mean of each trial's score over every trial planned, regardless of part counts: one that ended on an error, or never ran, counts 0. Absent when no trial was scored. | derived | mixed |
+| `mean_score_planned` | The mean of each trial's score over every trial planned, regardless of part counts: one that ended on an error, or never ran, counts 0. Absent when no trial was scored. Shown only for whole runs; matched tasks have no recorded planned count. | derived | mixed |
 | `score_by_group · parts_by` | The mean score per value of the field the benchmark breaks it down by (a question's category), from `verifier/parts.json`. | derived | mixed |
 | `n_regressions` | Trials whose patch broke a previously passing test. | derived | swe-bench |
 | `counts` | Trials per outcome, as a stacked bar; on the run page each segment filters the trials. | derived | any |
