@@ -61,6 +61,23 @@ class RerunRecords(unittest.TestCase):
                             name="job", concurrency=1, units_file=dict(UNITS, units=["good", "wrong"]),
                             env={}, say=lambda s: None))
 
+    def test_a_linked_archive_is_refused_before_any_trial_moves(self):
+        path = self.job()
+        outside = self.tmp / "outside"
+        outside.mkdir()
+        (path / "retried").symlink_to(outside, target_is_directory=True)
+        before = digest(path)
+        for exists in (True, False):
+            with self.subTest(target_exists=exists):
+                if not exists:
+                    outside.rmdir()
+                with self.assertRaisesRegex(run.Refused, "retried.*link"):
+                    rerun.rerun(str(path), ["good", "wrong"], root=str(self.root), env={}, say=lambda s: None)
+                self.assertEqual(digest(path), before)
+                self.assertEqual(list(outside.iterdir()) if outside.exists() else [], [])
+                self.assertEqual(outside.exists(), exists)
+                self.assertTrue((path / "retried").is_symlink())
+
     def test_stop_emits_cancellation_before_restoring_the_previous_try(self):
         path = self.job()
         name = "good__u0000"

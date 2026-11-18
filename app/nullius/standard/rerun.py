@@ -163,6 +163,8 @@ def rerun(job_dir: str, ids: List[str], *, reason: str = "", concurrency: Option
         raise run.Refused(f"{job_dir}: not a job of the Nullius standard (no config.json naming it)")
     if not old or running(job_dir):
         raise run.Refused(f"{os.path.basename(job_dir)} is still running: a job is run again once it has ended")
+    if os.path.islink(os.path.join(job_dir, "retried")):
+        raise run.Refused("retried is a symbolic link: use a directory inside the job")
     std = cfg["standard"]
     if std.get("merged_despite"):
         raise run.Refused(f"{os.path.basename(job_dir)} merges shards that differed ({'; '.join(std['merged_despite'])}): "
