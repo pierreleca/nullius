@@ -74,8 +74,23 @@ def _bench_key(benchmark: str) -> str:
     return benchmark
 
 
+def _contained(path: str, folder: str) -> str:
+    resolved = os.path.realpath(path)
+    if os.path.commonpath((resolved, folder)) != folder:
+        raise Refused(f"{path}: outside the task set folder {folder}")
+    return resolved
+
+
+def _folder(benchmark: Optional[str], root: Optional[str]) -> str:
+    folder = os.path.join(os.path.realpath(root_dir(root)), FOLDER)
+    if benchmark is not None:
+        folder = os.path.join(folder, _bench_key(benchmark))
+    return _contained(folder, folder)
+
+
 def path_of(benchmark: str, name: str, root: Optional[str] = None) -> str:
-    return os.path.join(root_dir(root), FOLDER, _bench_key(benchmark), check_name(name) + ".json")
+    folder = _folder(benchmark, root)
+    return _contained(os.path.join(folder, check_name(name) + ".json"), folder)
 
 
 def split_ref(ref: str) -> Tuple[str, Optional[int]]:
@@ -182,15 +197,21 @@ def revision(entry: dict, rev: Optional[int] = None) -> dict:
 
 def entries(benchmark: Optional[str] = None, root: Optional[str] = None) -> Tuple[List[dict], List[str]]:
     """Every entry (of ``benchmark``), by benchmark and name; and the files that could not be read."""
-    base = os.path.join(root_dir(root), FOLDER)
+    base = _folder(None, root)
     got, bad = [], []
     try:
         benches = sorted(os.listdir(base)) if benchmark is None else [_bench_key(benchmark)]
     except FileNotFoundError:
         return [], []
     for b in benches:
-        folder = os.path.join(base, b)
-        if not definitions._KEY.match(b) or not os.path.isdir(folder):
+        if not definitions._KEY.match(b):
+            continue
+        try:
+            folder = _folder(b, root)
+        except Refused as e:
+            bad.append(str(e))
+            continue
+        if not os.path.isdir(folder):
             continue
         for fname in sorted(os.listdir(folder)):
             if not fname.endswith(".json") or fname.startswith("."):

@@ -156,6 +156,43 @@ class Names(Scratch):
                 self.assertIn("not a task set's name", err)
         self.assertFalse(os.path.exists(self.cat))
 
+    def test_links_cannot_escape_through_parent_folders_or_an_entry(self):
+        entry = self.make("dev", "good\n")
+        exported = self.file(json.dumps(read(sets.path_of("fakebench", "dev"))), "export.json")
+        for relative in ("sets", "sets/fakebench", "sets/fakebench/dev.json"):
+            with self.subTest(path=relative):
+                path = os.path.join(self.cat, relative)
+                outside = os.path.join(self.tmp, "outside")
+                os.rename(path, outside)
+                os.symlink(outside, path)
+                try:
+                    for action in (lambda: sets.load("fakebench", "dev"),
+                                   lambda: sets.write(entry),
+                                   lambda: sets.update("fakebench", "dev", add=["model"]),
+                                   lambda: sets.import_path(exported)):
+                        with self.assertRaisesRegex(sets.Refused, "outside"):
+                            action()
+                    if relative != "sets/fakebench/dev.json":
+                        with self.assertRaisesRegex(sets.Refused, "outside"):
+                            sets.create(self.b, "new", dataset="all", units=["good"])
+                    else:
+                        with self.assertRaisesRegex(sets.Refused, "outside"):
+                            sets.create(self.b, "dev", dataset="all", units=["good"])
+                    with mock.patch.object(sets.os, "listdir", wraps=os.listdir) as listed:
+                        try:
+                            found, bad = sets.entries()
+                        except sets.Refused as e:
+                            self.assertIn("outside", str(e))
+                        else:
+                            self.assertEqual(found, [])
+                            self.assertTrue(any("outside" in problem for problem in bad))
+                        self.assertNotIn(mock.call(path), listed.call_args_list)
+                finally:
+                    os.unlink(path)
+                    os.rename(outside, path)
+                self.assertEqual(sets.load("fakebench", "dev"), entry)
+                self.assertFalse(os.path.exists(sets.path_of("fakebench", "new")))
+
     def test_creating_a_name_that_exists_is_refused(self):
         first = self.make("dev", "good\n")
         code, out, err = self.cli("set", "create", "fakebench", "dev", "--dataset", "all", "--units", self.file("model\n"))
