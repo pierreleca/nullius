@@ -1184,6 +1184,72 @@ class StepEnd(Bare):
         self.assertIsNone(b.ended)
 
 
+class ProgressFiles(unittest.TestCase):
+    def setUp(self):
+        self.tmp = self.enterContext(tempfile.TemporaryDirectory())
+        self.folder = os.path.join(self.tmp, "runner")
+        os.mkdir(self.folder)
+        self.path = os.path.join(self.folder, "progress.json")
+
+    def bridge(self):
+        b = cp.Bridge(FakeDesktop(self.tmp), 3, 0, (100, 100), 30, progress=self.path)
+        self.addCleanup(b.finish)
+        return b
+
+    def state(self):
+        with open(self.path) as f:
+            return json.load(f)
+
+    def test_a_hard_link_beside_progress_is_not_written_through(self):
+        outside = os.path.join(self.tmp, "record")
+        with open(outside, "w") as f:
+            f.write("keep this record")
+        os.link(outside, self.path + ".part")
+        self.bridge()
+        with open(outside) as f:
+            self.assertEqual(f.read(), "keep this record")
+        self.assertEqual(self.state(), {"steps": 0, "steps_limit": 3, "ended": "", "open": 0})
+        self.assertEqual(sorted(os.listdir(self.folder)), ["progress.json", "progress.json.part"])
+
+    def test_a_fifo_beside_progress_does_not_wait_for_a_reader(self):
+        os.mkfifo(self.path + ".part")
+        code = ("import sys\nfrom tests.test_standard_computer_port import cp, FakeDesktop\n"
+                "cp.Bridge(FakeDesktop(sys.argv[1]), 3, 0, (100, 100), 30, progress=sys.argv[2]).finish()\n")
+        try:
+            result = subprocess.run([sys.executable, "-c", code, self.tmp, self.path],
+                                    env=dict(os.environ, PYTHONPATH=APP), stdin=subprocess.DEVNULL,
+                                    capture_output=True, text=True, timeout=5)
+        except subprocess.TimeoutExpired:
+            self.fail("the progress write waited for a FIFO reader")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.state(), {"steps": 0, "steps_limit": 3, "ended": "", "open": 0})
+        self.assertEqual(sorted(os.listdir(self.folder)), ["progress.json", "progress.json.part"])
+
+    def test_a_failed_progress_write_closes_and_removes_its_temporary_file(self):
+        b = self.bridge()
+        opened, real = [], cp.tempfile.mkstemp
+
+        def mkstemp(**kw):
+            opened.append(real(**kw))
+            return opened[-1]
+
+        for module, name in ((cp.os, "fdopen"), (cp.json, "dump"), (cp.os, "replace")):
+            with self.subTest(operation=name):
+                before = self.state()
+                b.used += 1
+                with mock.patch.object(cp.tempfile, "mkstemp", mkstemp), \
+                        mock.patch.object(module, name, side_effect=OSError("write failed")), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    b._progress()
+                self.assertEqual(self.state(), before)
+                self.assertEqual(os.listdir(self.folder), ["progress.json"])
+                with self.assertRaises(OSError):
+                    os.fstat(opened[-1][0])
+                b._progress()
+                self.assertEqual(self.state(), dict(before, steps=b.used))
+                self.assertEqual(os.listdir(self.folder), ["progress.json"])
+
+
 class Uploads(Bare):
     def test_an_append_leaves_a_file_named_like_its_scratch_alone(self):
         b = self.bridge()

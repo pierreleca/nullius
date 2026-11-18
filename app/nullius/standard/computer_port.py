@@ -635,10 +635,11 @@ class Bridge:
             state = {"steps": self.used, "steps_limit": self.steps, "ended": self.ended_by, "open": self.open}
             if state == self.written:
                 return
-            part = self.progress + ".part"
+            fd = part = None
             try:
-                fd = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                fd, part = tempfile.mkstemp(prefix=".progress-", dir=os.path.dirname(self.progress))
+                f, fd = os.fdopen(fd, "w", encoding="utf-8"), None
+                with f:
                     json.dump(state, f)
                 os.replace(part, self.progress)
                 self.written = state
@@ -646,6 +647,12 @@ class Bridge:
                 if not self.unwritten:
                     self.unwritten = True
                     sys.stderr.write(f"computer: the progress file was not written: {type(e).__name__}: {e}\n")
+            finally:
+                if fd is not None:
+                    os.close(fd)
+                if part is not None:
+                    with contextlib.suppress(OSError):
+                        os.unlink(part)
 
 
 def frame(message) -> bytes:
