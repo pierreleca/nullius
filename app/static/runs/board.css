@@ -357,6 +357,9 @@
 .rp .pick-row { float: left; margin: 4px 8px 0 0; accent-color: var(--accent); }
 .rp .pick-row + .task { display: block; overflow: hidden; }     /* a name that wraps stays beside its tick */
 .rp .tt:has(.pick-row) td:first-child { min-width: 172px; }      /* the tick's room, beside the name's */
+/* a task with no result: a hollow mark, no outcome's colour */
+.rp .oc-no_result { --oc: transparent; }
+.rp .sw.oc-no_result, .rp .oc-no_result i, .rp .odot.oc-no_result { box-shadow: inset 0 0 0 1.5px var(--text-faint); }
 .rp .tt .again-now { color: var(--text-dim); }
 dialog.rerun-ask { width: min(520px, calc(100vw - 32px)); max-height: calc(100vh - 64px); overflow: auto; padding: 24px 28px; border: 1px solid var(--border);
   border-radius: 14px; background: var(--surface); color: var(--text); line-height: 1.6; font-size: 14px; }

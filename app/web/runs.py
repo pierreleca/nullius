@@ -552,7 +552,19 @@ def job(job_id):
                            judgement=judge.job_summary(j) if j.trials else None,
                            control=feasibility.summary_of(j), ended=execution.ended_for(job_id), own=own, deletable=_deletable(job_id, ex),
                            trial_rows=attempts.grouped(j), pass_k=attempts.for_job(j),
-                           again=execute.again_offer(j, ex), running_again=running_again, rerunning=again is not None)
+                           again=execute.again_offer(j, ex), running_again=running_again, rerunning=again is not None,
+                           waiting=waiting_of(j, (again or {}).get("trials") or []))
+
+
+def waiting_of(j, running=()) -> list:
+    """The tasks a standard job planned that have no result (``rerun.unfinished``), each {trial, unit, folder,
+    running}: never begun, or begun and ended with none (``folder``); ``running``, one of the trials ``running``
+    names, those a re-run under way runs. Its feed is read only for a job with fewer trials than it planned: []
+    for every other job."""
+    if not j.standard or len(j.trials) >= j.n_planned:
+        return []
+    from nullius.standard import rerun
+    return [dict(x, trial=name, running=name in running) for name, x in rerun.unfinished(j.dir).items()]
 
 
 def _until_again(j, names):
