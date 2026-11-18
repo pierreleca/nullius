@@ -61,6 +61,21 @@ class RerunRecords(unittest.TestCase):
                             name="job", concurrency=1, units_file=dict(UNITS, units=["good", "wrong"]),
                             env={}, say=lambda s: None))
 
+    def test_a_job_never_run_again_keeps_the_result_a_run_writes(self):
+        # Freeze the clock and transport. The runner still schedules and writes every trial.
+        with mock.patch.object(run.time, "time", return_value=1767225600.0), \
+             mock.patch.object(run.Run, "known_models"), \
+             mock.patch.object(run.Run, "unit_relay", return_value=None), \
+             mock.patch.object(run.Run, "drive_agent", return_value=("", None, {})), \
+             mock.patch.object(run.Run, "benchmark_calls", return_value=[{"status": 200, "reply": {}}]):
+            path = Path(run.run(self.bench, definitions.get("agent", "fake", ROOT), model="m-1", provider="custom",
+                                jobs_root=str(self.tmp), name="job", units_file=UNITS, prices=PRICES, concurrency=2,
+                                env={"MODEL_API_URL": "http://127.0.0.1:1/v1", "MODEL_API_KEY": "fake"},
+                                unsandboxed=True, say=lambda s: None))
+        expected = Path(__file__).parent / "fixtures/standard/ordinary-result.json"
+        self.assertEqual(json.loads((path / "result.json").read_text()), json.loads(expected.read_text()))
+        self.assertFalse((path / "retried").exists())
+
     def test_a_linked_archive_is_refused_before_any_trial_moves(self):
         path = self.job()
         outside = self.tmp / "outside"
@@ -347,11 +362,6 @@ class RerunTest(unittest.TestCase):
         self.assertEqual([x["trial"] for x in got["replaced"]], [before["model"].trial_name])
         self.assertIsNone(self.read(job_dir, "result.json").get("budget"))   # the first run had none: the re-run's is its own
         self.assertTrue(os.path.isfile(os.path.join(job_dir, ".work", "rerun-1", "ledger", "ledger.json")))
-
-    def test_a_job_never_run_again_keeps_the_result_a_run_writes(self):
-        job_dir = self.job()
-        self.assertEqual(sorted(self.read(job_dir, "result.json")), ["finished_at", "id", "n_total_trials", "served", "started_at", "stats"])
-        self.assertFalse(os.path.exists(os.path.join(job_dir, "retried")))
 
 
 if __name__ == "__main__":
