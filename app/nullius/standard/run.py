@@ -11,7 +11,8 @@ A relay per unit, not one for the run: a shared relay is one more thing whose
 failure stops every unit, and a network hop for a unit sandboxed elsewhere.
 One per unit costs a few megabytes and loses only a shared rate limit - each
 unit backs off on its own, as it always did. Its record sits in the trial's
-``.work/relay``.
+``.work/relay``, and the agent's calls kept whole in its ``exchanges``
+(``exchanges``, unless the run is told ``off``).
 
 Backends (``backend``). ``local``: processes on this machine, which are
 not a sandbox - what an agent runs, it runs as the user (``docs/standard.md``,
@@ -74,7 +75,7 @@ from typing import Callable, Dict, List, Optional
 from nullius import constraints as limits, paths, prices as price_list, progress, providers
 from nullius.redact import redact
 from nullius.harbor import feed as live_feed
-from nullius.standard import acp, boat, container, definitions, hostreq, install, job, jsonl, ledger as ledgers, match, mcp_machine, pace as pacing, relay, shard as shards
+from nullius.standard import acp, boat, container, definitions, exchanges as exchange_store, hostreq, install, job, jsonl, ledger as ledgers, match, mcp_machine, pace as pacing, relay, shard as shards
 from nullius.standard.retries import RETRIES, retryable
 
 # the totals a unit's end carries onto the live board, from its trial's agent_result
@@ -429,6 +430,8 @@ class Run:
     timeouts: Dict[str, float] = {}           # the run's own time limits by phase (__init__), none by default
     forced_turns: Optional[int] = None
     max_calls: Optional[int] = None           # the run's cap on a unit's agent's model calls (__init__), none by default
+    exchanges: str = "off"                    # whether a unit's relay keeps its agent's calls whole (__init__: whole by default)
+    exchanges_max_mb: int = exchange_store.MAX_MB
     def __init__(self, bench: dict, other: dict, *, model: str, provider: str, dataset: Optional[str] = None,
                  limit: Optional[int] = None, concurrency: int = 4, jobs_root: str = "jobs", name: Optional[str] = None,
                  turn_seconds: Optional[int] = None, say: Callable[[str], None] = print, env=os.environ,
@@ -441,7 +444,8 @@ class Run:
                  max_usd_per_unit: Optional[float] = None, prices_unreachable: Optional[str] = None,
                  units_file: Optional[dict] = None,
                  constraints: Optional[dict] = None, timeouts: Optional[dict] = None, max_turns: Optional[int] = None,
-                 max_calls: Optional[int] = None, served_by: Optional[Dict[str, List[str]]] = None, boat_size: str = boat.SIZE):
+                 max_calls: Optional[int] = None, served_by: Optional[Dict[str, List[str]]] = None, boat_size: str = boat.SIZE,
+                 exchanges: str = exchange_store.DEFAULT, exchanges_max_mb: int = exchange_store.MAX_MB):
         """``proving``: the run is a conformance kit's, the one run that may
         start before the port it checks is proven - the family must still match.
         ``unsandboxed``: consent to execute code as the user: required for
@@ -509,7 +513,12 @@ class Run:
         (:func:`served_by`), put on every request sent as that model by the
         run's relays (``relay.routing``) and recorded in the job's config.
         Refused when the provider routes no model to several (only
-        ``openrouter`` does), or when it names a model the run does not call."""
+        ``openrouter`` does), or when it names a model the run does not call.
+        ``exchanges``: what each unit's relay keeps of its agent's calls
+        (``exchanges``): ``whole``, the request as sent and the reply as it
+        arrived; ``text``, without the pictures' bytes; ``off``, the call
+        record alone. ``exchanges_max_mb``: a unit's bound on it, in MB. The
+        job's config records both."""
         backend = definitions.names.backend(backend)
         if backend not in BACKENDS:
             raise Refused(f"backend {backend!r} is not one of {list(BACKENDS)}")
@@ -707,6 +716,11 @@ class Run:
             # a capability's route carries the benchmark's reader too (produce): the cap would charge its calls to the capability
             raise Refused("--max-calls caps an agent's model calls: a capability's unit route carries the benchmark's reader too")
         self.max_calls = max_calls
+        if exchanges not in exchange_store.MODES:
+            raise Refused(f"--exchanges {exchanges!r}: one of {', '.join(exchange_store.MODES)}")
+        if isinstance(exchanges_max_mb, bool) or not isinstance(exchanges_max_mb, int) or exchanges_max_mb < 1:
+            raise Refused(f"--exchanges-max-mb {exchanges_max_mb!r}: a whole number of MB, at least 1")
+        self.exchanges, self.exchanges_max_mb = exchanges, exchanges_max_mb
         self.max_turns = max_turns or (bench.get("limits") or {}).get("turns") or MAX_TURNS
         self.say = say
         stamp = time.strftime("%Y-%m-%d__%H-%M-%S")
@@ -869,6 +883,7 @@ class Run:
                          if self.shard else None, units_file=self.units_file,
                          repeat=self.repeat, retries=self.retries, prices=self.prices_record(), constraints=self.constraints, served_by=self.serving,
                          timeouts=self.timeouts, max_turns=self.forced_turns, max_calls=self.max_calls,
+                         exchanges=self.exchanges, exchanges_max_mb=self.exchanges_max_mb,
                          simulator=self.simulator_model if self.other["_kind"] in ("agent", "upstream") and self.simulator_model else "")
         # every unit once, then every unit again: a repeat cut short still has each unit's first run
         work = [(i, u, r) for r in range(1, self.repeat + 1) for i, u in mine]
@@ -1713,7 +1728,7 @@ class Run:
         if self.backend in ("local", "boat"):     # boat: the agent reaches it through its VM's tunnel
             rl = relay.Relay(self.base, self.key, record, prices=getattr(self, "prices", None), model=self.model, side_models=side,
                              key_header=key_header, ledger=self.ledger_file(), serving=getattr(self, "serving", None),
-                             max_calls=self.max_calls).start()
+                             max_calls=self.max_calls, exchanges=self.exchanges, exchanges_max_mb=self.exchanges_max_mb).start()
             rl.unit_url = rl.url(tag)
             return rl
         routes = {tag + "-judge": self.judge_model} if self.judge_model else {}
@@ -1743,7 +1758,7 @@ class Run:
                             prices=price_list.given(self.models_called(), getattr(self, "prices", None)),   # a sidecar's argv: its models' rows
                             servers=self.agent_servers(env_def), doors=doors, hosts=door.hosts if door else None,
                             ledger=self.ledger_file(), serving=getattr(self, "serving", None), max_calls=self.max_calls,
-                            network_probe=probe, probe_now=bool(probe) and self.first_probe())
+                            exchanges=self.exchanges, exchanges_max_mb=self.exchanges_max_mb, network_probe=probe, probe_now=bool(probe) and self.first_probe())
         rl.mcp_listeners = listeners
         try:
             try:
