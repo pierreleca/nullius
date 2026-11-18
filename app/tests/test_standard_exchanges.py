@@ -559,12 +559,19 @@ class Off(WithUpstream):
             self.assertEqual(self.post(r, "u0001", "/chat/completions", ask)[0], 200)
         self.assertFalse(os.path.exists(self.store(off)))
         self.assertFalse(os.path.exists(self.store(default)))      # the relay's own default: off
-        timeless = lambda c: {k: v for k, v in c.items() if k not in ("t0", "t1")}
+        normalized = lambda c: {k: 0.0 if k in ("t0", "t1") else v for k, v in c.items()}
         (a,), (b,), (c,) = off.calls("u0001"), whole.calls("u0001"), default.calls("u0001")
-        self.assertNotIn("n", a)
-        self.assertEqual(timeless(a), timeless(c))
-        self.assertEqual(timeless(a), {k: v for k, v in timeless(b).items() if k != "n"})   # the store adds n alone
-        self.assertEqual(set(a), {"t0", "t1", "path", "model", "model_asked", "status", "request", "headers", "reply"})
+        expected = {
+            "t0": 0.0, "t1": 0.0, "path": "/chat/completions", "model": "m", "model_asked": "m", "status": 200,
+            "request": {"n_messages": 4, "last": [{"role": "assistant", "content": ""}, {"role": "tool", "content": ""}],
+                        "stream": False, "reasoning_effort": None},
+            "headers": ["content-type", "user-agent"],
+            "reply": {"text": "you said: pictures", "tool_calls": [],
+                      "usage": {"input": 10, "output": 2, "cached": 0, "reasoning": 0}},
+        }
+        self.assertEqual(normalized(a), expected)
+        self.assertEqual(normalized(c), expected)
+        self.assertEqual(normalized(b), dict(expected, n=1))
 
     def test_the_judges_and_the_simulated_users_routes_keep_the_record_alone(self):
         r = self.relay()
