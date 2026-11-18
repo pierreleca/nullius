@@ -8,7 +8,9 @@
   const $ = id => document.getElementById(id), d = page.dataset, nouns = d.nouns || 'tasks';
   const writable = d.writable === 'true';
   const chosen = new Set(JSON.parse(($('tasks-chosen-ids') || {}).textContent || '[]'));
-  const st = {q: '', cats: {}, page: 1, showing: false, ready: false, total: 0, pages: 1};
+  // opened from a set: its members first; Show all browses the dataset
+  const st = {q: '', cats: {}, page: 1, showing: !!d.set && chosen.size > 0, ready: false, total: 0, pages: 1};
+  const label = field => field.charAt(0).toUpperCase() + field.slice(1).replace(/_/g, ' ');
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
   const post = (url, body) => nulliusFetch(url, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': d.csrf}, body: JSON.stringify(body)});
   const count = n => `${n.toLocaleString('en-US')} ${n === 1 ? nouns.replace(/s$/, '') : nouns}`;
@@ -21,20 +23,22 @@
     $('tasks-show').disabled = !chosen.size && !st.showing;
   }
   function row(t) {
-    const cats = Object.values(t.categories || {});
+    const tags = Object.values(t.categories || {}).map(v => `<span class="cat-tag">${esc(v)}</span>`).join(' ');
     return `<tr data-id="${esc(t.id)}"><td class="tasks-tick"><input type="checkbox" aria-label="Choose ${esc(t.id)}"${chosen.has(t.id) ? ' checked' : ''}${writable ? '' : ' disabled'}></td>`
-      + `<td><span class="tasks-title">${esc(t.title || t.id)}</span>${t.title ? `<small class="mono faint">${esc(t.id)}</small>` : ''}${t.unknown ? '<small class="warn">not in the listing</small>' : ''}</td>`
-      + `<td>${cats.map(v => `<span class="cat-tag">${esc(v)}</span>`).join(' ')}</td></tr>`;
+      + `<td><span class="tasks-title">${esc(t.title || t.id)}</span>${t.title ? `<small class="mono faint">${esc(t.id)}</small>` : ''}${t.unknown ? '<small class="warn">not in the listing</small>' : ''}`
+      + (tags ? `<span class="tasks-tags">${tags}</span>` : '') + `</td><td class="tasks-catcol">${tags}</td></tr>`;
   }
   function draw(tasks) {
     $('tasks-rows').innerHTML = tasks.map(row).join('');
     $('tasks-table').hidden = !tasks.length;
-    $('tasks-cat-head').hidden = !tasks.some(t => Object.keys(t.categories || {}).length);
-    document.querySelectorAll('#tasks-rows tr td:last-child').forEach(td => { td.hidden = $('tasks-cat-head').hidden; });
+    const fields = [...new Set(tasks.flatMap(t => Object.keys(t.categories || {})))];
+    $('tasks-cat-head').hidden = !fields.length;
+    $('tasks-cat-head').textContent = fields.map(label).join(' · ');
+    document.querySelectorAll('#tasks-rows td.tasks-catcol').forEach(td => { td.hidden = !fields.length; });
   }
   function facets(cats) {
     $('tasks-cats').innerHTML = Object.entries(cats || {}).map(([field, values]) =>
-      `<div class="bench-cats" role="group" aria-label="${esc(field)}"><span class="tasks-catname">${esc(field)}</span>`
+      `<div class="bench-cats" role="group" aria-label="${esc(label(field))}"><span class="tasks-catname">${esc(label(field))}</span>`
       + values.map(v => `<button type="button" class="bench-cat${(st.cats[field] || []).includes(v.value) ? ' on' : ''}" data-field="${esc(field)}" data-value="${esc(v.value)}" aria-pressed="${(st.cats[field] || []).includes(v.value)}">${esc(v.value)} <span class="tasks-n">${v.count}</span></button>`).join('')
       + '</div>').join('');
   }
@@ -68,19 +72,19 @@
     polling = setTimeout(load, 2500);
   }
   async function load() {
-    if (st.showing) return showSelected();
     let got;
     try { got = await (await nulliusFetch(query({page: st.page}))).json(); } catch { return say('The list could not be read. Reload the page.', true); }
     if (!got.ok) return say(got.error || 'The list could not be read.', true);
-    if (!got.ready) { $('tasks-count').textContent = ''; draw([...chosen].map(id => ({id}))); return notReady(got); }
+    if (!got.ready) { $('tasks-count').textContent = ''; draw([...chosen].map(id => ({id}))); pager(); chosenLine(); return notReady(got); }
     say('');
     st.ready = true; st.total = got.total; st.pages = got.pages; st.page = got.page;
     facets(got.categories);
+    const m = $('tasks-match');
+    if (m) { m.hidden = !writable || !got.total; m.textContent = `Select the ${got.total.toLocaleString('en-US')} that match`; }
+    if (st.showing) return showSelected();
     draw(got.tasks);
     $('tasks-count').textContent = `${count(got.total)}` + (got.total !== got.of ? ` of ${got.of.toLocaleString('en-US')}` : '')
       + (got.described ? '' : ' · its driver gives ids alone');
-    const m = $('tasks-match');
-    if (m) { m.hidden = !writable || !got.total; m.textContent = `Select the ${got.total.toLocaleString('en-US')} that match`; }
     pager(); chosenLine();
   }
   async function showSelected() {
@@ -145,6 +149,7 @@
     e.preventDefault();
     save({set: d.set, note: e.target.elements.namedItem('note').value.trim()});
   });
+  if (st.showing) { $('tasks-show').setAttribute('aria-pressed', 'true'); $('tasks-show').textContent = 'Show all'; }
   chosenLine();
   load();
 })();

@@ -335,18 +335,18 @@ class TheJobPage(Case):
         return self.get(f"/job/{name}?view=results").get_data(as_text=True)
 
     def meta(self, html):
-        return visible(re.search(r'<div class="run-meta".*?</div>', html, re.S).group(0))
+        return visible(re.search(r'<div class="run-meta".*?</div>', html, re.S).group(0)).replace(" ,", ",")
 
     def test_the_page_names_the_set_with_a_link_and_a_job_of_no_set_nothing_more(self):
         html = self.page("of-a-set")
-        self.assertIn("task set dev · revision 1", self.meta(html))
+        self.assertIn("task set dev, revision 1", self.meta(html))
         self.assertIn('href="/benchmarks/fakebench/tasks/all?set=dev&amp;rev=1"', html)
         self.assertNotIn("task set", self.meta(self.page("whole")))
 
     def test_a_set_not_in_the_catalogue_is_named_without_a_link(self):
         os.remove(sets.path_of("fakebench", "dev"))
         html = self.page("of-a-set")
-        self.assertIn("task set dev · revision 1", self.meta(html))
+        self.assertIn("task set dev, revision 1", self.meta(html))
         self.assertNotIn("/tasks/all?set=dev", html)
 
     def test_save_as_task_set_stores_the_full_unit_ids_of_the_rows_shown(self):
