@@ -872,6 +872,22 @@ class StandardOnHost(HostBase):
         launch = next(c for c, _ in self.calls if c[0] == "ssh" and "setsid nohup" in c[-1])
         self.assertIn('NULLIUS_PRICES="$HOME/.nullius/runs/std-priced/prices.json"', launch[-1])
 
+    def test_the_providers_record_goes_with_the_run_and_nothing_of_another_or_a_bad_one(self):
+        record = '{"endpoints": {"messages": "/messages"}}'
+        launches = {}
+        for label, provider, value in (("own", "openrouter", record), ("other", "openai", record),
+                                       ("bad", "openrouter", '{"key": "sk-not-a-setting-name"}')):
+            self.calls.clear(); self.polls = 0
+            self.plan.name, self.plan.recipe = f"std-record-{label}", {"provider": provider}
+            with patch.dict(os.environ, {"OPENROUTER": value}):
+                ex = self.run_it()
+            self.assertEqual((ex.state, ex.exit_code), ("done", 0), ex.lines)
+            launches[label] = next(c for c, _ in self.calls if c[0] == "ssh" and "setsid nohup" in c[-1])[-1]
+        self.assertIn("OPENROUTER=" + shlex.quote(record), launches["own"])
+        self.assertNotIn("OPENROUTER=", launches["other"])
+        self.assertNotIn("OPENROUTER=", launches["bad"])
+        self.assertNotIn("sk-not-a-setting-name", launches["bad"])
+
     def test_what_it_does_is_said_in_stages_its_own_and_the_cli_s(self):
         """Getting the host ready is said stage by stage in the run's log, and
         the cli's own stages come through the part's log: the page folds them."""
