@@ -176,7 +176,7 @@ class ScoredCutsTest(unittest.TestCase):
             return out
         trials, cut_records = self.go(self.bench(["quick"], cuts=["time", "calls", "end"]), max_calls=5)
         _, base_records = self.go(self.bench(["quick"]), max_calls=5)
-        # Captured from base commit 7d32581 with write_trial and the quick unit's inputs.
+        # The quick unit's record as the writer wrote it before a benchmark could declare scored cuts.
         with open(os.path.join(os.path.dirname(__file__), "fixtures", "standard", "uncut-record.json")) as f:
             expected = json.load(f)
         self.assertEqual(plain(cut_records["quick"]), expected)
