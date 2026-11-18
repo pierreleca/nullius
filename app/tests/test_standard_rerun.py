@@ -15,6 +15,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
+from nullius.harbor import feed
 from nullius.runs import classify, live, parse
 from nullius.standard import acp, definitions, install, merge, pace as pacing, rerun, run
 from tests import test_standard_run as base
@@ -40,6 +41,53 @@ def said(text):
             out = real(client, sid, want, timeout=timeout)
         return out
     return mock.patch.object(acp.Client, "prompt", prompt)
+
+
+class RerunRecords(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.root = self.tmp / "catalogue"
+        dest = self.root / "benchmarks/fakebench"
+        shutil.copytree(Path(ROOT) / "benchmarks/fakebench", dest)
+        spec = json.loads((dest / "standard.json").read_text())
+        spec["controls"] = {"nop": {"source": "nullius", "from": "Empty answer."}}
+        (dest / "standard.json").write_text(json.dumps(spec))
+        self.bench = definitions.get("benchmark", "fakebench", str(self.root))
+        self.other = definitions.control(self.bench, "nop")
+        self.enterContext(mock.patch.object(install, "HOME", str(self.tmp / "installs")))
+
+    def job(self):
+        return Path(run.run(self.bench, self.other, model="", provider="custom", jobs_root=str(self.tmp),
+                            name="job", concurrency=1, units_file=dict(UNITS, units=["good", "wrong"]),
+                            env={}, say=lambda s: None))
+
+    def test_stop_emits_cancellation_before_restoring_the_previous_try(self):
+        path = self.job()
+        name = "good__u0000"
+        result = path / name / "result.json"
+        original = json.loads(result.read_text())
+        original["agent_result"]["cost_usd"] = 0.25
+        result.write_text(json.dumps(original))
+        writer = feed.Writer(str(path / "events.jsonl"), "job")
+        writer.seq = rerun._last_seq(str(path / "events.jsonl"))
+        writer.emit("trial.end", name, outcome="unresolved", reward=0.0, cost_usd=0.25)
+
+        def stop(r, *args):
+            r._stopped.set()
+            raise OSError("the control was stopped")
+
+        with mock.patch.object(run.Run, "control_answer", stop):
+            rerun.rerun(str(path), ["good"], root=str(self.root), env={}, say=lambda s: None)
+        events = live.read_events(path / "events.jsonl").events
+        ends = [e.data for e in events if e.event == "trial.end" and e.trial == name]
+        self.assertEqual([e["outcome"] for e in ends[-2:]], ["cancelled", "unresolved"])
+        self.assertTrue(ends[-1]["back"])
+        self.assertEqual(json.loads(result.read_text()), original)
+        self.assertFalse((path / "retried").exists())
+        board = live.fold(events).snapshot()
+        card = next(t for t in board["trials"] if t["trial"] == name)
+        self.assertEqual((board["state"], card["state"], card["outcome"]), ("finished", "done", "unresolved"))
+        self.assertEqual((card.get("attempt", 1), board["totals"]["cost_usd"]), (1, 0.25))
 
 
 class RerunTest(unittest.TestCase):

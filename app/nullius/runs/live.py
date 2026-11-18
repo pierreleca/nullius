@@ -640,9 +640,9 @@ def fold(events: list[Event], now: datetime | None = None, notices: list[str] | 
                 t.last_line = d["line"]
         elif e.event == "trial.end":
             t = trial_of(e)
-            if d.get("back") is True and t.outcome is None and t.attempt > 1:
-                # a try that never ended (a Stop under it), and the try before back in its place: the card is that
-                # try's again, and what it cost is no longer an earlier attempt's
+            if d.get("back") is True and t.outcome in (None, "cancelled") and t.attempt > 1:
+                # A stopped try restores the earlier result even after its cancellation end.
+                # The restored cost is no longer an earlier attempt's cost.
                 t.attempt -= 1
                 t.retried.pop()
                 if t.cost_before is not None and _num(d.get("cost_usd")) is not None:
