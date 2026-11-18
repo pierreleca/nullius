@@ -11,7 +11,7 @@ nullius standard rerun JOB_DIR (--unit ID ... | --units FILE | --unfinished) [--
 | --- | --- |
 | `--unit ID` | A trial's name, or a unit's id for each of its attempts; repeatable |
 | `--units FILE` | The ids a file lists, one a line, as [a run's list](run.md#a-list-of-units) |
-| `--unfinished` | Every task the job planned with no result, and every trial the run's spending cap or a Stop interrupted; none: says so, exit 0 |
+| `--unfinished` | Planned trials with no result, cut off by the run's spending cap, or stopped by the run; prints each count before starting; none: says so, exit 0 |
 | `--reason TEXT` | Why, kept in the job's record |
 | `-j N` | Units at once; the job's by default |
 | `--retries N` | Automatic retries of each try, as [a run's](run.md#retries); 0 by default |
@@ -19,6 +19,8 @@ nullius standard rerun JOB_DIR (--unit ID ... | --units FILE | --unfinished) [--
 | `--from-run` | Started by Nullius: `OPENAI_API_KEY` and `OPENAI_BASE_URL` only, saved settings unread |
 
 From a job's page: [Run tasks again](../results.md#run-tasks-again), on the machine the job ran on.
+
+`--unfinished` takes trials with no task verdict. Scored trials and agent errors are excluded.
 
 | Rule | Detail |
 | --- | --- |

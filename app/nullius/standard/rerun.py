@@ -299,6 +299,11 @@ def rerun(job_dir: str, ids: List[str], *, reason: str = "", concurrency: Option
         work.append((i, unit, a))
     held = _hold(job_dir)
     try:
+        if every_unfinished:
+            counts = [sum(name in empty for name in picked)]
+            counts += [sum(said(trials.get(name) or {}).get("error") == error for name in picked)
+                       for error in (ledgers.ERROR, run.CANCELLED)]
+            say(f"unfinished: {counts[0]} no result, {counts[1]} spending cap, {counts[2]} stopped")
         return _again(r, job_dir, old, cfg, trials, picked, work, first_try, reason, t0=time.time(), fresh=fresh,
                       empty=empty)
     finally:

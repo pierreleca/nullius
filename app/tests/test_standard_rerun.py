@@ -110,6 +110,34 @@ class RerunRecords(unittest.TestCase):
                 self.assertNotEqual(kept.stat().st_ino, outside.stat().st_ino)
                 self.assertIsNone(json.loads(kept.read_text())["result"])
 
+    def test_unfinished_counts_interruptions_before_starting_and_keeps_verdicts(self):
+        path = Path(run.run(self.bench, self.other, model="", provider="custom", jobs_root=str(self.tmp),
+                            name="job", concurrency=1, repeat=3, units_file=dict(UNITS, units=["good", "wrong"]),
+                            env={}, say=lambda s: None))
+        names = [name for name, _ in rerun.planned(str(path))]
+        for name, error in zip(names[:4], (None, "NonZeroAgentExitCodeError", "SpendingCapError", run.CANCELLED)):
+            result = path / name / "result.json"
+            res = json.loads(result.read_text())
+            res["exception_info"] = {"exception_type": error} if error else None
+            res["verifier_result"] = None if error else {"rewards": {"score": 0.5}}
+            result.write_text(json.dumps(res))
+        shutil.rmtree(path / names[4])
+        (path / names[5] / "result.json").unlink()
+        verdicts = {name: digest(path / name) for name in names[:2]}
+        lines = []
+        ready = run.Run.ready
+
+        def check_before_start(r):
+            self.assertEqual(lines, ["unfinished: 2 no result, 1 spending cap, 1 stopped"])
+            return ready(r)
+
+        with mock.patch.object(run.Run, "ready", check_before_start):
+            got = rerun.rerun(str(path), [], every_unfinished=True, root=str(self.root), env={}, say=lines.append)
+        self.assertEqual(got["trials"], names[2:])
+        self.assertEqual([entry["trial"] for entry in got["begun"]], [names[4]])
+        self.assertEqual(got["no_result"], [names[5]])
+        self.assertEqual({name: digest(path / name) for name in names[:2]}, verdicts)
+
     def test_stop_emits_cancellation_before_restoring_the_previous_try(self):
         path = self.job()
         name = "good__u0000"
