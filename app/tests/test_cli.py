@@ -211,6 +211,25 @@ class Runs(Scratch):
         self.assertEqual(doc["counts"]["api_error"], 1)
         self.assertEqual(doc["n_infra"], 1)
         self.assertIsNone(doc["adjusted_solve_rate"])
+        self.assertEqual((doc["identity"], doc["mean_score"], doc["mean_score_planned"]), ({}, None, None))   # Harbor's: none
+        self.assertNotIn("mean score", out.stdout)
+
+    def test_a_standard_job_s_document_holds_what_identifies_it_and_both_means_and_the_rest_as_before(self):
+        from dataclasses import fields
+        from tests.test_parse import IDENTITY, SCORED, standard_job
+        standard_job(self.tmp, "scored", [1.0, 0.5, 0.0, None], bench=SCORED)
+        out = self.sh("runs.cli", "show", self.tmp, "scored", "--json")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertNotIn(SECRET, out.stdout + out.stderr)                     # the option filed under a credential's name
+        doc = json.loads(out.stdout)
+        self.assertEqual(doc["identity"], dict(IDENTITY, served={"calls": {"DeepInfra": 4}, "unnamed": 0, "held": {"m-1": True}}))
+        self.assertEqual((doc["mean_score"], doc["mean_score_planned"]), (0.5, 0.375))
+        # every other key as it was: the parsed job's fields, the runs table's row, the Harbor label
+        job = parse.load_all([self.tmp])[0]
+        before = ({f.name for f in fields(parse.Job)} - {"identity"}) | set(runs_cli.job_row(job)) | {"harbor_label"}
+        self.assertEqual(set(doc) ^ before, {"identity", "mean_score", "mean_score_planned"})
+        self.assertIn("  mean score 0.50 over the trials scored · 0.38 over the 4 planned\n",
+                      self.sh("runs.cli", "show", self.tmp, "scored").stdout)
 
 
 # ------------------------------------------------------- the coverage gaps
