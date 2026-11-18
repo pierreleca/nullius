@@ -95,6 +95,7 @@
     const selectedHost = reader.querySelector('.reader-selected');
     const indexHost = reader.querySelector('.reader-rows');
     const pages = reader.querySelector('.reader-pages');
+    const noun = reader.dataset.noun || 'step', Noun = noun[0].toUpperCase() + noun.slice(1);   // the session's items: the head's word
     const change = patch => { state = {...state, ...patch}; loadConversation(); };
     // The view by model call: one row a call, then what it sent, its answer and the steps under it.
     const clock = iso => { const at = new Date(iso); return Number.isNaN(at.getTime()) ? '' : at.toLocaleTimeString(); };
@@ -185,7 +186,7 @@
       selectedHost.append(part('Answer', answer));
       if (chosen.content) selectedHost.append(textWindow(chosen.content));
       if (chosen.before.length) selectedHost.append(part('Before the first call', chosen.before.map(step)));
-      if (chosen.steps.length) selectedHost.append(part('Steps under it', [...chosen.steps.map(step), ...(chosen.more_steps ? [el('p', 'muted small', `and ${number(chosen.more_steps)} more`)] : [])]));
+      if (chosen.steps.length) selectedHost.append(part(`${Noun}s under it`, [...chosen.steps.map(step), ...(chosen.more_steps ? [el('p', 'muted small', `and ${number(chosen.more_steps)} more`)] : [])]));
     };
     loadConversation = async () => {
       conversationStarted = true;
@@ -211,7 +212,7 @@
         history.replaceState(null, '', current);
         reader.querySelectorAll('[data-kind]').forEach(node => node.setAttribute('aria-pressed', String(node.dataset.kind === data.kind)));
         if (data.view === 'calls') { renderCalls(data); return; }
-        status.textContent = `${number(data.matches)} of ${number(data.total)} source steps${data.query ? ` match “${data.query}”` : ''}. ${data.notice || 'Select a row to keep its message and tools together.'}`;
+        status.textContent = `${number(data.matches)} of ${number(data.total)} source ${noun}s${data.query ? ` match “${data.query}”` : ''}. ${data.notice || 'Select a row to keep its message and tools together.'}`;
         reader.querySelectorAll('[data-kind]').forEach(node => node.setAttribute('aria-pressed', String(node.dataset.kind === data.kind)));
         indexHost.replaceChildren();
         data.rows.forEach(row => {
@@ -228,12 +229,12 @@
         pages.querySelector('[data-page=next]').disabled = data.page >= data.pages;
         selectedHost.replaceChildren();
         const chosen = data.selected;
-        if (!chosen) { selectedHost.append(el('p', 'muted', data.notice || 'No steps match.')); return; }
+        if (!chosen) { selectedHost.append(el('p', 'muted', data.notice || `No ${noun}s match.`)); return; }
         const header = el('div', 'reader-step-nav');
-        const info = el('div'); info.append(el('h3', '', `Step ${chosen.step_id} · ${chosen.source || 'Unspecified source'}`));
-        const facts = [`${chosen.match_number} of ${data.matches} matching steps`];
+        const info = el('div'); info.append(el('h3', '', `${Noun} ${chosen.step_id} · ${chosen.source || 'Unspecified source'}`));
+        const facts = [`${chosen.match_number} of ${data.matches} matching ${noun}s`];
         if (chosen.timestamp) facts.push(chosen.timestamp);
-        if (chosen.duration !== null) facts.push(`${chosen.duration.toFixed(2)}s until the next source step`);
+        if (chosen.duration !== null) facts.push(`${chosen.duration.toFixed(2)}s until the next source ${noun}`);
         info.append(el('p', '', facts.join(' · ')));
         const actions = el('div', 'reader-step-actions');
         actions.append(button('← Previous', () => change({position: chosen.previous, section: null, chunk: 0}), chosen.previous === null), button('Next →', () => change({position: chosen.next, section: null, chunk: 0}), chosen.next === null));

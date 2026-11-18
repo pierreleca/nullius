@@ -127,6 +127,29 @@ class TrialHead(unittest.TestCase):
         said, _ = self.head(parse.parse_job(root), "t1")
         self.assertTrue(said.endswith(f"Steps {items}"), said)
 
+    def test_the_conversation_tab_counts_the_session_s_items_by_the_head_s_word_for_them(self):
+        """Where Steps is the benchmark's count, the session's items are items on the Conversation tab as in the
+        head: no "steps" there that mean another count. Elsewhere they stay steps, as the head says."""
+        root = os.path.join(self.tmp.name, "parts-arm")
+        shutil.copytree(NATIVE / "parts-arm", root)
+        items = trajectory.load(os.path.join(root, "t1", "agent", "trajectory.json")).n_steps
+        score = os.path.join(root, "t1", "verifier", "score.json")
+        for detail, word in (({"steps": 15, "steps_limit": 60}, "item"), (None, "step")):
+            with self.subTest(detail=detail):
+                with open(score, "w") as f:
+                    json.dump({"reward": 1.0, "detail": detail}, f)
+                job = parse.parse_job(root)
+                with patch.object(web.shared, "_jobs_for_request", return_value=[job]):
+                    response = self.client.get(f"/trial/{job.job_id}/t1")
+                self.addCleanup(response.close)
+                tab = response.get_data(as_text=True).split('id="conversation-reader"', 1)[1].split("</section>", 1)[0]
+                said = text_of(tab.split('<p class="reader-status', 1)[0])
+                self.assertIn(f"{items} {'session ' if word == 'item' else ''}{word}{'s' if items != 1 else ''}", said)
+                self.assertIn(f'data-noun="{word}"', tab)
+                self.assertIn(f"All {word}s", said); self.assertIn(f"Source {word}", said)
+                if word == "item":
+                    self.assertNotRegex(text_of(tab).lower(), r"\bsteps?\b")
+
     def test_what_ended_the_work_is_beside_the_outcome_on_the_trial_and_the_jobs_table(self):
         """The record's cut, else the score's own end: by its name beside the outcome, on the trial's page and in
         its row of the job's table; nothing for a trial that says neither."""
