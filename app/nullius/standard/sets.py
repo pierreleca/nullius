@@ -4,12 +4,14 @@ An entry is ``sets/<benchmark>/<name>.json`` under the user catalogue
 (``paths.catalogue_dir``, ``NULLIUS_CATALOGUE``): a plain file to copy or keep
 in git. It holds an id minted when it is made, its name and description, the
 benchmark and version, the dataset it is cut from, the benchmark options it
-was made under, including defaults, the setup it was made under
+pins, the setup it was made under
 (``yours``, or a setup of the benchmark), and its revisions. A revision is one
 membership: its number, its date, a note, the unit ids and a content hash over
 the benchmark, the dataset, those options, the setup and the sorted ids. Two
 runs ran the same set when their jobs name the same id; the revision and the
 hash say which membership. Two entries with equal lists stay two sets.
+Only options explicitly given to ``set create --bench-option`` are pinned,
+including explicit defaults, whether the units come from a file or a job.
 
 Only a change of membership adds a revision; the earlier ones stay in the
 file, and ``NAME@REV`` names one. ``record`` is what a job's ``config.json``
@@ -255,12 +257,12 @@ def write(entry: dict, root: Optional[str] = None) -> str:
 
 def listing_options(bench: dict, dataset: str, given: Optional[dict], setup: str = "yours",
                     kind: Optional[str] = "agent") -> Dict[str, str]:
-    """The effective benchmark options a list was made under, including defaults, as words.
+    """The explicitly given benchmark options a list was made under, as words.
     A set records these values and its hash covers them."""
     values, bad = definitions.bench_options_of(bench, dataset, given, setup, kind=kind)
     if bad:
         raise Refused("; ".join(bad))
-    return _options(values)
+    return _options({n: v for n, v in values.items() if n in (given or {})})
 
 
 def _dataset(bench: dict, dataset: Optional[str]) -> str:
@@ -350,7 +352,8 @@ def outcome_names(given: Optional[List[str]]) -> set:
     return out
 
 
-def from_job(bench: dict, job_dir: str, outcomes: Optional[List[str]] = None, named: Optional[List[str]] = None) -> dict:
+def from_job(bench: dict, job_dir: str, outcomes: Optional[List[str]] = None, named: Optional[List[str]] = None,
+             *, options: Optional[dict] = None) -> dict:
     """What a set made from a job holds: {dataset, version, options, setup, units, note}. The trials of the
     ``outcomes`` and the units ``named`` (each the full id a trial's ``standard.unit`` records), every unit
     the job ran when neither is given; a unit of several attempts is taken when any of them is."""
@@ -387,7 +390,7 @@ def from_job(bench: dict, job_dir: str, outcomes: Optional[List[str]] = None, na
     if not units:
         raise Refused(f"{job_dir} has no trial of the outcomes {', '.join(sorted(wanted))}")
     setup = (std.get("setup") or {}).get("name") or "yours"
-    options = listing_options(bench, dataset, std.get("benchmark_options") or {}, setup, kind=std.get("kind"))
+    options = listing_options(bench, dataset, options, setup, kind=std.get("kind"))
     said = ([f"outcomes {','.join(outcomes)}"] if outcomes else []) + ([f"{len(names)} named"] if names else [])
     return {"dataset": dataset, "version": std.get("benchmark_version"), "options": options, "setup": setup,
             "units": units, "note": f"from the job {cfg.get('job_name') or os.path.basename(job_dir)}"

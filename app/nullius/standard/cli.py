@@ -683,8 +683,6 @@ def cmd_set_create(a):
         raise sets.NotFound(f"no benchmark {a.benchmark!r}")
     if a.units is not None and (a.outcome or a.unit):
         raise sets.Refused("--outcome and --unit choose a job's trials: give them with --from-job")
-    if a.from_job and a.bench_option:
-        raise sets.Refused("--bench-option: a set made from a job takes the job's options")
     if a.units is not None:
         dataset = sets._dataset(b, a.dataset)
         units = _listed_units(a.units)
@@ -692,7 +690,7 @@ def cmd_set_create(a):
                "options": sets.listing_options(b, dataset, options(a.bench_option, "--bench-option")),
                "note": f"from {os.path.basename(a.units)}"}
     else:
-        got = sets.from_job(b, a.from_job, a.outcome, a.unit)
+        got = sets.from_job(b, a.from_job, a.outcome, a.unit, options=options(a.bench_option, "--bench-option"))
         if a.dataset and a.dataset != got["dataset"]:
             raise sets.Refused(f"--dataset {a.dataset}: the job ran the dataset {got['dataset']}")
     entry = sets.create(b, a.name, dataset=got["dataset"], units=got["units"], options=got["options"], setup=got["setup"],
@@ -935,7 +933,7 @@ def main(argv=None):
                     help="with --from-job: the trials of these outcomes (the pages' names, or passed, failed, infra)")
     sc.add_argument("--unit", action="append", metavar="ID", help="with --from-job: this unit too (repeatable)")
     sc.add_argument("--bench-option", action="append", metavar="NAME=VALUE",
-                    help="with --units: a benchmark option the list was made under (repeatable)")
+                    help="a benchmark option the set pins, including an explicit default (repeatable)")
     sc.add_argument("--description", default="")
     su = ss.add_parser("update", help="a new revision: units added, removed or replaced; earlier revisions kept",
                        epilog=SET_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)

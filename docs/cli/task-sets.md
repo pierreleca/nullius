@@ -1,10 +1,11 @@
 # Task sets
 
 A named list of a benchmark's units, kept with its revisions. A run names the set; its job records which revision ran.
+Only options explicitly given to `set create --bench-option` are pinned, including explicit defaults, whether the units come from a file or a job.
 
 ```bash title="Commands"
-nullius standard set create <benchmark> NAME [--dataset D] (--units FILE [--bench-option NAME=VALUE]... \
-    | --from-job JOB_DIR [--outcome O,...]... [--unit ID]...) [--description TEXT]
+nullius standard set create <benchmark> NAME [--dataset D] (--units FILE \
+    | --from-job JOB_DIR [--outcome O,...]... [--unit ID]...) [--bench-option NAME=VALUE]... [--description TEXT]
 nullius standard set update <benchmark> NAME (--add ID... | --remove ID... | --units FILE) [--note TEXT]
 nullius standard set list [<benchmark>] [--json]
 nullius standard set show <benchmark> NAME[@REV] [--json]
@@ -22,7 +23,7 @@ nullius standard run humaneval reference --model gpt-5-mini --set misses@1 --uns
 | Part | Detail |
 | --- | --- |
 | The entry | `sets/<benchmark>/NAME.json` in the user catalogue (`nullius paths`, `NULLIUS_CATALOGUE`): a plain file to copy or keep in git |
-| What it holds | An id made at creation, the name and description, the benchmark and version, the dataset, the effective benchmark options including defaults, the setup, and its revisions |
+| What it holds | An id made at creation, the name and description, the benchmark and version, the dataset, the pinned benchmark options, the setup, and its revisions |
 | A revision | Its number, date, note, unit ids and a content hash over the benchmark, the dataset, the options, the setup and the sorted ids |
 | A name | Letters, digits, `.`, `_` and `-`, starting with a letter or a digit; no `/`, no `..`. One that exists is refused: `update` changes it |
 | Identity | Two runs ran the same set when their jobs name the same id. Two sets of equal lists stay two sets |
@@ -30,7 +31,7 @@ nullius standard run humaneval reference --model gpt-5-mini --set misses@1 --uns
 | Command | Rule |
 | --- | --- |
 | `create --units FILE` | The file's ids, read as [`run --units`](run.md#a-list-of-units) reads them; `--dataset` is needed. `--bench-option` names an option the list was made under |
-| `create --from-job JOB_DIR` | The units a standard job ran, by each trial's full unit id; the job's dataset and options. `--outcome` takes the trials of those outcomes ([outcome names](../field-guide.md#outcomes), or `passed`, `failed`, `infra`), `--unit` adds the units named; neither takes every unit. A unit is taken when any of its attempts is |
+| `create --from-job JOB_DIR` | The units a standard job ran, by each trial's full unit id; the job's dataset. `--outcome` takes the trials of those outcomes ([outcome names](../field-guide.md#outcomes), or `passed`, `failed`, `infra`), `--unit` adds the units named; neither takes every unit. A unit is taken when any of its attempts is |
 | `update` | A change of membership adds a revision; the earlier ones stay. The same membership adds none. Removing a unit the set does not hold, or every unit, is refused |
 | `show NAME@REV` | That revision; the latest without `@REV` |
 | `import PATH` | An entry's file, or a job that ran a set: merged into the entry of that name here. Refused: another id under that name, or a revision of the same number with another hash |

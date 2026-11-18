@@ -232,8 +232,21 @@ class FromAJob(Scratch):
                 self.assertEqual(code, 0, err)
                 entry = sets.load("fakebench", name)
                 self.assertEqual(sets.revision(entry)["units"], want)
-                self.assertEqual((entry["dataset"], entry["benchmark_options"]), ("all", {"mode": "hard"}))   # the job's
+                self.assertEqual((entry["dataset"], entry["benchmark_options"]), ("all", {}))
                 self.assertIn(f"outcomes {outcome}", sets.revision(entry)["note"])
+
+    def test_only_explicit_options_are_pinned_from_a_job(self):
+        d = self.job()
+        for name, args, expected in (("unpinned", [], {}),
+                                     ("hard", ["--bench-option", "mode=hard"], {"mode": "hard"}),
+                                     ("plain", ["--bench-option", "mode=plain"], {"mode": "plain"})):
+            with self.subTest(name=name):
+                code, out, err = self.cli("set", "create", "fakebench", name, "--from-job", d, *args)
+                self.assertEqual(code, 0, err)
+                entry = sets.load("fakebench", name)
+                self.assertEqual(entry["benchmark_options"], expected)
+                self.assertEqual(sets.revision(entry)["hash"],
+                                 sets.content_hash("fakebench", "all", expected, "yours", sets.revision(entry)["units"]))
 
     def test_unit_takes_the_ones_named(self):
         d = self.job()
@@ -358,22 +371,39 @@ class Running(Scratch):
         code, out, err = self.run_cli("--set", "dev", "--dataset", "all", "--bench-option", "mode=hard", "--name", "agrees")
         self.assertEqual(code, 0, out + err)
 
-    def test_default_listing_options_are_recorded_hashed_and_cannot_be_contradicted(self):
-        for name, args in (("implicit", []), ("explicit", ["--bench-option", "mode=plain"])):
-            with self.subTest(name=name):
-                entry = self.make(name, "good\n", *args)
-                self.assertEqual(entry["benchmark_options"], {"mode": "plain"})
-                self.assertEqual(sets.revision(entry)["hash"],
-                                 sets.content_hash("fakebench", "all", {"mode": "plain"}, "yours", ["good"]))
-                code, out, err = self.run_cli("--set", name, "--bench-option", "mode=hard")
-                self.assertEqual(code, 2, out + err)
-                self.assertIn("was made under mode=plain", out)
-                self.assertFalse(os.path.exists(self.jobs))
-        self.b["options"] = {"mode": dict(MODE["mode"], default="hard")}
-        code, out, err = self.run_cli("--set", "implicit", "--name", "pinned")
+    def test_an_unpinned_option_can_change_and_the_job_records_its_value(self):
+        entry = self.make("implicit", "good\n")
+        self.assertEqual(entry["benchmark_options"], {})
+        self.assertEqual(sets.revision(entry)["hash"],
+                         sets.content_hash("fakebench", "all", {}, "yours", ["good"]))
+        for value in ("plain", "hard"):
+            with self.subTest(value=value):
+                code, out, err = self.run_cli("--set", "implicit", "--bench-option", f"mode={value}", "--name", value)
+                self.assertEqual(code, 0, out + err)
+                cfg = read(os.path.join(self.jobs, value, "config.json"))
+                self.assertEqual(cfg["standard"]["benchmark_options"], {"mode": value})
+                self.assertEqual(cfg["standard"]["task_set"], sets.record(entry, sets.revision(entry)))
+
+    def test_an_explicit_default_is_pinned_and_other_options_stay_free(self):
+        self.b["options"] = {**MODE, "max_steps": {"summary": "a step limit", "pattern": "^[0-9]+$", "default": "30"}}
+        entry = self.make("explicit", "good\n", "--bench-option", "mode=plain")
+        self.assertEqual(entry["benchmark_options"], {"mode": "plain"})
+        self.assertEqual(sets.revision(entry)["hash"],
+                         sets.content_hash("fakebench", "all", {"mode": "plain"}, "yours", ["good"]))
+        code, out, err = self.run_cli("--set", "explicit", "--bench-option", "mode=hard")
+        self.assertEqual(code, 2, out + err)
+        self.assertIn("was made under mode=plain", out)
+        self.assertFalse(os.path.exists(self.jobs))
+        code, out, err = self.run_cli("--set", "explicit", "--bench-option", "mode=plain",
+                                     "--bench-option", "max_steps=60", "--name", "agrees")
+        self.assertEqual(code, 0, out + err)
+        cfg = read(os.path.join(self.jobs, "agrees", "config.json"))
+        self.assertEqual(cfg["standard"]["benchmark_options"], {"mode": "plain", "max_steps": "60"})
+        self.b["options"]["mode"] = dict(MODE["mode"], default="hard")
+        code, out, err = self.run_cli("--set", "explicit", "--name", "pinned")
         self.assertEqual(code, 0, out + err)
         cfg = read(os.path.join(self.jobs, "pinned", "config.json"))
-        self.assertEqual(cfg["standard"]["benchmark_options"], {"mode": "plain"})
+        self.assertEqual(cfg["standard"]["benchmark_options"], {"mode": "plain", "max_steps": "30"})
 
     def test_an_id_the_driver_does_not_list_is_refused_before_any_unit(self):
         self.make("dev", "good\nnope\n")
