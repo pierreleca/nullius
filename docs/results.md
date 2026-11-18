@@ -30,6 +30,24 @@ Foreign results open the same way: [Open existing results](getting-started.md#op
 | 3 | Conversation and tool calls | Which actions led there? |
 | 4 | Trace and artifacts | Which calls failed or ran slowly? What files were produced? |
 
+## Run tasks again
+
+On a job of the Nullius standard that has ended: tick the rows, or **Select the rows shown** under the outcome filter,
+then **Run selected again**.
+
+| Step | Detail |
+| --- | --- |
+| Ask | A reason (optional), a spending cap (optional), the number of tasks |
+| Where | Where the job ran: this machine, or the host it was sent to, in the job's own folder |
+| While it runs | Each task shows its earlier result, marked **running again**, until the new one lands |
+| After | The new result is the task's; the earlier tries stay as its tabs, the one asked for marked **run again by hand** with its reason; **Run again by hand** lists each re-run |
+| No button | A job not started from this application, still running, merged from shards, or whose host left Settings: one line says which |
+| Refused, nothing started | A host that no longer holds the job; a provider whose key is not set here |
+
+A re-run on a host uses the job's own copy of the catalogue on purpose: the job remains one run under the definitions it recorded.
+
+The rules and the record: [`nullius standard rerun`](cli/rerun.md).
+
 ## Check the task
 
 - **Controls:** the `nop` and `oracle` jobs beside the agent's ([Core concepts](concepts.md#benchmark)).
