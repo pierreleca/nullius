@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import unittest
 from contextlib import ExitStack
@@ -17,6 +18,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from nullius import execution, hosts, workspace
+from nullius.harbor import feed
 from nullius.standard import job
 from ui_tests.test_capped_job import AGENT, BENCH
 from .test_routes import web
@@ -190,6 +192,39 @@ class RerunPage(unittest.TestCase):
         self.assertIn("Still running: tasks are run again once it has ended.", html)
         self.assertIn('id="execution-state">running', html)
         self.assertNotIn("again-now", self.page("/job/r1?view=results").split(f'data-trial="{trial_name(0)}"')[1].split("</tr>")[0])
+
+    def test_the_waiting_page_refreshes_when_the_rerun_ends_before_its_first_poll(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node not available")
+        d = self.run_of()
+        writer = feed.Writer(str(d / "events.jsonl"), "r1")
+        writer.emit("job.start", n_total=3)
+        writer.emit("job.end")
+        self.open(d.parent)
+        ex = execution.EXECUTIONS["r1-1"]
+        ex.plan.parts.append({"id": "again-1", "again": "r1", "trials": [trial_name(1)], "script": "true"})
+        ex.part, ex.state = 1, "preparing"
+        html = self.page("/job/r1?view=results")
+        script = next(s for s in re.findall(r"<script>(.*?)</script>", html, re.S) if "setInterval(tick, 2000)" in s)
+        program = """
+const [script, replies] = process.argv.slice(1).map(JSON.parse);
+let tick, destination = null;
+const location = {href: 'http://localhost/job/r1?view=results', assign: u => { destination = String(u); }};
+const fetch = async url => ({ok: true, json: async () => replies[url]});
+new Function('document', 'nulliusFetch', 'setInterval', 'URL', 'location', script)(
+  {hidden: false}, fetch, fn => { tick = fn; }, URL, location);
+tick().then(() => process.stdout.write(JSON.stringify(destination)));
+"""
+        for state in ("preparing", "running", "done", "failed", "stopped"):
+            with self.subTest(state=state):
+                ex.state = state
+                replies = {url: json.loads(self.page(url)) for url in ("/job/r1/live", "/run/r1-1")}
+                self.assertEqual(replies["/job/r1/live"]["state"], "finished")
+                result = subprocess.run([node, "-e", program, json.dumps(script), json.dumps(replies)],
+                                        capture_output=True, text=True, check=True, timeout=10)
+                self.assertEqual(json.loads(result.stdout),
+                                 "http://localhost/job/r1" if state in execution.ENDED else None)
 
     def rerun_record(self, d):
         """The job as a re-run of t-1 leaves it: its earlier try kept, the trial marked, the job's list."""

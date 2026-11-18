@@ -113,12 +113,15 @@
 {% endif %}
 {%- if rerunning and live_board and not live_board.running %}
 <script>
-// Tasks of this job are being run again, and its feed has not begun again yet: ask for it every two seconds, and
-// open the page again on its default view once the board runs (or nothing will: the run ended).
+// Poll while the rerun prepares. Refresh when the board runs or the execution ends.
 (() => {
   const url = {{ url_for('job_live', job_id=job.job_id)|tojson }};
-  const tick = async () => { if (document.hidden) return; try { const r = await nulliusFetch(url, {cache: 'no-store'});
-    const j = r.ok ? await r.json() : {}; if (['starting', 'running'].includes(j.state)) { const u = new URL(location.href); u.searchParams.delete('view'); location.assign(u); } } catch {} };
+  const run = {{ url_for('run_status', run_id=execution.id)|tojson }};
+  const tick = async () => { if (document.hidden) return; try {
+    const [r, s] = await Promise.all([nulliusFetch(url, {cache: 'no-store'}), nulliusFetch(run, {cache: 'no-store'})]);
+    const j = r.ok ? await r.json() : {}, ex = s.ok ? await s.json() : {};
+    if (['starting', 'running'].includes(j.state) || ['done', 'failed', 'stopped'].includes(ex.state)) {
+      const u = new URL(location.href); u.searchParams.delete('view'); location.assign(u); } } catch {} };
   setInterval(tick, 2000);
 })();
 </script>
