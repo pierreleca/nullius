@@ -807,7 +807,14 @@
   }
   function prefill(query) {
     // ?standard=<benchmark>[&other=<agent or capability>]: the standard's recipe for that pair (the Agents and Capabilities pages link here).
-    if(query.standard)return createStandard(query.standard,query.other||'');
+    if(query.standard) {
+      const r = createStandard(query.standard, query.other || '');
+      if ((standardBench(r)?.datasets || []).some(d => d.id === query.dataset)) {
+        r.datasets = [query.dataset];
+        if (query.set) setTaskSet(r, query.dataset, query.set);
+      }
+      return r;
+    }
     // nothing asked for: the Nullius runner, chosen first; a Harbor recipe comes from its own card
     if(!query.agent&&!query.dataset&&!query.model&&!query.n_tasks&&standard().benchmarks.length)return createStandard();
     const r=create(), known=schema.agents.find(a=>[a.id,a.arg,a.label].includes(query.agent))||(query.agent&&schema.agents.find(a=>String(a.arg||'').includes(':')&&String(a.arg).split(':').pop()===query.agent));

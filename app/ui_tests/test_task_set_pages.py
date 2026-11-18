@@ -20,7 +20,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from nullius import workspace
-from nullius.standard import definitions, install, job, jsonl, sets, units
+from nullius.standard import definitions, install, job, jsonl, recipe, sets, units
 from tests.test_standard_units_listing import DRIVER
 from .test_routes import web
 
@@ -365,6 +365,28 @@ class TheBuilder(BuilderCase):
 class TheRecipeCore(BuilderCase):
     """The builder's core keeps a chosen dataset's set, NAME@REV, in the recipe: read back from a saved recipe, dropped
     with its dataset, and dropped when the benchmark changes."""
+
+    def test_build_a_run_carries_the_dataset_and_the_open_set(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node is required for the recipe core")
+        self.b["datasets"].append({"id": "more", "units": 250})
+        sets.create(self.b, "picked", dataset="more", units=["t001"])
+        html = self.get("/new-run").get_data(as_text=True)
+        schema = json.loads(re.search(r'<script id="nb-schema" type="application/json">(.*?)</script>', html, re.S).group(1))
+        schema["standard"]["benchmarks"].append(recipe._bench_page(self.b))
+        core = Path(__file__).resolve().parents[1] / "static/builder/command-builder-core.js"
+        for query, task_sets in (("", {}), ("?set=picked", {"more": "picked@1"})):
+            with self.subTest(query=query):
+                html = self.get("/benchmarks/described/tasks/more" + query).get_data(as_text=True)
+                link = unescape(re.search(r'href="([^"]+)">Build a run', html).group(1))
+                program = (f"const C=require({json.dumps(str(core))})({json.dumps(schema)});"
+                           f"const query=Object.fromEntries(new URL({json.dumps(link)},'http://localhost').searchParams);"
+                           "const r=C.prefill(query);"
+                           "process.stdout.write(JSON.stringify([r.benchmark,r.datasets,r.task_sets||{}]));")
+                result = subprocess.run([node, "-e", program], stdin=subprocess.DEVNULL,
+                                        check=True, capture_output=True, text=True, timeout=10)
+                self.assertEqual(json.loads(result.stdout), ["described", ["more"], task_sets])
 
     def test_task_sets_follow_the_chosen_datasets(self):
         node = shutil.which("node")
