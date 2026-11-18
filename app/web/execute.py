@@ -246,7 +246,7 @@ def job_rerun(job_id):
         return jsonify(ok=False, error=(offer or {}).get("why") or "Only a job of the Nullius standard is run again."), 409
     body = request.get_json(silent=True) or {}
     from . import runs as runs_web
-    held = {t.trial_name for t in j.trials} | {w["trial"] for w in runs_web.waiting_of(j)}   # and the tasks with no result
+    held = {t.trial_name for t in j.trials} | {t for w in runs_web.waiting_of(j) for t in w["trials"]}   # and the tasks with no result
     picked = list(dict.fromkeys(t for t in body.get("trials") or [] if isinstance(t, str))) if isinstance(body.get("trials"), list) else []
     if not picked:
         return jsonify(ok=False, error="Tick the tasks to run again."), 400

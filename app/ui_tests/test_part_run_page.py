@@ -98,6 +98,81 @@ class PartRunPage(unittest.TestCase):
         ((ex, part),) = self.asked
         self.assertEqual((ex.plan.host.label, part["trials"]), ("bench", ["t-5__u0005"]))
 
+    def test_one_unrun_row_selects_every_planned_attempt_by_tick_set_or_rest(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node is required for the selection controls")
+        d = self.run_of(repeat=2)
+        self.begun_on_a_part(d)
+        shutil.rmtree(d / trial_name(2))
+        for k in range(2):
+            for attempt in (1, 2):
+                dest = d / f"{trial_name(k)}r{attempt}"
+                shutil.copytree(d / trial_name(k), dest)
+                result = json.loads((dest / "result.json").read_text())
+                result["trial_name"] = dest.name
+                (dest / "result.json").write_text(json.dumps(result))
+            shutil.rmtree(d / trial_name(k))
+        cfg = json.loads((d / "config.json").read_text())
+        cfg["standard"]["start_with"] = {"count": 2, "units": PLAN[:2]}
+        (d / "config.json").write_text(json.dumps(cfg))
+        top = json.loads((d / "result.json").read_text())
+        top["n_total_trials"] = 12
+        (d / "result.json").write_text(json.dumps(top))
+        (d / "events.jsonl").unlink()
+        writer = feed.Writer(str(d / "events.jsonl"), "r1")
+        writer.emit("job.start", n_total=12, tasks=PLAN)
+        for k in range(6):
+            for attempt in (1, 2):
+                writer.emit("trial.queued", f"t-{k}__u{k:04d}r{attempt}", agent="fake", position=k)
+        writer.emit("job.end")
+        sets.create(dict(BENCH, datasets=[{"id": "all"}]), "late", dataset="all", units=["t-4", "t-0"])
+        self.open(d.parent)
+        html = self.page("/job/r1?view=results")
+        self.assertEqual(text(html, r'<span id="plan-run".*?</span>'), "2 of 6 planned tasks run")
+        rows = re.findall(r'<tr data-outcome="not_run".*?</tr>', html, re.S)
+        self.assertEqual(len(rows), 4)
+        self.assertEqual([text(row, r".*") for row in rows], [f"t-{k} Not run" for k in range(2, 6)])
+        ticks = [dict(value=re.search(r'value="([^"]+)"', row)[1],
+                      trials=re.search(r'data-trials="([^"]+)"', row)[1]) for row in rows]
+        picks = re.findall(r'data-pick="([^"]+)"', html)
+        board = Path(__file__).resolve().parents[1] / "static/runs/board.js"
+        program = r"""
+const [file, values, picks] = process.argv.slice(1).map(JSON.parse), elements = new Map();
+function element(id) {
+  if (!elements.has(id)) elements.set(id, {dataset: {}, listeners: {}, textContent: '',
+    addEventListener(k, fn) { this.listeners[k] = fn; }, click() { this.listeners.click(); },
+    replaceChildren() {}, showModal() {}, closest() { return null; }});
+  return elements.get(id);
+}
+const ticks = values.map(x => Object.assign(element(x.value), {value: x.value,
+  dataset: {first: '', trials: x.trials}, getAttribute() { return 'Choose ' + x.value; }}));
+const buttons = picks.map(pick => Object.assign(element('button:' + pick), {dataset: {pick}})), posted = [];
+element('form').elements = {reason: {value: ''}, max_usd: {value: ''}};
+const source = require('node:fs').readFileSync(file, 'utf8');
+new Function('$', '$$', 'rows', 'document', 'nulliusFetch', 'URL', 'location',
+  source.slice(source.indexOf('  const ticks ='), source.lastIndexOf('  apply();')))(
+  element, s => s === '#trial-rows .pick-row' ? ticks : buttons, [], {createElement: () => ({})},
+  async (url, options) => { posted.push(JSON.parse(options.body)); return {ok: true, json: async () => ({ok: true})}; },
+  URL, {href: 'http://localhost/job/r1', assign() {}});
+(async () => {
+  ticks[0].checked = true; element('#rerun-open').click();
+  const submit = () => element('form').listeners.submit({submitter: {value: 'run'}, preventDefault() {}});
+  await submit();
+  for (const button of buttons) { button.click(); await submit(); }
+  process.stdout.write(JSON.stringify(posted));
+})();
+"""
+        posted = json.loads(subprocess.run([node, "-e", program, json.dumps(str(board)), json.dumps(ticks), json.dumps(picks)],
+                                          capture_output=True, text=True, check=True, timeout=10).stdout)
+        expected = [[f"t-{k}__u{k:04d}r{attempt}" for k in units for attempt in (1, 2)]
+                    for units in ([2], [4], range(2, 6))]
+        self.assertEqual([body["trials"] for body in posted], expected)
+        for body in posted:
+            response = self.post("r1", body)
+            self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+            self.assertEqual(self.asked[-1][1]["trials"], body["trials"])
+
     def test_a_job_run_whole_shows_none_of_it(self):
         d = self.run_of()
         self.open(d.parent)

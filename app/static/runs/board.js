@@ -185,7 +185,7 @@
       const b = e.submitter; b.disabled = true; err.hidden = true;
       try {
         const r = await nulliusFetch(ask.dataset.post, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': ask.dataset.csrf },
-          body: JSON.stringify({ trials: chosen().map(x => x.value), reason: form.elements.reason.value, max_usd: form.elements.max_usd.value }) });
+          body: JSON.stringify({ trials: chosen().flatMap(x => (x.dataset.trials || x.value).split(' ')), reason: form.elements.reason.value, max_usd: form.elements.max_usd.value }) });
         const j = await r.json().catch(() => ({}));
         if (r.ok && j.ok) { const u = new URL(location.href); u.searchParams.delete('view'); location.assign(u); return; }
         throw new Error(j.error || 'refused: HTTP ' + r.status);

@@ -559,17 +559,24 @@ def job(job_id):
 
 
 def waiting_of(j, running=()) -> list:
-    """The tasks a standard job planned that have no result (``rerun.unfinished``), each {trial, unit, folder,
-    running, outcome}: never begun, or begun and ended with none (``folder``); ``running``, one of the trials
+    """The tasks a standard job planned that have no result (``rerun.unfinished``), each {trial, trials, unit, folder,
+    running, outcome}: one row per unit, with its planned attempts in ``trials`` and its first in ``trial``.
+    Never begun, or begun and ended with none (``folder``); ``running``, one of the trials
     ``running`` names, those a re-run under way runs. ``outcome``: ``not_run`` for a task never begun of a job
     begun on a part of its plan (``start_with``), ``no_result`` otherwise. Its feed is read only for a job with
     fewer trials than it planned: [] for every other job."""
     if not j.standard or len(j.trials) >= j.n_planned:
         return []
     from nullius.standard import rerun
-    return [dict(x, trial=name, running=name in running,
-                 outcome="not_run" if j.start_with and not x["folder"] else "no_result")
-            for name, x in rerun.unfinished(j.dir).items()]
+    waiting = {}
+    for name, x in rerun.unfinished(j.dir).items():
+        row = waiting.setdefault(x["unit"], dict(x, trial=name, trials=[], running=False,
+                                               outcome="not_run" if j.start_with else "no_result"))
+        row["trials"].append(name)
+        row["running"] |= name in running
+        if x["folder"]:
+            row.update(folder=x["folder"], outcome="no_result")
+    return list(waiting.values())
 
 
 def plan_sets(j, waiting: list) -> list:
