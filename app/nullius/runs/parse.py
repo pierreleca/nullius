@@ -75,6 +75,33 @@ def _retries_of(res: dict) -> int:
     return n if isinstance(n, int) and not isinstance(n, bool) and n > 0 else 0
 
 
+# What ended an agent's work on a standard trial (`Trial.ended_by`), by its name
+ENDED_LABELS = {"agent": "Agent", "done": "Done", "fail": "Fail", "steps": "Step limit", "time": "Time limit",
+                "calls": "Call cap", "end": "Task end"}
+
+
+def _ended_by(res: dict, trial_dir: str) -> str:
+    """What ended the agent's work on a standard trial: the run's cut when its record has one (``standard.cut``:
+    ``time``, the agent's time; ``calls``, the run's cap on its model calls); else the benchmark's own end as its
+    score's detail says it (``detail.ended``: ``done``, ``fail``, ``steps``; ``turn``, the agent ended its turn
+    first: ``agent``); ``end`` for a turn cut after the benchmark's end with no detail to name it. "" when the trial
+    says none of these."""
+    std = res.get("standard") if isinstance(res.get("standard"), dict) else None
+    if std is None:
+        return ""
+    cut = std.get("cut")
+    if cut in ("time", "calls"):
+        return cut
+    said = verifier._read_json(os.path.join(trial_dir, "verifier", "score.json"))
+    detail = said.get("detail") if isinstance(said, dict) else None
+    ended = detail.get("ended") if isinstance(detail, dict) else None
+    if ended in ("done", "fail", "steps"):
+        return ended
+    if cut == "end":
+        return "end"
+    return "agent" if ended == "turn" else ""
+
+
 def count_rate_limits(path: str) -> int | None:
     """Rate-limit records in a gateway log, or None when there is no log.
 
@@ -207,6 +234,13 @@ class Trial:
     started_at: datetime | None = None
     finished_at: datetime | None = None
     phases: dict = field(default_factory=dict)
+    # What ended the agent's work on a standard trial (`_ended_by`): `agent`,
+    # `done`, `fail`, `steps`, `time`, `calls` or `end`; "" when it says none.
+    ended_by: str = ""
+
+    @property
+    def ended_label(self) -> str:
+        return ENDED_LABELS.get(self.ended_by, self.ended_by)
 
     @property
     def dur_phases(self) -> float:
@@ -721,6 +755,7 @@ def parse_trial(job_id: str, trial_dir: str) -> Trial | None:
         started_at=_iso(res.get("started_at")),
         finished_at=_iso(res.get("finished_at")),
         phases=phases,
+        ended_by=_ended_by(res, trial_dir),
     )
 
 
