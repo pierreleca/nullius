@@ -214,14 +214,15 @@ class StoreFiles(unittest.TestCase):
                     self.keep(store, req, n=n)
                 path = Path(store.dir) / exchanges.PARTS
                 rows = path.read_text().splitlines()
-                row = json.loads(rows[0])
+                first = next(i for i, r in enumerate(rows) if '"part"' in r)       # the first part, after the mark
+                row = json.loads(rows[first])
                 if damage == "digest":
                     row["sha256"] = "invalid"
                 elif damage == "picture":
                     row["part"]["blob"] = "../outside"
                 elif damage == "missing":
                     del row["part"]
-                rows[0] = rows[0][:40] if damage == "truncated" else json.dumps(row)
+                rows[first] = rows[first][:40] if damage == "truncated" else json.dumps(row)
                 path.write_text("\n".join(rows) + "\n")
                 for n in (1, 2, 3):
                     out, err = io.TextIOWrapper(io.BytesIO(), encoding="utf-8"), io.StringIO()
@@ -535,7 +536,8 @@ class StoredOnce(WithUpstream):
             sizes += len(Upstream.seen[-1][2])
             history.append({"role": "assistant", "content": f"did {i}"})
         store = self.store(r)
-        parts = [json.loads(x) for x in open(os.path.join(store, exchanges.PARTS))]
+        with open(os.path.join(store, exchanges.PARTS)) as f:
+            parts = exchanges.unmarked([json.loads(x) for x in f], exchanges.PARTS)
         hashes = [p["sha256"] for p in parts]
         self.assertEqual(len(hashes), len(set(hashes)))
         self.assertEqual(len(hashes), 1 + 4 + 3 + 1)          # the system text, four asks, three answers, the tool
@@ -827,6 +829,107 @@ class Reasoning(unittest.TestCase):
                 self.assertNotIn("reasoning", relay.read_reply(path, body, streamed))     # the call record's reading, unchanged
         thought = {"choices": [{"message": {"content": "ok", "reasoning_content": "deep"}}]}
         self.assertEqual(relay.read_reply("/chat/completions", json.dumps(thought).encode(), False, reasoning=True)["reasoning"], "deep")
+
+
+class Version(unittest.TestCase):
+    """Each file of a store names the version of its format on its first line; a store without it is version 1."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+
+    @staticmethod
+    def keep(record_dir):
+        store = exchanges.Store(record_dir)
+        for n, req in enumerate(({"messages": [data_url(PNG), "hello"]}, {"messages": [data_url(PNG), "hello", "again"]}), 1):
+            store.write("u0001", n, 1.0, "/messages", req, json.dumps(req).encode(), {}, 200, False, b"{}")
+        return store
+
+    def test_a_new_store_holds_the_mark_and_grows_by_it_alone_and_reads_as_one_without_it(self):
+        marked = self.keep(str(self.root / "marked"))
+        with mock.patch.object(exchanges, "HEADER", ""):           # the store as written before the mark
+            plain = self.keep(str(self.root / "plain"))
+        got, before = WithUpstream.files(marked.dir), WithUpstream.files(plain.dir)
+        self.assertEqual(exchanges.HEADER, '{"schema": "nullius.exchanges/v1"}\n')
+        self.assertEqual(sorted(got), sorted(before))
+        for name in got:
+            self.assertEqual(got[name], (exchanges.HEADER.encode() if name.endswith(".jsonl") else b"") + before[name], name)
+        self.assertEqual(sum(map(len, got.values())) - sum(map(len, before.values())), 2 * len(exchanges.HEADER))
+        self.assertEqual((marked.size, plain.size), (sum(map(len, got.values())), sum(map(len, before.values()))))
+        self.assertEqual(exchanges.lines(marked.dir, "u0001"), exchanges.lines(plain.dir, "u0001"))
+        self.assertEqual(exchanges.stored_parts(marked.dir), exchanges.stored_parts(plain.dir))
+        for store in (marked, plain):
+            for n in (1, 2):
+                self.assertTrue(exchanges.check(store.dir, "u0001", n)["same"])
+
+    def test_a_later_version_or_another_format_is_refused_by_each_reader_naming_both(self):
+        for name in ("u0001.jsonl", exchanges.PARTS):
+            for said, words in (("nullius.exchanges/v2", ("version 2", "version 1")),
+                                ("another.format/v1", ("'another.format/v1'", "version 1"))):
+                with self.subTest(name=name, said=said):
+                    trial = mock.Mock(dir=str(self.root / name / said.replace("/", "-") / "task__u0001"), trial_name="task__u0001")
+                    store = self.keep(os.path.join(trial.dir, ".work", "relay"))
+                    path = Path(store.dir) / name
+                    path.write_text(json.dumps({"schema": said}) + "\n" + path.read_text().split("\n", 1)[1])
+                    reads = [lambda: exchanges.check(store.dir, "u0001", 1)]
+                    reads.append((lambda: exchanges.lines(store.dir, "u0001")) if name != exchanges.PARTS
+                                 else (lambda: exchanges.stored_parts(store.dir)))
+                    for read in reads:
+                        with self.assertRaises(exchanges.Later) as refused:
+                            read()
+                        for word in (name,) + words:
+                            self.assertIn(word, str(refused.exception))
+                    out, err = io.TextIOWrapper(io.BytesIO(), encoding="utf-8"), io.StringIO()
+                    self.addCleanup(out.close)
+                    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                        code = runs_cli._request(trial, 1)
+                    out.flush()
+                    self.assertEqual((code, out.buffer.getvalue()), (runs_cli.EXIT_NOT_FOUND, b""))
+                    for word in words:
+                        self.assertIn(word, err.getvalue())
+
+
+class Unmarked:
+    """The tests again on stores written without the mark of their format, as before it: they read the same."""
+
+    def setUp(self):
+        patch = mock.patch.object(exchanges, "HEADER", "")
+        patch.start()
+        self.addCleanup(patch.stop)
+        super().setUp()
+
+
+class UnmarkedStoreFiles(Unmarked, StoreFiles):
+    pass
+
+
+class UnmarkedByteForByte(Unmarked, ByteForByte):
+    pass
+
+
+class UnmarkedStoredOnce(Unmarked, StoredOnce):
+    pass
+
+
+class UnmarkedTextOnly(Unmarked, TextOnly):
+    pass
+
+
+class UnmarkedBound(Unmarked, Bound):
+    pass
+
+
+class UnmarkedNeverInTheWay(Unmarked, NeverInTheWay):
+    pass
+
+
+class UnmarkedNoKey(Unmarked, NoKey):
+    pass
+
+
+class UnmarkedTheRun(Unmarked, TheRun):
+    pass
 
 
 if __name__ == "__main__":

@@ -13,6 +13,11 @@ A unit's relay (``relay.Relay``) writes, beside its call record, under ``<record
   ..., "as": "data_url"|"base64"}`` and its bytes are in
 - ``blobs/<sha256>.<ext>``: each distinct picture once, as its bytes (png, jpeg, webp, gif).
 
+Each ``.jsonl`` file begins with the mark of its format, ``{"schema": "nullius.exchanges/v1"}`` (``HEADER``): a
+line no reader takes for a call or a part. A file without it is in version 1, the format before the mark. A
+picture is the bytes its name hashes and carries no mark: the lines that name it do. A reader refuses a file
+marked with a later version or another format (:class:`Later`), naming both; it never guesses.
+
 What is stored is what was sent, the relay's key cut out of every string: a request that held the key
 then no longer rebuilds to its hash, and its line says ``key_cut``. Nothing else is redacted, so a secret
 an agent typed in a prompt or showed in a screenshot is in the store as it was sent. The modes
@@ -49,10 +54,17 @@ _DATA_URL = re.compile(r"data:(image/(?:png|jpeg|jpg|webp|gif));base64,")
 _TEXT_DATA_URL = re.compile(r"data:(image/[^;,\s]+);base64,", re.IGNORECASE)
 MARK = frozenset(("blob", "type", "bytes", "as"))   # a picture's place in a stored part
 LITERAL = "literal"
+VERSION = 1                                      # the store's format, as this code writes and reads it
+HEADER = json.dumps({"schema": f"nullius.exchanges/v{VERSION}"}) + "\n"   # the first line of each .jsonl file
+_SCHEMA = re.compile(r"nullius\.exchanges/v([1-9][0-9]*)")
 
 
 class Missing(Exception):
     """A request that cannot be rebuilt from the store: the message says what is missing."""
+
+
+class Later(Missing):
+    """A file of the store in a later version of its format than this code reads, or in another format."""
 
 
 def _picture(text: str, media: Optional[str] = None, text_only: bool = False) -> Optional[tuple]:
@@ -236,6 +248,8 @@ class Store:
         os.makedirs(self.dir, exist_ok=True)
         path = os.path.join(self.dir, name)
         before = os.path.getsize(path) if os.path.exists(path) else 0
+        if not before:
+            text = HEADER + text                 # a new file begins with the mark of its format
         try:
             with open(path, "a") as f:
                 if f.write(text) != len(text):
@@ -302,6 +316,25 @@ def _jsonl(path: str) -> List[dict]:
                     out.append(got)
     except OSError:
         pass
+    return unmarked(out, os.path.basename(path))
+
+
+def unmarked(rows: List[dict], name: str) -> List[dict]:
+    """The rows of the store's file ``name`` without the mark of its format; a file without one is in
+    version 1. Raises :class:`Later` for a mark of a later version or of another format."""
+    out = []
+    for row in rows:
+        if set(row) != {"schema"}:
+            out.append(row)
+            continue
+        said = row["schema"]
+        m = _SCHEMA.fullmatch(said) if isinstance(said, str) else None
+        if m is None:
+            raise Later(f"{name} is marked {said!r:.80}, not a version of the exchange store's format; "
+                        f"this Nullius reads its version {VERSION}")
+        if int(m.group(1)) > VERSION:
+            raise Later(f"{name} is in version {int(m.group(1))} of the exchange store's format; "
+                        f"this Nullius reads version {VERSION}: read it with a later Nullius")
     return out
 
 
@@ -377,12 +410,15 @@ def rebuild(folder: str, line: dict, parts: Optional[Dict[str, dict]] = None) ->
 
 def check(folder: str, tag: str, n: int) -> dict:
     """Call ``n`` of route ``tag`` rebuilt: {"request": bytes or None, "sha256", "sent_sha256", "same",
-    "why"}; ``why`` says what kept it from rebuilding or from matching."""
+    "why"}; ``why`` says what kept it from rebuilding or from matching. A file in a later format raises
+    :class:`Later`."""
     line = next((x for x in lines(folder, tag) if x.get("n") == n), None)
     if line is None:
         raise Missing(f"no call {n} in the store of {tag}")
     try:
         got = rebuild(folder, line)
+    except Later:
+        raise
     except Missing as e:
         return {"request": None, "sha256": None, "sent_sha256": line.get("sent_sha256"), "same": False, "why": str(e)}
     sha = hashlib.sha256(got).hexdigest()
