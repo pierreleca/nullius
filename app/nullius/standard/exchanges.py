@@ -46,36 +46,38 @@ BLOBS = "blobs"
 PART_FIELDS = ("system", "instructions", "tools", "messages", "input")
 EXT = {"image/png": "png", "image/jpeg": "jpg", "image/jpg": "jpg", "image/webp": "webp", "image/gif": "gif"}
 _DATA_URL = re.compile(r"data:(image/(?:png|jpeg|jpg|webp|gif));base64,")
+_TEXT_DATA_URL = re.compile(r"data:(image/[^;,\s]+);base64,", re.IGNORECASE)
 MARK = frozenset(("blob", "type", "bytes", "as"))   # a picture's place in a stored part
+LITERAL = "literal"
 
 
 class Missing(Exception):
     """A request that cannot be rebuilt from the store: the message says what is missing."""
 
 
-class _AsSent(Exception):
-    """A part that holds an object shaped like a picture's mark: it is kept as sent, its pictures inline."""
-
-
-def _picture(text: str, media: Optional[str] = None) -> Optional[tuple]:
+def _picture(text: str, media: Optional[str] = None, text_only: bool = False) -> Optional[tuple]:
     """(type, bytes, form) of an inline picture: a data URL, or a Messages source's base64 ``data`` of
-    type ``media``. None for any other text, and for one whose bytes would not encode back to it."""
+    type ``media``. Whole mode requires the bytes to encode back to the original text."""
     if media is None:
-        m = _DATA_URL.match(text)
+        m = (_TEXT_DATA_URL if text_only else _DATA_URL).match(text)
         if not m:
             return None
         kind, b64, form = m.group(1), text[m.end():], "data_url"
-    elif media in EXT:
+    elif media in EXT or (text_only and media.lower().startswith("image/")):
         kind, b64, form = media, text, "base64"
     else:
         return None
+    if text_only:
+        b64 = "".join(b64.split())
+        b64 += "=" * (-len(b64) % 4)
     try:
-        raw = base64.b64decode(b64, validate=True)
+        raw = base64.b64decode(b64, altchars=b"-_" if text_only else None, validate=True)
     except (binascii.Error, ValueError):
         return None
     # the alphabet alone, padding at the end only (validate): every whole group encodes back to itself, so the
     # text is the bytes' own encoding when its length is and its last group is
-    if len(b64) != 4 * ((len(raw) + 2) // 3) or (raw and base64.b64encode(raw[-(len(raw) % 3 or 3):]).decode() != b64[-4:]):
+    if not text_only and (len(b64) != 4 * ((len(raw) + 2) // 3) or
+                          (raw and base64.b64encode(raw[-(len(raw) % 3 or 3):]).decode() != b64[-4:])):
         return None
     return kind, raw, form
 
@@ -86,22 +88,20 @@ def _mark(found: dict, kind: str, raw: bytes, form: str) -> dict:
     return {"blob": h, "type": kind, "bytes": len(raw), "as": form}
 
 
-def _lift(v, found: dict):
+def _lift(v, found: dict, text_only: bool = False):
     """``v`` with each inline picture replaced by its mark, the picture in ``found`` by its hash."""
     if isinstance(v, str):
-        p = _picture(v) if v.startswith("data:image/") else None
+        p = _picture(v, text_only=text_only) if v.lower().startswith("data:image/") else None
         return _mark(found, *p) if p else v
     if isinstance(v, list):
-        return [_lift(x, found) for x in v]
+        return [_lift(x, found, text_only) for x in v]
     if isinstance(v, dict):
-        if set(v) == MARK:
-            raise _AsSent()
         media = v.get("media_type") if v.get("type") == "base64" and isinstance(v.get("media_type"), str) else None
         out = {}
         for k, x in v.items():
-            p = _picture(x, media) if media and k == "data" and isinstance(x, str) else None
-            out[k] = _mark(found, *p) if p else _lift(x, found)
-        return out
+            p = _picture(x, media, text_only) if media and k == "data" and isinstance(x, str) else None
+            out[k] = _mark(found, *p) if p else _lift(x, found, text_only)
+        return {LITERAL: out} if set(v) in (MARK, {LITERAL}) else out
     return v
 
 
@@ -118,30 +118,43 @@ def _cut_key(v, keys):
     return v
 
 
-def split(req: dict, found: dict, parts: dict) -> dict:
+def _text_body(text: str) -> str:
+    """Remove inline pictures from a JSON body, an event stream or a data URL."""
+    try:
+        value = json.loads(text)
+    except ValueError:
+        value = text
+    found = {}
+    lifted = _lift(value, found, True)
+    if found:
+        return json.dumps(lifted)
+    if isinstance(value, str):
+        return "".join("data:" + _text_body(row[5:].rstrip("\r\n")) + row[len(row.rstrip("\r\n")):]
+                       if row.startswith("data:") else row for row in text.splitlines(keepends=True))
+    return text
+
+
+def split(req: dict, found: dict, parts: dict, text_only: bool = False) -> dict:
     """A request's ``sent``: each part by its hash, the rest as it was. ``parts`` gains each part's
     stored line by hash, ``found`` each picture's (type, bytes)."""
     sent = {}
     for k, v in req.items():
         if k not in PART_FIELDS:
-            sent[k] = v
+            sent[k] = _lift(v, found, text_only)
         elif isinstance(v, list):
-            sent[k] = {"parts": [_part(x, found, parts) for x in v]}
+            sent[k] = {"parts": [_part(x, found, parts, text_only) for x in v]}
         elif isinstance(v, str):
-            sent[k] = {"part": _part(v, found, parts)}
+            sent[k] = {"part": _part(v, found, parts, text_only)}
         else:
-            sent[k] = {"as_sent": v}
+            sent[k] = {"as_sent": _lift(v, found, text_only)}
     return sent
 
 
-def _part(x, found: dict, parts: dict) -> str:
+def _part(x, found: dict, parts: dict, text_only: bool = False) -> str:
     mine = {}
-    try:
-        text, as_sent = json.dumps(_lift(x, mine), separators=(",", ":")), False
-    except _AsSent:
-        text, as_sent, mine = json.dumps(x, separators=(",", ":")), True, {}
+    text = json.dumps(_lift(x, mine, text_only), separators=(",", ":"))
     h = hashlib.sha256(text.encode()).hexdigest()
-    parts[h] = '{"sha256":"%s",%s"part":%s}' % (h, '"as_sent":true,' if as_sent else "", text)
+    parts[h] = '{"sha256":"%s","part":%s}' % (h, text)
     found.update(mine)
     return h
 
@@ -179,11 +192,16 @@ class Store:
                 line["sent_body"] = _cut_key(raw.decode("utf-8", "replace"), self.keys)
                 line["error"] = "the request's body is not a JSON object: it is kept whole, not by part"
             else:
-                line["sent"] = split(_cut_key(req, self.keys) if held else req, found, parts)
+                line["sent"] = split(_cut_key(req, self.keys) if held else req, found, parts, self.mode == "text")
             if held:
                 line["key_cut"] = True
             line["headers"] = _cut_key(headers, self.keys)
             line["reply"] = {"status": status, "streamed": streamed, "body": _cut_key(body.decode("utf-8", "replace"), self.keys)}
+            if self.mode == "text":
+                line["headers"] = {k: _text_body(v) for k, v in line["headers"].items()}
+                line["reply"]["body"] = _text_body(line["reply"]["body"])
+                if "sent_body" in line:
+                    line["sent_body"] = _text_body(line["sent_body"])
             text = json.dumps(line)
             self._keep(tag, head, text, parts, found)
         except Exception as e:                   # nothing of the store may reach the caller's reply
@@ -301,6 +319,8 @@ def stored_parts(folder: str) -> Dict[str, dict]:
 def _drop(v, picture):
     """A stored part with each picture's mark replaced by ``picture(mark)``."""
     if isinstance(v, dict):
+        if set(v) == {LITERAL}:
+            return {k: _drop(x, picture) for k, x in v[LITERAL].items()}
         if set(v) == MARK:
             return picture(v)
         return {k: _drop(x, picture) for k, x in v.items()}
@@ -344,9 +364,9 @@ def rebuild(folder: str, line: dict, parts: Optional[Dict[str, dict]] = None) ->
         elif k in PART_FIELDS and isinstance(v, dict) and set(v) == {"part"}:
             req[k] = part(v["part"])
         elif k in PART_FIELDS and isinstance(v, dict) and set(v) == {"as_sent"}:
-            req[k] = v["as_sent"]
+            req[k] = _drop(v["as_sent"], picture)
         else:
-            req[k] = v
+            req[k] = _drop(v, picture)
     return json.dumps(req).encode()
 
 

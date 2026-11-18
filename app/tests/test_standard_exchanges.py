@@ -362,6 +362,66 @@ class StoreFiles(unittest.TestCase):
                 self.assertEqual(blob.read_bytes(), PNG)
                 self.assertTrue(exchanges.check(store.dir, "u0001", 2)["same"])
 
+    def test_literal_picture_marks_do_not_disable_picture_extraction(self):
+        literal = {"blob": "x", "type": "x", "bytes": 1, "as": "base64"}
+        tool = {"type": "object", "properties": {
+            "payload": {"default": literal}, "reference": {"default": data_url(PNG)},
+            "nested": {"default": {"literal": {"literal": literal}}}}}
+        req = {"tools": [tool]}
+        for mode in ("whole", "text"):
+            with self.subTest(mode=mode):
+                store = self.store(mode)
+                self.keep(store, req)
+                self.assertNotIn(b64(PNG), (Path(store.dir) / exchanges.PARTS).read_text())
+                result = exchanges.check(store.dir, "u0001", 1)
+                if mode == "whole":
+                    self.assertEqual(result["request"], json.dumps(req).encode())
+                    self.assertTrue(result["same"])
+                else:
+                    self.assertFalse((Path(store.dir) / exchanges.BLOBS).exists())
+                    self.assertIsNone(result["request"])
+                plain = {"tools": [literal, {"literal": literal}]}
+                self.keep(store, plain, 2)
+                self.assertEqual(exchanges.check(store.dir, "u0001", 2)["request"], json.dumps(plain).encode())
+
+    def test_text_omits_noncanonical_picture_encodings(self):
+        encoded = b64(PNG)
+        wrapped = "\n".join(encoded[i:i + 76] for i in range(0, len(encoded), 76))
+        for kind, data in (("image/png", wrapped), ("image/png", encoded.rstrip("=")),
+                           ("image/bmp", wrapped), ("image/png", "QR==")):
+            for form in ("data_url", "base64"):
+                with self.subTest(kind=kind, data=data[:10], form=form):
+                    value = (f"data:{kind};base64,{data}" if form == "data_url" else
+                             {"type": "base64", "media_type": kind, "data": data})
+                    store = self.store("text")
+                    self.keep(store, {"messages": [value]})
+                    self.assertFalse((Path(store.dir) / exchanges.BLOBS).exists())
+                    for path in Path(store.dir).rglob("*"):
+                        if path.is_file():
+                            self.assertNotIn(json.dumps(data)[1:-1].encode(), path.read_bytes())
+                    part, = exchanges.stored_parts(store.dir).values()
+                    mark = part["part"] if form == "data_url" else part["part"]["data"]
+                    raw = b"A" if data == "QR==" else PNG
+                    self.assertEqual(mark, {"blob": hashlib.sha256(raw).hexdigest(), "type": kind,
+                                            "bytes": len(raw), "as": form})
+                    self.assertFalse(exchanges.check(store.dir, "u0001", 1)["same"])
+
+    def test_text_omits_pictures_from_the_call_line_too(self):
+        value = {"type": "base64", "media_type": "image/png", "data": b64(PNG)}
+        for streamed in (False, True):
+            for req in ({"metadata": data_url(PNG), "messages": value}, None):
+                with self.subTest(streamed=streamed, raw=req is None):
+                    store = self.store("text")
+                    reply = json.dumps({"image": value})
+                    body = ("data: " + reply + "\n\ndata: [DONE]\n\n" if streamed else reply).encode()
+                    raw = json.dumps(req if req is not None else [value]).encode()
+                    store.write("u0001", 1, 1.0, "/messages", req, raw,
+                                {"X-Image": data_url(PNG)}, 200, streamed, body)
+                    for path in Path(store.dir).rglob("*"):
+                        if path.is_file():
+                            self.assertNotIn(b64(PNG).encode(), path.read_bytes())
+                    self.assertFalse((Path(store.dir) / exchanges.BLOBS).exists())
+
 
 class ByteForByte(WithUpstream):
     def test_each_shape_rebuilds_to_the_bytes_sent_streamed_or_not_and_a_changed_part_fails(self):
@@ -400,8 +460,7 @@ class ByteForByte(WithUpstream):
                     self.assertIn("do not rebuild", got["why"])
 
     def test_a_picture_whose_text_is_not_its_bytes_own_encoding_stays_in_its_part(self):
-        """Padding bits set, padding missing, a line break, an object shaped like a picture's mark: kept as sent,
-        and the request still rebuilds to its bytes. The one canonical picture is a file."""
+        """Noncanonical pictures and literal marks rebuild as sent. Canonical pictures are files."""
         odd = ["data:image/png;base64,QR==", "data:image/png;base64,QQ", "data:image/png;base64,QQ==\n", "data:image/bmp;base64,QQ=="]
         ask = {"model": "m", "messages": [
             {"role": "user", "content": [{"type": "image_url", "image_url": {"url": u}} for u in odd + ["data:image/png;base64,QQ=="]]},
@@ -413,8 +472,9 @@ class ByteForByte(WithUpstream):
         store = self.store(r)
         (line,) = exchanges.lines(store, "u0001")
         self.assertEqual(exchanges.rebuild(store, line), Upstream.seen[-1][2])
-        self.assertEqual(os.listdir(os.path.join(store, exchanges.BLOBS)), [hashlib.sha256(b"A").hexdigest() + ".png"])
-        self.assertEqual(sum('"as_sent":true' in x for x in open(os.path.join(store, exchanges.PARTS))), 1)
+        self.assertEqual(sorted(os.listdir(os.path.join(store, exchanges.BLOBS))),
+                         sorted(hashlib.sha256(raw).hexdigest() + ".png" for raw in (b"A", b"AB")))
+        self.assertEqual(sum('"as_sent":true' in x for x in open(os.path.join(store, exchanges.PARTS))), 0)
 
     def test_the_relays_changes_are_what_is_kept(self):
         """``sent`` is the request after the relay's changes: the model it forces, a stream's usage option."""
