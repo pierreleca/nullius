@@ -49,7 +49,7 @@ and its resources. The source layout stays under `app/`.
   `feasibility`, `launches`, `verifier` - a verifier's report read by its
   benchmark's report block - `attempts`, a task's attempts in one job with
   their pass count and pass@k, and the `cli`), `traces/` (`trace`, `trajectory`,
-  `conversation`, `charts`, `behavior`, `otel`), `compare/` (`comparison` and its `cli`),
+  `conversation`, `calls` (a trial's conversation by model call, from its relay's records), `charts`, `behavior`, `otel`), `compare/` (`comparison` and its `cli`),
   `catalogue/` (`catalog`, which loads one folder per benchmark
   under `catalogue/benchmarks/`, named by its key: its `benchmark.json` with its
   datasets nested in it, its `report` block and its `standard.json` when it runs on the standard;

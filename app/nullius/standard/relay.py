@@ -94,7 +94,7 @@ ANTHROPIC_VERSION = "2023-06-01"
 
 
 def _cut(text, n=4000):
-    if not isinstance(text, str) or len(text) <= n:
+    if not isinstance(text, str) or n is None or len(text) <= n:
         return text
     return text[: n // 4] + f"\n[... {len(text) - n} characters left out ...]\n" + text[-(3 * n // 4):]
 
@@ -174,7 +174,7 @@ def _usage(u: Optional[dict]) -> Optional[dict]:
     return got
 
 
-def _text_of_responses(resp: dict) -> (str, List[dict]):
+def _text_of_responses(resp: dict, limit: Optional[int] = 2000) -> (str, List[dict]):
     text, calls = [], []
     for item in resp.get("output") or []:
         if item.get("type") == "message":
@@ -183,7 +183,7 @@ def _text_of_responses(resp: dict) -> (str, List[dict]):
                     text.append(c.get("text") or "")
         elif item.get("type") in ("function_call", "custom_tool_call", "local_shell_call"):
             calls.append({"name": item.get("name") or item.get("type"),
-                          "arguments": _cut(item.get("arguments") or item.get("input") or json.dumps(item.get("action")), 2000)})
+                          "arguments": _cut(item.get("arguments") or item.get("input") or json.dumps(item.get("action")), limit)})
     return "".join(text), calls
 
 
@@ -197,13 +197,13 @@ def _reasoning_of_responses(resp: dict) -> str:
     return "".join(out)
 
 
-def _text_of_messages(msg: dict) -> (str, List[dict]):
+def _text_of_messages(msg: dict, limit: Optional[int] = 2000) -> (str, List[dict]):
     text, calls = [], []
     for c in msg.get("content") or []:
         if c.get("type") == "text":
             text.append(c.get("text") or "")
         elif c.get("type") in ("tool_use", "server_tool_use"):
-            calls.append({"name": c.get("name"), "arguments": _cut(json.dumps(c.get("input")), 2000)})
+            calls.append({"name": c.get("name"), "arguments": _cut(json.dumps(c.get("input")), limit)})
     return "".join(text), calls
 
 
@@ -213,18 +213,19 @@ def _chat_reasoning(m: dict) -> str:
     return said if isinstance(said, str) else ""
 
 
-def read_reply(path: str, body: bytes, streamed: bool, reasoning: bool = False) -> dict:
+def read_reply(path: str, body: bytes, streamed: bool, reasoning: bool = False, whole: bool = False) -> dict:
     """What a reply said: its text, its tool calls, its usage; with
     ``reasoning``, also the reasoning text it gave (chat's ``reasoning`` or
     ``reasoning_content``, Messages' thinking blocks, a Responses reasoning
-    item's text or summary)."""
-    got = _read_reply(path, body, streamed, reasoning)
+    item's text or summary). A tool call's arguments are cut to 2,000
+    characters, as the call record keeps them, unless ``whole``."""
+    got = _read_reply(path, body, streamed, reasoning, None if whole else 2000)
     if not reasoning:
         got.pop("reasoning", None)
     return got
 
 
-def _read_reply(path: str, body: bytes, streamed: bool, reasoning: bool) -> dict:
+def _read_reply(path: str, body: bytes, streamed: bool, reasoning: bool, limit: Optional[int]) -> dict:
     if not streamed:
         try:
             got = json.loads(body)
@@ -232,15 +233,15 @@ def _read_reply(path: str, body: bytes, streamed: bool, reasoning: bool) -> dict
             return {}
         if "choices" in got:
             m = ((got.get("choices") or [{}])[0].get("message")) or {}
-            calls = [{"name": (c.get("function") or {}).get("name"), "arguments": _cut((c.get("function") or {}).get("arguments"), 2000)}
+            calls = [{"name": (c.get("function") or {}).get("name"), "arguments": _cut((c.get("function") or {}).get("arguments"), limit)}
                      for c in m.get("tool_calls") or []]
             return {"text": m.get("content"), "tool_calls": calls, "usage": _usage(got.get("usage")), "reasoning": _chat_reasoning(m)}
         if got.get("type") == "message" and isinstance(got.get("content"), list):
-            text, calls = _text_of_messages(got)
+            text, calls = _text_of_messages(got, limit)
             return {"text": text, "tool_calls": calls, "usage": _usage(got.get("usage")),
                     "reasoning": "".join(c.get("thinking") or "" for c in got["content"] if isinstance(c, dict) and c.get("type") == "thinking")}
         if got.get("object") == "response" or "output" in got:
-            text, calls = _text_of_responses(got)
+            text, calls = _text_of_responses(got, limit)
             return {"text": text, "tool_calls": calls, "usage": _usage(got.get("usage")), "reasoning": _reasoning_of_responses(got)}
         if got.get("object") == "list" and path.split("?")[0].endswith("/embeddings"):     # how many inputs, and the usage: never the vectors
             return {"embeddings": len(got.get("data") or []), "usage": _usage(got.get("usage"))}
@@ -283,7 +284,7 @@ def _read_reply(path: str, body: bytes, streamed: bool, reasoning: bool) -> dict
                 thought.append(d.get("thinking") or "")
             continue
         if kind in ("response.completed", "response.done", "response.incomplete"):
-            t, c = _text_of_responses(ev.get("response") or {})
+            t, c = _text_of_responses(ev.get("response") or {}, limit)
             return {"text": t, "tool_calls": c, "usage": _usage((ev.get("response") or {}).get("usage")),
                     "reasoning": _reasoning_of_responses(ev.get("response") or {})}
         for ch in ev.get("choices") or []:
@@ -300,7 +301,7 @@ def _read_reply(path: str, body: bytes, streamed: bool, reasoning: bool) -> dict
                 args[i] = args.get(i, "") + (f.get("arguments") or "")
         if ev.get("usage"):
             usage = _usage(ev["usage"])
-    return {"text": "".join(text), "tool_calls": [{"name": calls[i], "arguments": _cut(args.get(i, ""), 2000)} for i in sorted(calls)],
+    return {"text": "".join(text), "tool_calls": [{"name": calls[i], "arguments": _cut(args.get(i, ""), limit)} for i in sorted(calls)],
             "usage": _usage(told) if told is not None else usage, "reasoning": "".join(thought)}
 
 

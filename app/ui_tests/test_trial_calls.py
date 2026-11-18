@@ -1,0 +1,163 @@
+"""The Conversation tab by model call: the three kinds of trial, the picture
+route, the weight of a long trial and each try's own calls. The trials are
+written with the relay's own store; nothing runs."""
+from __future__ import annotations
+
+import base64
+import json
+import re
+import tempfile
+import unittest
+from contextlib import ExitStack
+from pathlib import Path
+from unittest.mock import patch
+
+from nullius import workspace
+from nullius.runs import parse
+from tests.test_trace_calls import P1, P2, SYSTEM, T0, TOOLS, chat_reply, data_url, history, picture, sha, write_trial
+
+from .test_routes import web, write_json
+
+STEPS = [("user", T0 + 1, "open the file"), ("agent", T0 + 11, "looking"), ("agent", T0 + 21, "typing")]
+
+
+def trial(job_dir: Path, name: str, kept, retries=0, **kw):
+    folder = write_trial(str(job_dir / name), kept, steps=STEPS, **kw)
+    write_json(Path(folder) / "result.json", {
+        "task_name": f"bench/{name.split('__')[0]}", "trial_name": name.rsplit("/", 1)[-1], "source": "bench",
+        "started_at": "2026-09-01T10:00:00Z", "finished_at": "2026-09-01T10:01:00Z",
+        "verifier_result": {"rewards": {"reward": 1}}, **({"standard": {"retries": retries}} if retries else {})})
+    return folder
+
+
+def long_trial():
+    msgs, kept = [SYSTEM, {"role": "user", "content": "start"}], []
+    for i in range(60):
+        kept.append({"req": {"model": "m", "messages": list(msgs), "tools": TOOLS}, "body": chat_reply(tool=("click", "{}"))})
+        msgs += [{"role": "assistant", "content": None, "tool_calls": [{"id": f"c{i}", "type": "function", "function": {"name": "click", "arguments": "{}"}}]},
+                 {"role": "user", "content": [{"type": "image_url", "image_url": {"url": data_url(picture(500 + i, 50_000))}}]}]
+    return kept
+
+
+class TrialCalls(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.temp = tempfile.TemporaryDirectory(prefix="nullius-ui-calls-")
+        root = Path(cls.temp.name)
+        for job_id in ("calls-run", "other-run"):
+            job_dir = root / job_id
+            write_json(job_dir / "result.json", {"stats": {"n_trials": 4}})
+            write_json(job_dir / "config.json", {"agents": [{"name": "fixture-agent", "model_name": "m"}],
+                                                 "datasets": [{"name": "bench", "n_tasks": 4}]})
+        job_dir = root / "calls-run"
+        trial(job_dir, "kept__u0001", history())
+        trial(job_dir, "record__u0002", history(), mode=None)
+        trial(job_dir, "plain__u0003", [], mode=None)
+        trial(job_dir, "long__u0004", long_trial())
+        trial(job_dir, "retry__u0005", history(), retries=1)
+        trial(job_dir, "retried/retry__u0005.try-1", history()[:1])
+        trial(root / "other-run", "kept__u0001", history()[:1])
+        (Path(job_dir) / "plain__u0003" / "agent" / "calls.jsonl").unlink()
+        cls.job = parse.parse_job(str(job_dir))
+        cls.other = parse.parse_job(str(root / "other-run"))
+        cls.ws = workspace.Workspace("active", "Active workspace", ["/fixture"], "2026-01-01", "2026-01-01",
+                                     str(root / "ws"), ["/indexed"])
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.temp.cleanup()
+
+    def setUp(self):
+        stack = ExitStack()
+        self.addCleanup(stack.close)
+        stack.enter_context(patch.dict(web.shared.STATE, {"workspace": self.ws, "roots": list(self.ws.roots),
+                                                          "job_roots": list(self.ws.job_roots), "label": self.ws.label}, clear=True))
+        stack.enter_context(patch.dict(web.app.config, TESTING=True))
+        stack.enter_context(patch.object(workspace, "list_all", return_value=[self.ws]))
+        stack.enter_context(patch.object(workspace, "job_index", return_value={}))
+        stack.enter_context(patch.object(workspace, "load", side_effect=lambda home, name: self.ws if name == "active" else None))
+        stack.enter_context(patch.object(workspace, "load_jobs", side_effect=lambda ws, roots: [self.job, self.other]))
+        self.client = web.app.test_client()
+
+    def get(self, path, status=200, **kw):
+        r = self.client.get(path, **kw)
+        self.addCleanup(r.close)
+        self.assertEqual(r.status_code, status, path)
+        return r
+
+    def tab(self, name):
+        html = self.get(f"/trial/calls-run/{name}").get_data(as_text=True)
+        return re.search(r'<section class="conversation-reader".*?</section>', html, re.S).group(0), html
+
+    def test_the_three_kinds_of_trial(self):
+        kept, _ = self.tab("kept__u0001")
+        self.assertIn('data-default-kind="calls"', kept)
+        self.assertIn('<button type="button" data-kind="calls" aria-pressed="true">Calls</button>', kept)
+        self.assertIn("4 calls · 3 steps", kept)
+        data = self.get("/trial/calls-run/kept__u0001/conversation", query_string={"kind": "calls", "position": 1}).get_json()
+        self.assertEqual((data["view"], data["record"], data["total"]), ("calls", "exchanges", 4))
+        (result,) = data["selected"]["sent"]["items"]
+        self.assertEqual((result["label"], result["pictures"][0]["sha256"]), ("Tool result · c1", sha(P2)))
+        self.assertEqual(result["pictures"][0]["url"], f"/trial/calls-run/kept__u0001/picture/{sha(P2)}")
+        self.assertEqual([s["step_id"] for s in data["selected"]["steps"]], [3])
+
+        record, _ = self.tab("record__u0002")
+        self.assertIn('data-kind="calls"', record)
+        data = self.get("/trial/calls-run/record__u0002/conversation", query_string={"kind": "calls"}).get_json()
+        self.assertEqual((data["record"], data["selected"]["sent"]["note"], data["selected"]["answer"]["abridged"]),
+                         ("calls", "Not recorded", True))
+        self.assertEqual(data["rows"][0]["tokens"]["input"], 100)
+
+        plain, _ = self.tab("plain__u0003")
+        for mark in ("data-default-kind", 'data-kind="calls"', " calls"):
+            self.assertNotIn(mark, plain)
+        self.assertIn('<span class="reader-total mono">3 steps</span>', plain)
+        self.assertIn('<button type="button" data-kind="all" aria-pressed="true">All steps</button>', plain)
+        steps = self.get("/trial/calls-run/plain__u0003/conversation", query_string={"kind": "calls"}).get_json()
+        self.assertNotIn("view", steps)                   # no call is inferred: the steps, as today
+        self.assertEqual(steps["total"], 3)
+
+    def test_the_flat_list_of_steps_is_kept_as_a_filter(self):
+        data = self.get("/trial/calls-run/kept__u0001/conversation", query_string={"kind": "all"}).get_json()
+        self.assertEqual((data["kind"], data["total"]), ("all", 3))
+
+    def test_the_picture_route(self):
+        r = self.get(f"/trial/calls-run/kept__u0001/picture/{sha(P2)}")
+        self.assertEqual((r.data, r.mimetype), (P2, "image/png"))
+        self.assertIn("max-age=31536000", r.headers["Cache-Control"])
+        self.assertEqual(r.headers["X-Content-Type-Options"], "nosniff")
+        for bad in (sha(b"none"), sha(P2).upper(), sha(P2)[:-1], "not-a-digest"):
+            self.get(f"/trial/calls-run/kept__u0001/picture/{bad}", status=404)
+        self.get(f"/trial/calls-run/record__u0002/picture/{sha(P2)}", status=404)     # a trial that does not list it
+        self.get(f"/trial/other-run/kept__u0001/picture/{sha(P2)}", status=404)       # another trial's store lacks it
+        self.get(f"/trial/calls-run/kept__u0001/picture/{sha(P1)}")
+        # a blob the store lists under a type that is not an image
+        store = Path(self.job.trials[0].dir).parent / "kept__u0001" / ".work" / "relay" / "exchanges"
+        page = b"<script>alert(1)</script>"
+        (store / "blobs" / (sha(page) + ".bin")).write_bytes(page)
+        with open(store / "parts.jsonl", "a") as f:
+            f.write(json.dumps({"sha256": "e" * 64, "part": {"x": {"blob": sha(page), "type": "text/html", "bytes": len(page), "as": "base64"}}}) + "\n")
+        self.get(f"/trial/calls-run/kept__u0001/picture/{sha(page)}", status=404)
+
+    def test_a_long_trial_pages_twelve_calls_and_holds_no_picture_bytes(self):
+        _, html = self.tab("long__u0004")
+        data = self.get("/trial/calls-run/long__u0004/conversation", query_string={"kind": "calls"})
+        for body in (html.encode(), data.data):
+            self.assertNotIn(base64.b64encode(picture(530, 50_000))[:40], body)
+            self.assertNotIn(b";base64,", body)
+        doc = data.get_json()
+        self.assertEqual((doc["total"], len(doc["rows"]), doc["pages"]), (60, 12, 5))
+        self.assertLess(len(data.data), 20_000)
+
+    def test_each_try_shows_its_own_calls(self):
+        last = self.get("/trial/calls-run/retry__u0005/conversation", query_string={"kind": "calls"}).get_json()
+        first = self.get("/trial/calls-run/retry__u0005.try-1/conversation", query_string={"kind": "calls"}).get_json()
+        self.assertEqual((last["total"], first["total"]), (4, 1))
+        tab, _ = self.tab("retry__u0005.try-1")
+        self.assertIn("1 call · 3 steps", tab)
+        self.get(f"/trial/calls-run/retry__u0005.try-1/picture/{sha(P1)}")
+        self.get(f"/trial/calls-run/retry__u0005.try-1/picture/{sha(P2)}", status=404)
+
+
+if __name__ == "__main__":
+    unittest.main()
