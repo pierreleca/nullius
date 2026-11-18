@@ -144,8 +144,15 @@ def check(entry: dict, where: str) -> dict:
             raise Refused(f"{where}: no {k}")
     check_name(entry["name"])
     _bench_key(entry["benchmark"])
-    if not isinstance(entry.get("benchmark_options") or {}, dict) or not isinstance(entry.get("setup") or "yours", str):
-        raise Refused(f"{where}: benchmark_options is a mapping and setup a word")
+    if not isinstance(entry.get("description"), str):
+        raise Refused(f"{where}: description is text")
+    if "benchmark_version" in entry and (not isinstance(entry["benchmark_version"], str) or not entry["benchmark_version"]):
+        raise Refused(f"{where}: benchmark_version is a word")
+    if not isinstance(entry.get("setup"), str) or not entry["setup"]:
+        raise Refused(f"{where}: setup is a word")
+    options = entry.get("benchmark_options")
+    if not isinstance(options, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in options.items()):
+        raise Refused(f"{where}: benchmark_options maps names to words")
     revs = entry.get("revisions")
     if not isinstance(revs, list) or not revs:
         raise Refused(f"{where}: no revision")
@@ -155,7 +162,11 @@ def check(entry: dict, where: str) -> dict:
         if not isinstance(n, int) or isinstance(n, bool) or n < 1 or n in seen:
             raise Refused(f"{where}: a revision's number is a whole number, each once")
         seen.add(n)
-        if not isinstance(r.get("units"), list):
+        if not isinstance(r.get("date"), str) or not r["date"]:
+            raise Refused(f"{where}: revision {n} has no date")
+        if not isinstance(r.get("note"), str):
+            raise Refused(f"{where}: revision {n}'s note is text")
+        if not isinstance(r.get("units"), list) or any(not isinstance(u, str) for u in r["units"]):
             raise Refused(f"{where}: revision {n} lists no units")
         _ids(r["units"], f"{where}: revision {n}")
         if r.get("hash") != _hash_of(entry, r["units"]):

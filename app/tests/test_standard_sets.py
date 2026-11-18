@@ -9,6 +9,7 @@ refuses what contradicts them, and records the set in the job's config. No key,
 no network: the runs are a control's."""
 from __future__ import annotations
 
+import copy
 import io
 import json
 import os
@@ -272,6 +273,44 @@ class Import(Scratch):
         self.assertIn("the same id and revision with another hash", err)
         self.assertEqual(sets.load("fakebench", "dev")["id"], entry["id"])
         self.assertEqual(sets.revision(sets.load("fakebench", "dev"))["units"], ["good", "model", "slow"])
+
+    def test_import_checks_every_consumed_field_before_storing_an_entry_or_job_record(self):
+        entry = self.make("dev", "good\n")
+        required = ("id", "name", "description", "benchmark", "dataset", "benchmark_options", "setup")
+        cases = [("entry", k, None, True) for k in required]
+        cases += [("revision", k, None, True) for k in sets.REVISION]
+        cases += [("entry", k, v, False) for k, v in (
+            ("id", 1), ("name", []), ("description", {}), ("benchmark", False),
+            ("benchmark_version", []), ("dataset", {}), ("setup", []), ("setup", ""),
+            ("benchmark_options", []), ("benchmark_options", {"mode": ["plain"]}))]
+        cases += [("revision", k, v, False) for k, v in (
+            ("revision", True), ("date", None), ("date", []), ("date", ""), ("note", None),
+            ("note", {}), ("units", [1]), ("units", [{}]), ("units", "good"), ("hash", []))]
+        source_job = os.path.join(self.tmp, "source-job")
+        os.makedirs(source_job)
+        for index, (section, field, value, missing) in enumerate(cases):
+            for source in ("entry", "job"):
+                elsewhere = os.path.join(self.tmp, f"elsewhere-{index}-{source}")
+                with self.subTest(section=section, field=field, value=value, missing=missing, source=source):
+                    incoming = copy.deepcopy(entry)
+                    target = incoming if section == "entry" else incoming["revisions"][0]
+                    if missing:
+                        del target[field]
+                    else:
+                        target[field] = value
+                    if source == "entry":
+                        path = self.file(json.dumps(incoming), "incoming.json")
+                    else:
+                        rec = {k: v for k, v in incoming.items() if k not in ("schema", "revisions")}
+                        rec.update(incoming["revisions"][0])
+                        self.file(json.dumps({"runner": "standard", "standard": {"task_set": rec}}),
+                                  "source-job/config.json")
+                        path = source_job
+                    with mock.patch.dict(os.environ, {"NULLIUS_CATALOGUE": elsewhere}):
+                        code, out, err = self.cli("set", "import", path)
+                    self.assertEqual((code, out), (2, ""), err)
+                    self.assertTrue(err.startswith("refused: "), err)
+                    self.assertFalse(os.path.exists(elsewhere))
 
     def test_an_entry_comes_in_from_a_job_that_ran_it(self):
         entry = self.make("dev", "model\ngood\n", "--bench-option", "mode=hard", "--description", "two of them")
