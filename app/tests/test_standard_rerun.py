@@ -106,6 +106,7 @@ class RerunRecords(unittest.TestCase):
                 kept = path / "retried" / f"{name}.try-1" / rerun.NO_RESULT
                 self.assertEqual(outside.read_bytes(), b"\x00original evidence\xff")
                 self.assertFalse(kept.is_symlink())
+                self.assertEqual(kept.stat().st_mode & 0o777, 0o644)
                 self.assertNotEqual(kept.stat().st_ino, outside.stat().st_ino)
                 self.assertIsNone(json.loads(kept.read_text())["result"])
 

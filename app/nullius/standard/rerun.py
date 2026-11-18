@@ -358,6 +358,7 @@ def _again(r: "run.Run", job_dir: str, old: dict, cfg: dict, trials: Dict[str, d
         else:
             if name in killed:               # kept as the try it was, marked: it holds no result
                 fd, marker = tempfile.mkstemp(dir=os.path.join(job_dir, name))
+                os.fchmod(fd, 0o644)         # readable as the trial's other files are
                 try:
                     with os.fdopen(fd, "w") as f:
                         json.dump({"found_at": mark["at"], "result": None}, f)
