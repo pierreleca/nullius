@@ -24,7 +24,7 @@ from pathlib import Path
 from unittest import mock
 
 from nullius.runs import cli as runs_cli, parse
-from nullius.standard import cli as standard_cli, container, definitions, exchanges, install, pace as pacing, recipe, relay, run
+from nullius.standard import cli as standard_cli, container, definitions, exchanges, install, pace as pacing, recipe, relay, replay, run
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "standard", "catalogue")
 APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -203,6 +203,68 @@ class StoreFiles(unittest.TestCase):
 
     def keep(self, store, req, n=1, headers=None):
         store.write("u0001", n, 1.0, "/messages", req, json.dumps(req).encode(), headers or {}, 200, False, b"{}")
+
+    def test_only_real_keys_are_cut_from_nested_values_and_names(self):
+        _, placeholder = run.provider_endpoint("custom", {"MODEL_API_URL": "http://localhost:8000/v1"})
+        value = {"localhost": ["local-model", {KEY: "localhost " + KEY}]}
+        expected = {"localhost": ["local-model", {"[REDACTED]": "localhost [REDACTED]"}]}
+        for clean in (exchanges._cut_key, relay._clean):
+            with self.subTest(clean=clean.__name__):
+                self.assertEqual(clean(value, ("", placeholder, KEY)), expected)
+
+    def test_a_keyless_relay_keeps_localhost_in_records_and_messages(self):
+        base, key = run.provider_endpoint("custom", {"MODEL_API_URL": "http://localhost:8000/v1"})
+        req = {"model": "local-model", "messages": [{"role": "user", "content": "localhost"}],
+               "provider": {"order": ["local-asked"]}}
+        body = json.dumps(dict(CHAT, provider="localhost", error={"message": "localhost unavailable"})).encode()
+        for mode in exchanges.MODES:
+            with self.subTest(mode=mode):
+                r = relay.Relay(base, key, str(self.root / mode), exchanges=mode, serving={"local-model": ["localhost"]})
+                self.addCleanup(r.stop)
+                response = mock.Mock(status=200, headers={"Content-Type": "application/json"})
+                response.getheader.return_value = "application/json"
+                response.read.return_value = body
+                raw = json.dumps(req).encode()
+                h = mock.Mock(path="/u0001/v1/chat/completions", command="POST",
+                              headers={"Content-Length": str(len(raw))}, rfile=io.BytesIO(raw), wfile=io.BytesIO())
+                with mock.patch.object(r.pool, "send", return_value=(mock.Mock(), response)), mock.patch.object(r.pool, "give"):
+                    r._forward(h)
+                self.assertEqual(h.wfile.getvalue(), body)
+                call, = r.calls("u0001")
+                self.assertEqual(call["request"]["routing"], relay.routing(["localhost"]))
+                self.assertEqual(call["request"]["routing_asked"], req["provider"])
+                self.assertEqual(call["reply"]["served_by"], "localhost")
+                self.assertEqual(call["reply"]["error"]["message"], "localhost unavailable")
+                self.assertEqual(r._said(OSError("localhost unavailable")), "OSError: localhost unavailable")
+                for p in Path(r.dir).rglob("*"):
+                    if p.is_file():
+                        self.assertNotIn(b"[REDACTED]", p.read_bytes())
+
+    def test_empty_and_placeholder_keys_leave_exchanges_unchanged(self):
+        env = {"MODEL_API_URL": "http://localhost:8000/v1"}
+        _, placeholder = run.provider_endpoint("custom", env)
+        req = {"model": "local-model", "messages": [{"role": "user", "content": "localhost"}]}
+        raw = json.dumps(req).encode()
+        headers = {"X-local": "localhost"}
+        body = b'{"text":"localhost local-model"}'
+        for key in ("", placeholder):
+            for mode in ("whole", "text"):
+                with self.subTest(key=key, mode=mode):
+                    job = self.root / f"{mode}-{key or 'empty'}"
+                    store = exchanges.Store(str(job / "task__u0001" / ".work" / "relay"), mode=mode, keys=(key,))
+                    for n, request in enumerate((req, None), 1):
+                        store.write("u0001", n, 1.0, "/chat/completions", request, raw, headers, 200, False, body)
+                        line = exchanges.lines(store.dir, "u0001")[-1]
+                        self.assertNotIn("key_cut", line)
+                        self.assertEqual(line["headers"], headers)
+                        self.assertEqual(line["reply"]["body"], body.decode())
+                        self.assertEqual(exchanges.rebuild(store.dir, line), raw)
+                        self.assertTrue(exchanges.check(store.dir, "u0001", n)["same"])
+                    (job / "config.json").write_text(json.dumps({"standard": {"provider": "custom"}}))
+                    src = replay.source(str(job), "task__u0001", 1)
+                    prep = replay.prepare(src, prices={"local-model": {"input": 1.0, "output": 2.0}}, env=env)
+                    self.assertEqual(prep.raw, raw)
+                    self.assertEqual(prep.sha256, line["sent_sha256"])
 
     def test_a_damaged_part_leaves_other_calls_rebuildable(self):
         for damage in ("truncated", "digest", "picture", "missing"):
@@ -654,6 +716,30 @@ class NeverInTheWay(WithUpstream):
 
 
 class NoKey(WithUpstream):
+    def test_a_keyless_custom_endpoint_keeps_a_call_that_can_be_replayed(self):
+        env = {"MODEL_API_URL": self.base}
+        base, key = run.provider_endpoint("custom", env)
+        job = Path(self.tmp) / "job"
+        r = relay.Relay(base, key, str(job / "task__u0001" / ".work" / "relay"), exchanges="whole").start()
+        self.addCleanup(r.stop)
+        req = {"model": "local-model", "max_tokens": 100, "messages": [{"role": "user", "content": "localhost"}]}
+        status, body = self.post(r, "u0001", "/chat/completions", req, headers={"X-Trace-Id": "localhost"})
+        self.assertEqual(status, 200)
+        raw = Upstream.seen[-1][2]
+        line, = exchanges.lines(self.store(r), "u0001")
+        self.assertNotIn("key_cut", line)
+        self.assertEqual(line["reply"]["body"], body.decode())
+        self.assertEqual(exchanges.rebuild(self.store(r), line), raw)
+        (job / "config.json").write_text(json.dumps({"standard": {"provider": "custom"}}))
+        src = replay.source(str(job), "task__u0001", 1)
+        prep = replay.prepare(src, prices={"local-model": {"input": 1.0, "output": 2.0}}, env=env)
+        self.assertEqual(prep.sha256, line["sent_sha256"])
+        before = len(Upstream.seen)
+        doc = replay.send(prep, 1, 1.0, str(Path(self.tmp) / "replay"), env=env)
+        self.assertEqual([sent for _, _, sent in Upstream.seen[before:]], [raw])
+        self.assertTrue(doc["sent_as_prepared"])
+        self.assertEqual(doc["sends"]["answered"], 1)
+
     def test_the_relays_key_is_in_no_file_of_the_store(self):
         r = self.relay()
         ask = dict(SHAPES["messages"][1], system=f"the key is {KEY}, keep it",

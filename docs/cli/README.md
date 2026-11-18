@@ -22,6 +22,7 @@ also works.
 | [Prove a benchmark](prove.md) | `nullius standard prove` |
 | [Conform an agent or a capability](conform.md) | `nullius standard conform` |
 | [Fidelity](fidelity.md) | `nullius standard fidelity` |
+| [Replay a model call](replay.md) | `nullius standard replay`, `study`, `recount` |
 | [Shard and merge](shard-and-merge.md) | `nullius standard run --shard`, `merge` |
 | [Task sets](task-sets.md) | `nullius standard units`; `set create`, `update`, `list`, `show`, `rename`, `delete`, `import`; `run --set` |
 | [Run tasks again](rerun.md) | `nullius standard rerun` |

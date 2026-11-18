@@ -832,6 +832,12 @@ class PassThroughTest(unittest.TestCase):
         self.assertEqual(status, 502)
         self.assertIn("could not reach", r.calls("u")[-1]["error"])
 
+    def test_a_relay_without_exchanges_keeps_its_call_record_as_it_was(self):
+        r = relay.Relay("http://127.0.0.1:9/v1", "local", tempfile.mkdtemp()).start()     # a custom provider's key when it has none
+        self.addCleanup(r.stop)
+        self.post(r, "u", "/chat/completions", {"model": "local-model"})
+        self.assertEqual(r.calls("u")[-1]["model"], "local-model")
+
     def test_a_relay_stops_without_waiting_out_a_poll(self):
         import time
         took = []

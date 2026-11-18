@@ -72,7 +72,7 @@ from concurrent.futures import FIRST_EXCEPTION, CancelledError, ThreadPoolExecut
 from contextlib import ExitStack, contextmanager
 from typing import Callable, Dict, List, Optional
 
-from nullius import constraints as limits, paths, prices as price_list, progress, providers
+from nullius import constraints as limits, paths, prices as price_list, progress, providers, settings
 from nullius.redact import redact
 from nullius.harbor import feed as live_feed
 from nullius.standard import acp, boat, container, definitions, exchanges as exchange_store, hostreq, install, job, jsonl, ledger as ledgers, match, mcp_machine, pace as pacing, relay, shard as shards
@@ -145,7 +145,7 @@ def provider_endpoint(provider: str, env=os.environ) -> tuple:
         raise Refused(f"provider {provider!r} is not one of {list(providers.PROVIDERS)}")
     rec = providers.record(provider, env)
     base = rec["base"]
-    key = env.get(rec["key"]) or ("local" if provider == "custom" else "")
+    key = env.get(rec["key"]) or (settings.MODEL_KEY_PLACEHOLDER if provider == "custom" else "")
     if not base:
         raise Refused("MODEL_API_URL is not set in Settings")
     if not key:

@@ -365,9 +365,8 @@ def _clean(value, secrets=()):
     if isinstance(value, list):
         return [_clean(v, secrets) for v in value]
     if isinstance(value, str):
-        for s in secrets:
-            if s:
-                value = value.replace(s, "[REDACTED]")
+        for s in exchange_store.secret_keys(secrets):
+            value = value.replace(s, "[REDACTED]")
         return redact(value)
     return value
 
@@ -746,7 +745,7 @@ class Relay:
         quotes a header value it refuses (a key with a stray CR, a BOM), so
         the key itself is cut out of the text whatever else it says."""
         text = f"{type(e).__name__}: {e}"
-        for k in {self.key, self.key.strip()} - {""}:
+        for k in exchange_store.secret_keys((self.key, self.key.strip())):
             text = text.replace(k, "[REDACTED]")
         return redact(text)[:200]
 
@@ -908,7 +907,7 @@ class Relay:
                 rec = {"n": number, **rec}
             with self.lock:
                 with open(os.path.join(self.dir, tag + ".jsonl"), "a") as f:
-                    f.write(json.dumps(rec) + "\n")
+                    f.write(json.dumps(exchange_store._cut_key(rec, self.exchanges.keys) if self.exchanges else rec) + "\n")
             if number is not None:               # the exchange whole, after its record: it never raises
                 self.exchanges.write(tag, number, t0, rest, req if dumped else None, raw,
                                      {k: v for k, v in sent_headers.items() if not _CREDENTIAL.search(k)}, status, streamed, body)
@@ -1002,7 +1001,7 @@ class Relay:
             rec = {"n": number, **rec}
         with self.lock:
             with open(os.path.join(self.dir, tag + ".jsonl"), "a") as f:
-                f.write(json.dumps(rec) + "\n")
+                f.write(json.dumps(exchange_store._cut_key(rec, self.exchanges.keys) if self.exchanges else rec) + "\n")
         body = json.dumps({"type": "error", "error": {"type": "call_cap" if by == "calls" else "spending_cap",
                                                       "code": {"unit": "unit_spending_cap", "price": "unpriced_model", "ledger": "ledger_unavailable",
                                                                "calls": "unit_call_cap"}.get(by, "spending_cap"),
