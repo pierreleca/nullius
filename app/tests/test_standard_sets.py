@@ -297,6 +297,12 @@ class Running(Scratch):
     def run_cli(self, *args):
         return self.cli("run", "fakebench", "nop", "--jobs", self.jobs, "-j", "2", *args)
 
+    def test_an_empty_set_is_refused_before_any_unit(self):
+        code, out, err = self.run_cli("--set", "", "--name", "empty")
+        self.assertEqual(code, 2, out + err)
+        self.assertIn("not a task set's name", out)
+        self.assertFalse(os.path.exists(self.jobs))
+
     def test_each_contradiction_is_refused_before_any_unit_with_a_plain_message(self):
         self.make("dev", "good\nmodel\n", "--bench-option", "mode=hard")
         for args, said in ((["--dataset", "responding"], "--dataset responding: the task set dev is cut from the dataset all"),

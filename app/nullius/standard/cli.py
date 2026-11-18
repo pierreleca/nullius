@@ -528,7 +528,7 @@ def _bench(key):
 def cmd_run(a):
     b = _bench(a.benchmark)
     task_set, dataset, bench_options = None, a.dataset, options(a.bench_option)
-    if a.task_set:
+    if a.task_set is not None:
         # the set's dataset and options over the run's, refused where they differ: before anything starts
         try:
             task_set, dataset, bench_options = sets.for_run(b, a.task_set, dataset=a.dataset, bench_options=bench_options,
