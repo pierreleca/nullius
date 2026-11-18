@@ -31,7 +31,7 @@ As version 1: `click`, `move`, `drag`, `scroll`, `type`, `key`, `wait`, `step`, 
 | `step` argument | In version 2 |
 | --- | --- |
 | `actions`, `response`, `screenshot`, `end` | As version 1. An empty list is a step with no action |
-| `files` | Optional: at most 32 paths inside `folder`. Once the actions have run and their pauses have passed, each file is read: the answer is `{steps_left, done, files: {PATH: BASE64 or null}}`, null for a file that is not there. A file over 12 MiB, or one the desktop cannot read, is `{PATH: {error}}` for that file alone; the step has run all the same. A path outside `folder` refuses the call at once: it takes no step and never reaches the desktop |
+| `files` | Optional: any number of paths inside `folder`. Once the actions have run and their pauses have passed, each file is read: the answer is `{steps_left, done, files: {PATH: BASE64 or null}}`, null for a file that is not there. A file over 12 MiB, or one the desktop cannot read, is `{PATH: {error}}` for that file alone; the step has run all the same. A path outside `folder` refuses the call at once: it takes no step and never reaches the desktop |
 
 An acting call's image, and `step`'s with `screenshot` true, is the observation of that step: the bytes `screenshot` returns afterwards. A whole answer is at most 24 MiB, as in version 1: the files are taken in their order while the answer holds them, with its image, and each file that would take it past 24 MiB is `{PATH: {error}}`. The same holds for `prepare`.
 

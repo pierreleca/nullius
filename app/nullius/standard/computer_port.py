@@ -102,7 +102,6 @@ VERSIONS = (1, 2)
 NAMES_2 = ["info", "screenshot", "upload", "prepare", "click", "move", "drag", "scroll", "type", "key", "wait", "step",
            "done", "fail"]
 WINDOW = ("upload", "prepare")                       # version 2: the tools of the window before the task
-STEP_FILES = 32                                      # the most files a step or a prepare of version 2 names
 FILES_ROOM = LINE_BYTES - 64 * 1024                  # of an answer, what its files and image may take
 TASK_GIVEN = b"task-given"                           # the lifeline's message: the agent is being given its task
 PREPARE = "import pyautogui\nimport time\npyautogui.FAILSAFE = False\n{code}"   # a prepare's action, as a step's is
@@ -220,15 +219,15 @@ V2_TEXTS = {
               "run already holds a file of that sha256, it may be given with no data, and it starts the file.",
     "prepare": "Before the task alone, in the window between the session's start and the task: runs actions in the "
                "desktop, each a line of Python with pyautogui and time imported as a step's are, with no pause after "
-               "them, then reads files, at most 32 paths inside folder. Returns {files}: each in base64, null when there "
-               "is no such file. Not a step.",
+               "them, then reads files, any number of paths inside folder. Returns {files}: each in base64, null when "
+               "there is no such file. Not a step.",
     "step": "One step of several actions, run in order: each is a line of Python run in the desktop with pyautogui and "
             "time imported, or WAIT. An empty list is a step with no action. With end, done or fail, the actions run "
-            "and then the task ends, in this one step. files, at most 32 paths inside folder, are read once the actions "
-            "and their pauses have run: the answer's files holds each in base64, null when there is no such file. "
-            "Returns the step's observation as a PNG image when screenshot is true.",
+            "and then the task ends, in this one step. files, any number of paths inside folder, are read once the "
+            "actions and their pauses have run: the answer's files holds each in base64, null when there is no such "
+            "file. Returns the step's observation as a PNG image when screenshot is true.",
 }
-FILES = {"type": "array", "maxItems": STEP_FILES,
+FILES = {"type": "array",
          "items": {"type": "string", "minLength": 1, "description": "A path inside folder"}}
 
 

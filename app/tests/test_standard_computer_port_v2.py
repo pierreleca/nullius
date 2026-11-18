@@ -144,7 +144,8 @@ class Tools(Port2):
         listed = {t["name"]: t for t in c.ask("tools/list")["result"]["tools"]}
         self.assertEqual(list(listed), ["info", "screenshot", "upload", "prepare", "click", "move", "drag", "scroll",
                                         "type", "key", "wait", "step", "done", "fail"])
-        self.assertEqual(listed["step"]["inputSchema"]["properties"]["files"]["maxItems"], 32)
+        self.assertNotIn("maxItems", listed["step"]["inputSchema"]["properties"]["files"])
+        self.assertNotIn("maxItems", listed["prepare"]["inputSchema"]["properties"]["files"])
         self.assertEqual(sorted(listed["prepare"]["inputSchema"]["properties"]), ["actions", "files"])
         init = c.initialize()["result"]
         self.assertEqual(init["serverInfo"], {"name": "computer", "version": "2"})
@@ -429,13 +430,16 @@ class StepFiles(Port2):
         self.assertEqual(value(got), {"steps_left": 1, "done": False, "files": {"/agent/small": {
             "error": "the desktop could not read it: RuntimeError: read failed in the desktop"}}})
 
-    def test_a_step_names_at_most_32_files(self):
+    def test_forty_small_files_come_back_in_one_step(self):
         c = self.start(steps=3)
-        names = [f"/agent/f{i}" for i in range(33)]
-        self.assertEqual(error(c.call("step", actions=[], files=names)), "files holds 0 to 32 items")
-        self.assertEqual(self.left(c), 3)
-        got = value(c.call("step", actions=[], files=names[:32]))
-        self.assertEqual((got["steps_left"], got["files"]), (2, dict.fromkeys(names[:32])))
+        names = [f"/agent/f{i}" for i in range(40)]
+        for i, name in enumerate(names):
+            self.put(name, b"file %d" % i)
+        got = value(c.call("step", actions=["pyautogui.press('a')"], files=names))
+        self.assertEqual(got, {"steps_left": 2, "done": False,
+                               "files": {name: base64.b64encode(b"file %d" % i).decode()
+                                         for i, name in enumerate(names)}})
+        self.assertEqual(self.left(c), 2)
 
     def test_files_that_would_take_the_answer_past_its_bound_are_errors_and_the_others_come(self):
         c = self.start(steps=3)
