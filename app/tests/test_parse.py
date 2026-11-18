@@ -832,6 +832,18 @@ class RunIdentity(unittest.TestCase):
         self.assertEqual(j.identity, want)
         self.assertNotIn(SECRET, json.dumps(j.identity))            # a credential-named option keeps its name, and no value
 
+    def test_credentials_are_redacted_for_every_value_type_and_token_counts_are_kept(self):
+        counts = {"max_tokens": "4096", "max_output_tokens": 2048, "max_completion_tokens": "1024",
+                  "max_new_tokens": "512", "token_limit": "256", "token_budget": 128}
+        for i, value in enumerate((123456789012, 1.25, True, False, None, "private-value", [123], {"value": 123})):
+            with self.subTest(value=value):
+                options = dict(counts, password=value, api_key=value, access_token=value,
+                               nested=dict(counts, authorization=value))
+                job = parse.parse_job(standard_job(self.tmp, f"credentials-{i}", [1], options=options, bench_options=options))
+                expected = dict(counts, password="[REDACTED]", api_key="[REDACTED]", access_token="[REDACTED]", nested=counts)
+                self.assertEqual(job.identity["agent_options"], expected)
+                self.assertEqual(job.identity["benchmark_options"], expected)
+
     def test_a_job_that_records_a_fact_not_has_no_key_for_it(self):
         # written before the options, the pin, the limits and the served record existed
         d = os.path.join(self.tmp, "older")

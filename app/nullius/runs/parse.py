@@ -827,6 +827,7 @@ _PHASE_MULTIPLIERS = ("agent_timeout_multiplier", "agent_setup_timeout_multiplie
 # A launch carries only the name of a value filed under a name like these: it
 # is a credential, and the record is embedded in the builder's page.
 _SECRET_KEY = re.compile(r"(?:api[-_]?key|token|password|authorization|credential|secret)", re.I)
+_TOKEN_COUNT_KEY = re.compile(r"^(?:(?:(?:max|min|num|n|total|input|output|prompt|completion|new)[-_])*tokens|token[-_](?:count|limit|budget))$", re.I)
 # What a recipe can say; any other key a config recorded is named, not dropped.
 _LAUNCH_TOP = {"job_name", "jobs_dir", "quiet", "debug", "agents", "datasets", "tasks", "retry",
                "n_concurrent_trials", "n_attempts", "timeout_multiplier", "environment", *_PHASE_MULTIPLIERS}
@@ -841,7 +842,7 @@ def _scrub(values, at: str = "") -> tuple:
     kept, secret = {}, []
     for key, value in (values if isinstance(values, dict) else {}).items():
         name = f"{at}{key}"
-        if _SECRET_KEY.search(str(key)):
+        if _SECRET_KEY.search(str(key)) and not _TOKEN_COUNT_KEY.fullmatch(str(key)):
             secret.append(name)
         else:
             kept[str(key)], inner = _scrub_value(value, name)
@@ -929,10 +930,10 @@ def _budget(b) -> dict:
 def _options(values) -> dict:
     """A run's options as a page may show them: strings redacted at any depth
     (``_scrub``), and an option filed under a credential's name kept by its
-    name with its value replaced, unless that value is a number or a yes or no."""
+    name with its value replaced. Token counts are not credentials."""
     out = {}
     for key, value in (values if isinstance(values, dict) else {}).items():
-        secret = _SECRET_KEY.search(str(key)) and not isinstance(value, (int, float))
+        secret = _SECRET_KEY.search(str(key)) and not _TOKEN_COUNT_KEY.fullmatch(str(key))
         out[str(key)] = "[REDACTED]" if secret else _scrub_value(value, str(key))[0]
     return out
 
