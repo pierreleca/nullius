@@ -19,6 +19,8 @@ the launcher has fetched a dataset or built an image, so a board shows the
 preparation window instead of nothing (its ``stage`` names what is being
 prepared; ``job.start`` keeps meaning "trials are about to be scheduled").
 Payloads are read leniently — a missing counter is *absent*, never zero.
+A ``trial.end`` with ``back`` is a try put back in its place after the try
+that followed it was stopped: the card is that try's again, at its attempt.
 
 Four rules are load-bearing, and each has a test:
 
@@ -638,6 +640,13 @@ def fold(events: list[Event], now: datetime | None = None, notices: list[str] | 
                 t.last_line = d["line"]
         elif e.event == "trial.end":
             t = trial_of(e)
+            if d.get("back") is True and t.outcome is None and t.attempt > 1:
+                # a try that never ended (a Stop under it), and the try before back in its place: the card is that
+                # try's again, and what it cost is no longer an earlier attempt's
+                t.attempt -= 1
+                t.retried.pop()
+                if t.cost_before is not None and _num(d.get("cost_usd")) is not None:
+                    t.cost_before = (t.cost_before - _num(d["cost_usd"])) or None
             t.outcome = d["outcome"]
             t.reward = _num(d.get("reward"))
             t.score, t.parts = _num(d.get("score")), _num(d.get("parts"), int)

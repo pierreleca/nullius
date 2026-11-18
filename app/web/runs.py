@@ -543,12 +543,36 @@ def job(job_id):
             return render_template("runs/preparing.html", job_id=job_id, ex=ex, csrf=shared._csrf_token(), own=own, deletable=_deletable(job_id, ex))
         abort(404)
     from . import judge
+    from . import execute
     board = _live_board_state(j)
+    again = ex.again_of(job_id) if ex is not None else None
+    j, running_again = _until_again(j, (again or {}).get("trials") or [])
     return render_template("runs/job.html", job=j, live_board=board, view=_view_of(board, j),
                            execution=ex, csrf=shared._csrf_token(),
                            judgement=judge.job_summary(j) if j.trials else None,
                            control=feasibility.summary_of(j), ended=execution.ended_for(job_id), own=own, deletable=_deletable(job_id, ex),
-                           trial_rows=attempts.grouped(j), pass_k=attempts.for_job(j))
+                           trial_rows=attempts.grouped(j), pass_k=attempts.for_job(j),
+                           again=execute.again_offer(j, ex), running_again=running_again)
+
+
+def _until_again(j, names):
+    """The job as its page shows it while the trials ``names`` run again: a trial whose new try has not ended
+    has no result in its folder yet, and its last try kept in ``retried/`` stands in its place until it has.
+    (the job, the names of the trials shown by an earlier try)."""
+    have = {t.trial_name for t in j.trials}
+    earlier = []
+    for name in names:
+        if name in have:
+            continue
+        kept = os.path.join(j.dir, "retried")
+        tries = [int(k.rpartition(".try-")[2]) for k in (os.listdir(kept) if os.path.isdir(kept) else ())
+                 if k.startswith(name + ".try-") and k.rpartition(".try-")[2].isdigit()]
+        t = parse.parse_trial(j.job_id, os.path.join(kept, f"{name}.try-{max(tries)}")) if tries else None
+        if t is not None:
+            earlier.append(replace(t, trial_name=name))
+    if not earlier:
+        return j, set()
+    return replace(j, trials=sorted(j.trials + earlier, key=lambda t: t.trial_name)), {t.trial_name for t in earlier}
 
 
 def _runs_of(g, owner=execution.for_job) -> list:

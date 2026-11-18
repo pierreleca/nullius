@@ -186,6 +186,28 @@ class RerunTest(unittest.TestCase):
                 self.assertTrue(self.read(job_dir, "result.json")["reruns"][-1]["stopped"])
                 self.assertFalse(rerun.running(job_dir))
 
+    def test_a_stop_after_the_try_began_leaves_the_board_on_the_try_before(self):
+        """The try had said its phase on the feed when the Stop came: the try before is back on disk, and the feed
+        says so, so the board reads the card's earlier outcome at its first attempt, and the job ended."""
+        job_dir = self.job()
+        before, _ = self.trials(job_dir)
+        name = before["model"].trial_name
+        real = run.Run.unit
+
+        def unit(r, i, u, rr=1, retry=0):
+            if retry:
+                r.feed.emit("trial.phase", r.trial_name(i, u, rr), phase="agent_run")
+                raise SystemExit(143)
+            return real(r, i, u, rr, retry)
+        with mock.patch.object(run.Run, "unit", unit), self.assertRaises(SystemExit):
+            self.again(job_dir, ["model"])
+        board = live.load(live.feed_path(job_dir)).snapshot()
+        self.assertEqual(board["state"], "finished")
+        card = next(t for t in board["trials"] if t["trial"] == name)
+        self.assertEqual((card["state"], card["outcome"], card["reward"]), ("done", "unresolved", 0.0))
+        self.assertNotIn("attempt", card)
+        self.assertAlmostEqual(board["totals"]["cost_usd"], CALL)            # the try before, counted once
+
     def test_each_refusal_moves_nothing(self):
         job_dir = self.job()
         real = definitions.get

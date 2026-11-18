@@ -1,0 +1,240 @@
+"""Tasks of an ended job run again from its page: a tick on each row, the rows
+shown chosen at once, Run selected again with a reason and a cap; started where
+the job ran (this machine or its host), refused with one line where the server
+cannot; the earlier result while a task runs again; afterwards the list of
+re-runs, the column of tries and the try's mark."""
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import tempfile
+import unittest
+from contextlib import ExitStack
+from html import unescape
+from pathlib import Path
+from unittest.mock import patch
+
+from nullius import execution, hosts, workspace
+from nullius.standard import job
+from ui_tests.test_capped_job import AGENT, BENCH
+from .test_routes import web
+
+UNITS = ["t-0", "t-1", "t-2"]
+
+
+def trial_name(k):
+    return f"{UNITS[k]}__u{k:04d}"
+
+
+def standard_job(d: Path, name: str, rewards=(1.0, 0.0, 1.0), **std):
+    """A standard job of three units, each ended with its reward; ``std`` more of its config's ``standard``."""
+    d.mkdir(parents=True)
+    job.write_config(str(d), job=name, bench=BENCH, other=AGENT, model="m-1", provider="openai", dataset="all", units=UNITS,
+                     concurrency=1, granted=True)
+    if std:
+        cfg = json.loads((d / "config.json").read_text())
+        cfg["standard"].update(std)
+        (d / "config.json").write_text(json.dumps(cfg))
+    results = []
+    for k, u in enumerate(UNITS):
+        trial = d / trial_name(k)
+        trial.mkdir()
+        results.append(job.write_trial(str(trial), job=name, bench=BENCH, other=AGENT, model="m-1", unit=u, t0=1_760_000_000.0 + k,
+                                       t1=1_760_000_005.0 + k, produce=(1_760_000_000.0 + k, 1_760_000_004.0 + k),
+                                       score={"reward": rewards[k]}, exception=None, calls=[], trajectory=None))
+    job.write_result(str(d), name, 1_760_000_000.0, 1_760_000_060.0, results, len(UNITS))
+
+
+def text(html, pattern):
+    got = re.search(pattern, html, re.S)
+    assert got is not None, pattern
+    return re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", got[0]))).strip()
+
+
+class RerunPage(unittest.TestCase):
+    def setUp(self):
+        self.stack = ExitStack(); self.addCleanup(self.stack.close)
+        self.tmp = Path(tempfile.mkdtemp(prefix="nullius-rerun-page-")); self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.stack.enter_context(patch.dict(os.environ, {"RUNS_DIR": str(self.tmp / "runs"), "HOSTS": "bench",
+                                                         "OPENAI_API_KEY": "sk-testkey-0123456789"}))
+        self.stack.enter_context(patch.dict(web.app.config, TESTING=True))
+        self.stack.enter_context(patch.dict(execution.EXECUTIONS, clear=True))
+        self.stack.enter_context(patch.object(web.shared, "WS_HOME", str(self.tmp / "ws")))
+        self.stack.enter_context(patch.dict(web.shared.STATE, {"workspace": None, "roots": [], "label": "", "job_roots": []}))
+        self.asked = []
+        self.stack.enter_context(patch.object(execution.Execution, "again", lambda ex, part, env=os.environ: self.asked.append((ex, part)) or ex))
+        self.held = None
+        self.stack.enter_context(patch.object(execution.Execution, "holds", lambda ex, job_id: self.held))
+
+    def run_of(self, name="r1", host=None, state="done", **std):
+        d = self.tmp / "runs" / name
+        standard_job(d / "jobs" / name, name, **std)
+        plan = execution.Plan(name=name, script="", runner="standard", host=hosts.parse(host) if host else None, model="m-1",
+                              key_var="OPENAI_API_KEY", url_var="", recipe={"provider": "openai"},
+                              parts=[{"id": "fake", "label": "Fake", "script": "true"}], jobs=[{"name": name, "agent": "fake"}])
+        (d / "run.json").write_text(json.dumps({"id": f"{name}-1", "plan": plan.to_dict(), "state": state, "step": "run",
+                                                "ends": {"fake": {"rc": 0, "at": 1_760_000_060.0, "label": "Fake"}}}))
+        return d / "jobs" / name
+
+    def open(self, *roots):
+        execution.restore()
+        web.shared.open_workspace(workspace.create(str(self.tmp / "ws"), [str(r) for r in roots], label="again"))
+        self.client = web.app.test_client()
+        r = self.client.get("/runs"); self.addCleanup(r.close)
+        with self.client.session_transaction() as s:
+            self.csrf = s["csrf"]
+
+    def page(self, path):
+        r = self.client.get(path); self.addCleanup(r.close)
+        self.assertEqual(r.status_code, 200, path)
+        return r.get_data(as_text=True)
+
+    def post(self, name, body, csrf=None):
+        r = self.client.post(f"/job/{name}/rerun", json=body, headers={"X-CSRF-Token": self.csrf if csrf is None else csrf,
+                                                                        "Origin": "http://localhost"})
+        self.addCleanup(r.close)
+        return r
+
+    def test_each_row_has_a_tick_and_the_bar_the_rows_shown_the_count_and_the_button(self):
+        d = self.run_of()
+        self.open(d.parent)
+        html = self.page("/job/r1?view=results")
+        self.assertEqual(re.findall(r'<input class="pick-row" type="checkbox" value="([^"]+)"', html), [trial_name(k) for k in range(3)])
+        self.assertIn('<button class="fclear plain" id="pick-shown" type="button">Select the rows shown</button>', html)
+        self.assertIn('<span class="pick-n" id="pick-count" aria-live="polite">0 chosen</span>', html)
+        self.assertIn('<button class="btn sm" id="rerun-open" type="button" aria-haspopup="dialog" disabled>Run selected again</button>', html)
+        # the filter the bar's button reads: each row's outcome, the tick inside it
+        self.assertRegex(html, r'<tr data-outcome="failed_verification"[^>]*data-trial="t-1__u0001"[^>]*>\s*<td><input class="pick-row"')
+        ask = text(html, r'<dialog class="rerun-ask".*?</dialog>')
+        self.assertEqual(ask, "Run 0 tasks again On this machine, in this job: each result replaces the task's, and the earlier tries stay. "
+                              "Reason (optional) Spending cap, USD (optional) Cancel Run 0 tasks again")
+        self.assertIn('data-post="/job/r1/rerun"', html)
+        self.assertNotIn('id="rerun-why"', html)
+
+    def test_run_selected_again_starts_it_where_the_job_ran_with_its_reason_and_cap(self):
+        d = self.run_of()
+        self.open(d.parent)
+        r = self.post("r1", {"trials": [trial_name(1), trial_name(1), trial_name(2)], "reason": "  the provider\nfailed ", "max_usd": "0.5"})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        ((ex, part),) = self.asked
+        self.assertEqual((ex.plan.name, part["id"], part["again"], part["trials"]), ("r1", "again-1", "r1", [trial_name(1), trial_name(2)]))
+        self.assertIn(f"rerun \"${{NULLIUS_JOBS:-jobs_standard}}\"/r1 --unit {trial_name(1)} --unit {trial_name(2)} "
+                      "--reason 'the provider failed' --max-usd 0.5 --from-run", part["script"])
+        r = self.post("r1", {"trials": [trial_name(0)], "reason": "", "max_usd": ""})
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn("--max-usd", self.asked[-1][1]["script"]); self.assertNotIn("--reason", self.asked[-1][1]["script"])
+
+    def test_what_the_route_refuses_starts_nothing(self):
+        d = self.run_of()
+        self.open(d.parent)
+        for body, code, said in [({"trials": []}, 400, "Tick the tasks to run again."),
+                                 ({"trials": ["nope"]}, 400, "r1 holds no trial nope"),
+                                 ({"trials": [trial_name(0)], "max_usd": "-1"}, 400, "The spending cap is an amount in USD above zero, or empty for none."),
+                                 ({"trials": [trial_name(0)], "max_usd": "lots"}, 400, "The spending cap is an amount in USD above zero, or empty for none."),
+                                 ({"trials": [trial_name(0)], "reason": "x" * 201}, 400, "The reason is one line of at most 200 characters.")]:
+            r = self.post("r1", body)
+            self.assertEqual((r.status_code, r.json["error"]), (code, said), body)
+        self.assertEqual(self.post("r1", {"trials": [trial_name(0)]}, csrf="wrong").status_code, 403)
+        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
+            r = self.post("r1", {"trials": [trial_name(0)]})
+        self.assertEqual(r.status_code, 400); self.assertIn("OPENAI_API_KEY", r.json["error"])
+        self.assertEqual(self.asked, [])
+
+    def test_a_job_on_a_host_goes_back_there_and_a_host_without_it_is_refused(self):
+        d = self.run_of(host="bench")
+        self.open(d.parent)
+        self.assertIn("On bench, in this job", self.page("/job/r1?view=results"))
+        self.held = "bench no longer holds r1: nothing was started"
+        r = self.post("r1", {"trials": [trial_name(1)]})
+        self.assertEqual((r.status_code, r.json["error"]), (409, "bench no longer holds r1: nothing was started"))
+        self.assertEqual(self.asked, [])
+        self.held = None
+        self.assertEqual(self.post("r1", {"trials": [trial_name(1)]}).status_code, 200)
+        self.assertEqual(self.asked[0][0].plan.host.label, "bench")
+
+    def test_each_job_the_server_cannot_run_again_shows_no_button_and_says_why(self):
+        here = self.run_of("r1")
+        gone = self.run_of("r2", host="ubuntu@10.0.0.9")                       # a host no longer in Settings
+        merged = self.run_of("r3", merged_from=[{"job": "a"}, {"job": "b"}])
+        loose = self.tmp / "loose"
+        standard_job(loose / "cli-job", "cli-job")                               # started outside: no run record
+        self.open(here.parent, gone.parent, merged.parent, loose)
+        execution.EXECUTIONS["r1-1"].state = "running"
+        for name, said in [("r1", "Still running: tasks are run again once it has ended."),
+                           ("r2", "Its host, ubuntu@10.0.0.9, is no longer in Settings."),
+                           ("r3", "Merged from its shards' jobs: run a task again in its shard's job."),
+                           ("cli-job", "Not started from here: no record of where it ran.")]:
+            html = self.page(f"/job/{name}?view=results")
+            self.assertNotIn('class="pick-row"', html, name); self.assertNotIn("Run selected again", html, name)
+            self.assertEqual(text(html, r'<span class="pick-why[^>]*>.*?</span>'), said, name)
+            self.assertEqual((self.post(name, {"trials": [trial_name(0)]}).status_code), 409, name)
+        self.assertEqual(self.asked, [])
+
+    def test_while_a_task_runs_again_its_earlier_result_stands_with_a_mark(self):
+        d = self.run_of()
+        self.open(d.parent)
+        name = trial_name(1)
+        (d / "retried").mkdir()
+        os.replace(d / name, d / "retried" / f"{name}.try-1")
+        (d / name).mkdir()                                                       # the new try: no result yet
+        ex = execution.EXECUTIONS["r1-1"]
+        ex.plan.parts.append({"id": "again-1", "label": "1 task of r1 again", "again": "r1", "trials": [name], "script": "true"})
+        ex.part, ex.state, ex.launched = 1, "running", "again-1"
+        html = self.page("/job/r1?view=results")
+        self.assertEqual(text(html, r'<span class="cnt" id="trial-count">.*?</span>'), "3")
+        row = re.search(rf'<tr data-outcome="failed_verification"[^>]*data-trial="{name}".*?</tr>', html, re.S)[0]
+        self.assertIn('<span class="badge again-now"', row)
+        self.assertNotIn("href=", row)                                           # its new try has no page yet
+        self.assertIn("Still running: tasks are run again once it has ended.", html)
+        self.assertIn('id="execution-state">running', html)
+        self.assertNotIn("again-now", self.page("/job/r1?view=results").split(f'data-trial="{trial_name(0)}"')[1].split("</tr>")[0])
+
+    def rerun_record(self, d):
+        """The job as a re-run of t-1 leaves it: its earlier try kept, the trial marked, the job's list."""
+        name = trial_name(1)
+        (d / "retried").mkdir()
+        shutil.copytree(d / name, d / "retried" / f"{name}.try-1")
+        res = json.loads((d / name / "result.json").read_text())
+        res["verifier_result"] = {"rewards": {"reward": 1.0}}
+        res["standard"] = dict(res["standard"], retries=1, rerun={"by": "hand", "at": "2026-11-18T15:40:12+00:00",
+                                                                  "reason": "the provider failed", "replaced": {"reward": 0.0}})
+        (d / name / "result.json").write_text(json.dumps(res))
+        top = json.loads((d / "result.json").read_text())
+        top["reruns"] = [{"at": "2026-11-18T15:40:12+00:00", "finished_at": "2026-11-18T15:42:00+00:00", "reason": "the provider failed",
+                          "trials": [name], "replaced": [{"trial": name, "unit": "t-1", "try": 1, "was": {"reward": 0.0}, "now": {"reward": 1.0}}],
+                          "max_usd": 0.5, "spent_usd": 0.0012}]
+        (d / "result.json").write_text(json.dumps(top))
+
+    def test_afterwards_the_list_of_re_runs_the_column_of_tries_and_the_try_s_mark(self):
+        d = self.run_of()
+        self.rerun_record(d)
+        self.open(d.parent)
+        html = self.page("/job/r1?view=results")
+        self.assertEqual(text(html, r'<details id="reruns" open>.*?</details>'),
+                         "Run again by hand 1 2026-11-18 15:40Z the provider failed t-1 reward 0.0 → reward 1.0 try 1 "
+                         "1 task · $0.0012 spent of a $0.50 cap")
+        self.assertIn('<th scope="col" class="num">Retries</th>', html)
+        cells = re.findall(r'<td class="num run-retries">(.*?)</td>', html)
+        self.assertEqual(cells, ['<span class="faint">0</span>', "1", '<span class="faint">0</span>'])
+        trial = self.page(f"/trial/r1/{trial_name(1)}")
+        tabs = text(trial, r'<nav class="try-tabs".*?</nav>')
+        self.assertTrue(tabs.startswith("Try 1"), tabs); self.assertIn("Try 2 run again by hand", tabs)
+        self.assertIn('title="Try 2: Resolved, run again by hand: the provider failed"', trial)
+        self.assertEqual(text(trial, r'<p class="try-why".*?</p>'), "Run again by hand: the provider failed")
+        earlier = self.page(f"/trial/r1/{trial_name(1)}.try-1")
+        self.assertNotIn('class="try-why"', earlier)                              # the earlier try was the run's own
+
+    def test_a_job_never_run_again_shows_none_of_it(self):
+        d = self.run_of()
+        self.open(d.parent)
+        html = self.page("/job/r1?view=results")
+        for absent in ('id="reruns"', ">Retries<", "run-retries", "again-now", "running again"):
+            self.assertNotIn(absent, html)
+        trial = self.page(f"/trial/r1/{trial_name(1)}")
+        self.assertNotIn("try-tabs", trial); self.assertNotIn("try-why", trial)
+
+
+if __name__ == "__main__":
+    unittest.main()

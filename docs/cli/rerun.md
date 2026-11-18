@@ -14,6 +14,9 @@ nullius standard rerun JOB_DIR (--unit ID ... | --units FILE) [--reason TEXT] [-
 | `-j N` | Units at once; the job's by default |
 | `--retries N` | Automatic retries of each try, as [a run's](run.md#retries); 0 by default |
 | `--max-usd USD` | The re-run's own [spending cap](run.md#a-spending-cap) |
+| `--from-run` | Started by Nullius: `OPENAI_API_KEY` and `OPENAI_BASE_URL` only, saved settings unread |
+
+From a job's page: [Run tasks again](../results.md#run-tasks-again), on the machine the job ran on.
 
 | Rule | Detail |
 | --- | --- |

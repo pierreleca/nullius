@@ -640,12 +640,13 @@ def cmd_rerun(a):
     try:
         ids = list(a.unit or []) + (run.units_file(a.units)["units"] if a.units is not None else [])
         with open(os.path.join(a.job, "config.json"), encoding="utf-8") as f:
-            given = (json.load(f).get("standard") or {}).get("constraints") or {}
+            std = json.load(f).get("standard") or {}
+        given = std.get("constraints") or {}
     except run.Refused as e:
         print("refused:", e, file=sys.stderr)
         return 2
     except (OSError, ValueError, AttributeError):
-        given = {}
+        std, given = {}, {}
     if isinstance(given, dict) and given.get("cpu_set") is not None:
         try:
             limits.confine(given)                # before any thread, as for its run
@@ -658,12 +659,20 @@ def cmd_rerun(a):
             price_list.update()
         except ValueError as e:
             unreachable = str(e)
+    # started by Nullius (--from-run): the key it was handed, and on a host the licences its launcher handed it
+    bench = definitions.get("benchmark", str(std.get("benchmark_ref") or std.get("benchmark") or "")) if isinstance(std, dict) else None
+    held, spill = licences(bench, from_run=a.from_run) if bench else (None, None)
+    provider = str(std.get("provider") or "openai") if isinstance(std, dict) else "openai"
     try:
         got = rerun.rerun(a.job, ids, reason=a.reason or "", concurrency=a.concurrency, retries=a.retries,
-                          max_usd=a.max_usd, prices_unreachable=unreachable)
+                          max_usd=a.max_usd, prices_unreachable=unreachable, licences=held,
+                          **({"env": run_env(provider)} if a.from_run else {}))
     except run.Refused as e:
         print("refused:", e, file=sys.stderr)
         return 2
+    finally:
+        if spill:
+            shutil.rmtree(spill, ignore_errors=True)
     print(got["job"])
     return 0
 
@@ -831,6 +840,8 @@ def main(argv=None):
     rr.add_argument("--retries", type=_retries, default=RETRIES, metavar="N",
                     help=f"run a failed try again, up to N times, as a run's --retries; 0 to {MAX_RETRIES}, default {RETRIES}")
     rr.add_argument("--max-usd", type=float, metavar="USD", help="the re-run's own spending cap, as a run's --max-usd")
+    rr.add_argument("--from-run", action="store_true",
+                    help="started by Nullius: the key is OPENAI_API_KEY (and OPENAI_BASE_URL), saved settings are not read")
     tr = sub.add_parser("traces", help="give past standard trials a trace, from the files they kept")
     tr.add_argument("root", metavar="DIR", help="a job, or a folder of jobs")
     tr.add_argument("--dry-run", action="store_true", help="say what it would write, and write nothing")

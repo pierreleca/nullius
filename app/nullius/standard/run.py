@@ -1123,7 +1123,25 @@ class Run:
                     os.rmdir(os.path.dirname(keep))  # retried/ holds no try now: it goes
                 except OSError:
                     pass
+                self._back(name, iur[1], here)
         return res
+
+    def _back(self, name: str, unit: str, here: str) -> None:
+        """The try before, back in its place: said on the feed as its end once more (``back``), so the live
+        board's card reads it, and not a try that never ended."""
+        if self.feed is None:
+            return
+        try:
+            with open(os.path.join(here, "result.json"), encoding="utf-8") as f:
+                res = json.load(f)
+        except (OSError, ValueError):
+            return
+        ei = res.get("exception_info") or {}
+        exc = (str(ei["exception_type"]), str(ei.get("exception_message") or "")) if ei.get("exception_type") else None
+        self.feed.emit("trial.end", name, task=unit, agent=self.other["key"], back=True,
+                       **job.feed_outcome(self.bench["score"]["kind"], (res.get("verifier_result") or {}).get("rewards") or {}, exc),
+                       **{k: v for k, v in (res.get("agent_result") or {}).items() if k in FEED_TOTALS},
+                       durations=job.feed_durations(res))
 
     def ready(self) -> None:
         """What the run needs before its first unit, each a stage said as it

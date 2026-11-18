@@ -152,5 +152,35 @@
   document.addEventListener('focusout', hide);
   addEventListener('scroll', hide, { passive: true });
 
+  // ---- tasks to run again: a tick per trial, the rows the filters show at once, the count, then the question ----
+  const ticks = $$('#trial-rows .pick-row'), ask = $('#rerun-ask');
+  if (ticks.length && ask) {
+    const pickN = $('#pick-count'), go = $('#rerun-open'), form = $('form', ask), err = $('[data-error]', ask);
+    const chosen = () => ticks.filter(x => x.checked);
+    const tasks = n => n + (n === 1 ? ' task' : ' tasks');
+    const recount = () => { const n = chosen().length; pickN.textContent = n + ' chosen'; go.disabled = !n; };
+    ticks.forEach(x => x.addEventListener('change', recount));
+    $('#pick-shown').addEventListener('click', () => { rows.forEach(r => { const x = $('.pick-row', r); if (x && r.matched) x.checked = true; }); recount(); });
+    go.addEventListener('click', () => {
+      const picked = chosen();
+      $$('[data-n]', ask).forEach(s => { s.textContent = tasks(picked.length); });
+      $('[data-names]', ask).replaceChildren(...picked.map(x => { const li = document.createElement('li'); li.textContent = x.getAttribute('aria-label').replace(/^Choose /, ''); return li; }));
+      err.hidden = true; $('[data-go]', ask).disabled = false; ask.showModal();
+    });
+    form.addEventListener('submit', async e => {
+      if (!e.submitter || e.submitter.value !== 'run') return;
+      e.preventDefault();
+      const b = e.submitter; b.disabled = true; err.hidden = true;
+      try {
+        const r = await nulliusFetch(ask.dataset.post, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': ask.dataset.csrf },
+          body: JSON.stringify({ trials: chosen().map(x => x.value), reason: form.elements.reason.value, max_usd: form.elements.max_usd.value }) });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok && j.ok) { location.reload(); return; }
+        throw new Error(j.error || 'refused: HTTP ' + r.status);
+      } catch (x) { err.textContent = String(x.message || x); err.hidden = false; b.disabled = false; }
+    });
+    recount();
+  }
+
   apply();
 })();
