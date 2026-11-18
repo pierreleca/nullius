@@ -181,7 +181,7 @@ class Store:
         if isinstance(max_mb, bool) or not isinstance(max_mb, int) or max_mb < 1:
             raise ValueError(f"exchanges_max_mb {max_mb!r}: a whole number of MB, at least 1")
         self.dir, self.mode, self.max_mb, self.bound = os.path.join(record_dir, FOLDER), mode, max_mb, max_mb * 10 ** 6
-        self.keys = tuple(sorted({k for k in keys if k}, key=len, reverse=True))
+        self.keys = tuple(sorted({k for k in keys if k and k != "local"}, key=len, reverse=True))
         self.parts: set = set()
         self.blobs: set = set()
         self.size = 0                            # bytes written so far
