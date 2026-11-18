@@ -46,7 +46,7 @@ the same question. The runs list counts its solves over the trials run and says 
 | Ask | A reason (optional), a spending cap (optional), the number of tasks |
 | Where | Where the job ran: this machine, or the host it was sent to, in the job's own folder |
 | While it runs | Each task shows its earlier result, marked **running again**, until the new one lands |
-| After | The new result is the task's; the earlier tries stay as its tabs, the one asked for marked **run again by hand** with its reason; **Run again by hand** lists each re-run, the tasks run for the first time and the tries that had no result |
+| After | The new result is the task's; the earlier tries stay as its tabs, the one asked for marked **run again by hand** with its reason, a task's first run in a later part **first run, in a later part**; **Run later** lists each later run, the tasks run for the first time and the tries that had no result |
 | No button | A job not started from this application, still running, merged from shards, or whose host left Settings: one line says which |
 | Refused, nothing started | A host that no longer holds the job; a provider whose key is not set here |
 
