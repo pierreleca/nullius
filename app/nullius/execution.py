@@ -1532,13 +1532,15 @@ class Execution:
         detach = (f"if ! command -v setsid >/dev/null 2>&1; then "
                   f"command -v {python} >/dev/null 2>&1 || {{ echo 'detached runs need setsid or Python 3'; exit 1; }}; "
                   f"setsid() {{ exec {python} -c {session} \"$@\"; }}; fi; ")
+        clear_records = ("unset " + " ".join(providers.setting_of(p) for p in providers.PRESETS) + "; "
+                         if self.plan.runner == STANDARD else "")
         # stdin: the key, the endpoint, then one NAME=value line per agent key, then the end line - which alone says it all arrived
         launcher = ('IFS= read -r K && IFS= read -r U || { echo @cut; exit 1; }; E=; '
                     'while IFS= read -r L; do [ "$L" = ' + STDIN_END + ' ] && { E=1; break; }; '
                     'case "$L" in [A-Z_]*=*) export "$L";; *) echo @cut; exit 1;; esac; done; [ -n "$E" ] || { echo @cut; exit 1; }; unset E L; '
                     '[ -n "$K" ] && export ' + " ".join(f'{n}="$K"' for n in KEY_NAMES) + '; '
                     '[ -n "$U" ] && export ' + " ".join(f'{n}="$U"' for n in URL_NAMES) + '; unset K U; '
-                    f'export {exports}; cd {self._q(run_dir)} || exit 1; '
+                    f'{clear_records}export {exports}; cd {self._q(run_dir)} || exit 1; '
                     + detach +
                     # The part claimed before anything else is done for it, created only where there is none (noclobber:
                     # O_EXCL): of two launchers - one a Nullius gone since sent, late to arrive, and the restart's - one
