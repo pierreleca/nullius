@@ -877,6 +877,15 @@ class RunIdentity(unittest.TestCase):
         plain = parse.parse_job(standard_job(self.tmp, "plain", [1]))
         self.assertNotIn("constraints", plain.identity["limits"])
 
+    def test_recorded_retries_include_zero_and_reject_invalid_counts(self):
+        for i, value in enumerate((0, 1, -1, True, False, 0.5, "0", None)):
+            with self.subTest(value=value):
+                job = parse.parse_job(standard_job(self.tmp, f"retries-{i}", [1], retries=value))
+                if type(value) is int and value >= 0:
+                    self.assertEqual(job.identity["limits"]["retries"], value)
+                else:
+                    self.assertNotIn("retries", job.identity["limits"])
+
     def test_a_merged_job_and_a_job_with_retried_tries_read_the_same_facts(self):
         every = [f"t-{i}" for i in range(6)]
         shards = [standard_job(self.tmp, f"run-shard-{i}of2", [1.0] * 6, shard_of=(i, 2, every)) for i in (1, 2)]

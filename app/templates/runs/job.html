@@ -32,7 +32,7 @@
   {%- if lim.max_turns %}{% set _ = limits.append(lim.max_turns ~ (' turn' if lim.max_turns == 1 else ' turns')) %}{% endif %}
   {%- if lim.max_calls %}{% set _ = limits.append(lim.max_calls ~ (' model call' if lim.max_calls == 1 else ' model calls')) %}{% endif %}
   {%- if lim.repeat %}{% set _ = limits.append(lim.repeat ~ ' attempts each') %}{% endif %}
-  {%- if lim.retries %}{% set _ = limits.append(lim.retries ~ (' retry' if lim.retries == 1 else ' retries')) %}{% endif %}
+  {%- if 'retries' in lim %}{% set _ = limits.append(lim.retries ~ (' retry' if lim.retries == 1 else ' retries')) %}{% endif %}
   {%- if lim.concurrency %}{% set _ = limits.append(lim.concurrency ~ ' at a time') %}{% endif %}
   <dl class="run-facts" id="run-facts" aria-label="What identifies this run">
     {% if names.benchmark %}<div><dt>Benchmark</dt><dd>{{ names.benchmark }}{% for k, v in (facts.benchmark_options or {}).items() if v is not none %} <span class="faint">·</span> {{ names.benchmark_options[k] }} <span class="mono">{{ fact_value(v) }}</span>{% endfor %}</dd></div>{% endif %}

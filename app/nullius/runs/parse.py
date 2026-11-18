@@ -986,11 +986,12 @@ def identity_of(cfg: dict, res: dict, agent_version: str = "") -> dict:
     timeouts = std.get("timeouts") if isinstance(std.get("timeouts"), dict) else {}
     budget = _budget(res.get("budget") if isinstance(res, dict) else None)
     whole = lambda v: v if number(v) and isinstance(v, int) else None
+    retries = std.get("retries")
     limits = {"timeouts": {str(k): v for k, v in timeouts.items() if number(v)},
               "constraints": _options(std.get("constraints")),
               "max_turns": whole(std.get("max_turns")), "max_calls": whole(std.get("max_calls")),
               "repeat": whole(std.get("repeat")) if (whole(std.get("repeat")) or 0) > 1 else None,
-              "retries": whole(std.get("retries")), "concurrency": whole(cfg.get("n_concurrent_trials")),
+              "retries": retries if type(retries) is int and retries >= 0 else None, "concurrency": whole(cfg.get("n_concurrent_trials")),
               "max_usd": budget.get("max_usd"), "unit_max_usd": budget.get("unit_max_usd")}
     out["limits"] = {k: v for k, v in limits.items() if v is not None and v != {}}
     return {k: v for k, v in out.items() if v not in ("", {})}

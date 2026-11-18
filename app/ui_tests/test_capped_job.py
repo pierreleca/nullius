@@ -192,7 +192,7 @@ class RunFactsOnTheJobPage(unittest.TestCase):
 
     def test_names_come_from_the_definitions_and_a_fact_not_recorded_has_no_row(self):
         self.assertEqual(self.rows(self.page("named")), [("Benchmark", "LoCoMo · RAG mode dialog"), ("Provider", "OpenRouter"),
-                                                         ("Answered by", "DeepInfra 1"), ("Limits", "3 at a time")])
+                                                         ("Answered by", "DeepInfra 1"), ("Limits", "0 retries · 3 at a time")])
         self.assertEqual([name for name, _ in self.rows(self.page("nop"))], ["Benchmark", "Limits"])     # a control asks no model
         self.assertNotIn('id="run-facts"', self.page("harbor"))
 
