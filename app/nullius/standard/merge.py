@@ -17,7 +17,10 @@ counted twice. So are shards whose lists of units (``run.units_file``) hold
 different units, or a shard of a list and one of none: the merged job
 records one list. The units are compared in any order; a list's name,
 comments, line endings and sha256 may differ from shard to shard, and the
-merged job records the first shard's list. Units no shard ran
+merged job records the first shard's list. Shards of different task sets
+(``sets``), of different revisions of one, or of a set and none, are refused
+as the other differences are, unless ``force``; the merged job keeps the
+first shard's set. Units no shard ran
 are not a refusal - a shard may be missing, or stopped early - and are said:
 the shards absent, and the units a shard planned and has no trial for.
 
@@ -42,7 +45,8 @@ SAME = (("launch", ("standard", "launch")), ("benchmark", ("standard", "benchmar
         ("benchmark version", ("standard", "benchmark_version")), ("dataset", ("datasets", 0, "name")),
         ("agent or capability", ("standard", "plugged")), ("model", ("agents", 0, "model_name")),
         ("backend", ("standard", "backend")), ("serving providers", ("standard", "served_by")),
-        ("number of shards", ("standard", "shard", "of")), ("retries per attempt", ("standard", "retries")))
+        ("number of shards", ("standard", "shard", "of")), ("retries per attempt", ("standard", "retries")),
+        ("task set", ("standard", "task_set")))
 
 
 class Refused(Exception):
@@ -70,8 +74,12 @@ def _at(d, path):
 
 
 def _same(cfg: dict, path) -> object:
-    """What a shard's config says at ``path`` (``SAME``); a shard written before ``retries`` was recorded allowed none."""
+    """What a shard's config says at ``path`` (``SAME``); a shard written before ``retries`` was recorded allowed none.
+    A task set is its name, revision, id and hash: the record's other fields follow from them."""
     got = _at(cfg, path)
+    if path == ("standard", "task_set"):
+        return (f"{got.get('name')}@{got.get('revision')} ({str(got.get('id'))[:8]}, {str(got.get('hash'))[:12]})"
+                if isinstance(got, dict) else None)
     return got or 0 if path == ("standard", "retries") else got
 
 
@@ -212,7 +220,7 @@ def check(job_dirs: List[str], force: bool = False) -> dict:
         short = total - len(by_unit)
         if short > 0:
             # a shard of a list of units counts the listed ones as its whole (run.units_file)
-            listed = any(_at(s["config"], ("standard", "units_file")) for s in shards)
+            listed = any(_at(s["config"], ("standard", "units_file")) or _at(s["config"], ("standard", "task_set")) for s in shards)
             whole = f"{total} listed units" if listed else f"dataset's {total} units"
             notes.append(f"{short} of the {whole} are not in the merge")
     return {"shards": shards, "by_unit": by_unit, "notes": notes, "missing": missing, "units_total": total, "differ": differ}

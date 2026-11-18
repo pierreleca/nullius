@@ -439,7 +439,7 @@ class Run:
                  licences: Optional[Licences] = None, bench_options: Optional[dict] = None, which=shutil.which,
                  remove_images: bool = False, prices: Optional[dict] = None, max_usd: Optional[float] = None,
                  max_usd_per_unit: Optional[float] = None, prices_unreachable: Optional[str] = None,
-                 units_file: Optional[dict] = None,
+                 units_file: Optional[dict] = None, task_set: Optional[dict] = None,
                  constraints: Optional[dict] = None, timeouts: Optional[dict] = None, max_turns: Optional[int] = None,
                  max_calls: Optional[int] = None, served_by: Optional[Dict[str, List[str]]] = None, boat_size: str = boat.SIZE):
         """``proving``: the run is a conformance kit's, the one run that may
@@ -460,6 +460,9 @@ class Run:
         an id the dataset does not hold refuses the run before any unit
         starts. The job's config records the file's name, its sha256 and its
         units.
+        ``task_set``: a task set's record (``sets.record``): its units run as
+        a file's would, and the job's config keeps the record. Refused beside
+        ``units_file``.
         ``repeat``: each unit run that many times (a conformance check run for
         confidence, ``conform``), each run a trial of its own tagged
         ``u0042r2``; once by default, tagged ``u0042`` as always. Each is an
@@ -679,7 +682,10 @@ class Run:
         self.provider_env = env                  # where the provider's model list is asked (``known_models``)
         self.key_header = "authorization" if keyless else key_header(provider, other, env)
         self.limit, self.concurrency = limit, limits.concurrency(max(1, int(concurrency)), self.constraints)
+        if units_file and task_set:
+            raise Refused("a run takes its units from a file or from a task set, not both")
         self.units_file = units_file
+        self.task_set = task_set
         self.repeat = max(1, int(repeat or 1))
         self.retries = max(0, int(retries or 0))
         self.retry_if = retry_if or retryable
@@ -817,7 +823,7 @@ class Run:
                 container.sweep(self.name)
             raise
         everything = [str(u) for u in units]
-        listed = self.units_file["units"] if self.units_file else None
+        listed = self.units_file["units"] if self.units_file else self.task_set["units"] if self.task_set else None
         if listed is not None:
             held = set(everything)
             unknown = [u for u in listed if u not in held]
@@ -840,7 +846,9 @@ class Run:
                     elif name.startswith("driver-") and name.endswith(".log"):
                         os.remove(path)
                 words = self.bench["units"]
-                why = (f"{self.units_file['name']} lists {len(unknown)} {words['noun'] if len(unknown) == 1 else words['nouns']} "
+                source = (self.units_file["name"] if self.units_file
+                          else f"the task set {self.task_set['name']}@{self.task_set['revision']}")
+                why = (f"{source} lists {len(unknown)} {words['noun'] if len(unknown) == 1 else words['nouns']} "
                        f"that {self.bench['label']}'s dataset {self.ds['id']} does not hold: " + ", ".join(unknown))
                 p.emit("refused", detail=why)
                 raise Refused(why)
@@ -866,7 +874,7 @@ class Run:
                          options=self.options, launch=self.launch or "", bench_options=self.bench_options,
                          # a shard of a list splits the listed units: they are its whole
                          shard=shards.record(*self.shard, len(everything) if listed is None else len(listed), units, self.limit)
-                         if self.shard else None, units_file=self.units_file,
+                         if self.shard else None, units_file=self.units_file, task_set=self.task_set,
                          repeat=self.repeat, retries=self.retries, prices=self.prices_record(), constraints=self.constraints, served_by=self.serving,
                          timeouts=self.timeouts, max_turns=self.forced_turns, max_calls=self.max_calls,
                          simulator=self.simulator_model if self.other["_kind"] in ("agent", "upstream") and self.simulator_model else "")
