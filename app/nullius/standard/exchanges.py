@@ -230,10 +230,28 @@ class Store:
 
 
 # -- reading a store ---------------------------------------------------------------
+def _inside(folder: str, name: str) -> str:
+    path = os.path.realpath(os.path.join(folder, name))
+    if os.path.commonpath((folder, path)) != folder:
+        raise Missing("the stored path resolves outside its folder")
+    return path
+
+
+def _digest(value) -> str:
+    if not isinstance(value, str) or re.fullmatch(r"[0-9a-fA-F]{64}", value) is None:
+        raise Missing("the stored digest must be 64 hexadecimal digits")
+    return value
+
+
+def _picture_path(folder: str, mark: dict) -> str:
+    name = f"{_digest(mark['blob'])}.{EXT.get(mark['type'], 'bin')}"
+    return _inside(os.path.join(os.path.realpath(folder), BLOBS), name)
+
+
 def lines(folder: str, tag: str) -> List[dict]:
     """The lines of route ``tag`` in the store at ``folder`` (``<record_dir>/exchanges``); a line that
     cannot be read is left out."""
-    return _jsonl(os.path.join(folder, tag + ".jsonl"))
+    return _jsonl(_inside(os.path.realpath(folder), tag + ".jsonl"))
 
 
 def tags(folder: str) -> List[str]:
@@ -262,16 +280,20 @@ def _jsonl(path: str) -> List[dict]:
 
 def stored_parts(folder: str) -> Dict[str, dict]:
     """Each part of a store by its hash: {"part": ..., "as_sent": bool}."""
-    return {p["sha256"]: {"part": p.get("part"), "as_sent": bool(p.get("as_sent"))}
-            for p in _jsonl(os.path.join(folder, PARTS)) if isinstance(p.get("sha256"), str)}
+    parts = {}
+    for p in _jsonl(_inside(os.path.realpath(folder), PARTS)):
+        h = _digest(p.get("sha256"))
+        if not p.get("as_sent"):
+            _drop(p.get("part"), lambda mark: _picture_path(folder, mark))
+        parts[h] = {"part": p.get("part"), "as_sent": bool(p.get("as_sent"))}
+    return parts
 
 
 def _drop(v, picture):
-    """A stored part with each picture's mark replaced by the text it stood for."""
+    """A stored part with each picture's mark replaced by ``picture(mark)``."""
     if isinstance(v, dict):
         if set(v) == MARK:
-            b64 = base64.b64encode(picture(v)).decode("ascii")
-            return f"data:{v['type']};base64,{b64}" if v["as"] == "data_url" else b64
+            return picture(v)
         return {k: _drop(x, picture) for k, x in v.items()}
     if isinstance(v, list):
         return [_drop(x, picture) for x in v]
@@ -291,18 +313,20 @@ def rebuild(folder: str, line: dict, parts: Optional[Dict[str, dict]] = None) ->
     parts = stored_parts(folder) if parts is None else parts
 
     def part(h):
+        _digest(h)
         if h not in parts:
             raise Missing(f"the part {h} is not in the store")
         got = parts[h]
         return got["part"] if got["as_sent"] else _drop(got["part"], picture)
 
     def picture(mark):
-        name = os.path.join(folder, BLOBS, f"{mark['blob']}.{EXT.get(mark['type'], 'bin')}")
+        name = _picture_path(folder, mark)
         try:
             with open(name, "rb") as f:
-                return f.read()
+                b64 = base64.b64encode(f.read()).decode("ascii")
         except OSError:
             raise Missing(f"the picture {mark['blob']} is not in the store (a store kept as text holds no pictures)")
+        return f"data:{mark['type']};base64,{b64}" if mark["as"] == "data_url" else b64
 
     req = {}
     for k, v in line["sent"].items():

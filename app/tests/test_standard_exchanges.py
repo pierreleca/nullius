@@ -20,6 +20,7 @@ import unittest
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from unittest import mock
 
 from nullius.runs import cli as runs_cli, parse
@@ -189,6 +190,88 @@ class WithUpstream(unittest.TestCase):
                 with open(os.path.join(root, n), "rb") as f:
                     out[os.path.relpath(os.path.join(root, n), folder)] = f.read()
         return out
+
+
+class StoreFiles(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+
+    def store(self, mode="whole"):
+        return exchanges.Store(tempfile.mkdtemp(dir=self.root), mode=mode, keys=(KEY,))
+
+    def keep(self, store, req, n=1, headers=None):
+        store.write("u0001", n, 1.0, "/messages", req, json.dumps(req).encode(), headers or {}, 200, False, b"{}")
+
+    def assert_picture_rejected(self, store, line, parts):
+        for read in (lambda: exchanges.stored_parts(store.dir),
+                     lambda: exchanges.rebuild(store.dir, line),
+                     lambda: exchanges.rebuild(store.dir, line, parts)):
+            with self.assertRaises(exchanges.Missing):
+                read()
+        result = exchanges.check(store.dir, "u0001", 1)
+        self.assertFalse(result["same"])
+        self.assertIsNone(result["request"])
+
+    def test_picture_names_are_only_sha256_digests_in_every_part_reader(self):
+        outside = self.root / "outside.png"
+        outside.write_bytes(b"outside picture")
+        for name in (str(outside.with_suffix("")), "../../outside", "a" * 63, "a" * 65,
+                     "g" * 64, "a" * 64 + "\n", "a" * 64 + ".png", None):
+            with self.subTest(name=name):
+                store = self.store()
+                self.keep(store, {"messages": [data_url(PNG)]})
+                line, = exchanges.lines(store.dir, "u0001")
+                parts = exchanges.stored_parts(store.dir)
+                part, = parts.values()
+                part["part"]["blob"] = name
+                (Path(store.dir) / exchanges.PARTS).write_text("".join(
+                    json.dumps(dict(sha256=h, **p)) + "\n" for h, p in parts.items()))
+                self.assert_picture_rejected(store, line, parts)
+
+    def test_picture_links_must_resolve_inside_the_stores_own_blobs_folder(self):
+        outside = self.root / "outside.png"
+        outside.write_bytes(b"outside picture")
+        for linked in ("file", "directory"):
+            with self.subTest(linked=linked):
+                store = self.store()
+                req = {"messages": [data_url(PNG)]}
+                self.keep(store, req)
+                line, = exchanges.lines(store.dir, "u0001")
+                parts = exchanges.stored_parts(store.dir)
+                blobs = Path(store.dir) / exchanges.BLOBS
+                blob, = blobs.iterdir()
+                if linked == "file":
+                    blob.unlink()
+                    blob.symlink_to(outside)
+                else:
+                    moved = self.root / "moved"
+                    blobs.rename(moved)
+                    blobs.symlink_to(moved, target_is_directory=True)
+                self.assert_picture_rejected(store, line, parts)
+
+        store = self.store()
+        self.keep(store, req)
+        blobs = Path(store.dir) / exchanges.BLOBS
+        blob, = blobs.iterdir()
+        kept = blobs / ("0" * 64 + ".png")
+        blob.rename(kept)
+        blob.symlink_to(kept)
+        self.assertTrue(exchanges.check(store.dir, "u0001", 1)["same"])
+
+    def test_part_and_call_files_cannot_be_read_through_outside_links(self):
+        for name, read in ((exchanges.PARTS, exchanges.stored_parts),
+                           ("u0001.jsonl", lambda folder: exchanges.lines(folder, "u0001"))):
+            with self.subTest(name=name):
+                store = self.store()
+                self.keep(store, {"messages": ["hello"]})
+                path = Path(store.dir) / name
+                outside = self.root / name
+                path.rename(outside)
+                path.symlink_to(outside)
+                with self.assertRaises(exchanges.Missing):
+                    read(store.dir)
 
 
 class ByteForByte(WithUpstream):
