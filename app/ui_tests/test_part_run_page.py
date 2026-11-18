@@ -65,7 +65,8 @@ class PartRunPage(unittest.TestCase):
         self.assertNotIn('id="plan-sets"', html)                                 # no set names one
         # the runs list: solved over the trials run, and how many of the plan
         runs = self.page("/runs")
-        self.assertIn('title="Begun on a part of its plan: solved over the trials run">3 of 6 tasks run</span>', runs)
+        self.assertIn('title="Begun on a part of its plan: the rates and the mean are over the tasks run">3 of 6 tasks run</span>', runs)
+        self.assertIn("3 on disk of 6 planned · begun on a part of its plan, 3 of 6 tasks run", self.page("/runs?view=all"))
 
     def test_a_set_s_tasks_not_run_and_the_rest_go_to_the_question_as_ticks(self):
         d = self.run_of()
@@ -125,7 +126,7 @@ class TheBuilder(task_set_pages.BuilderCase):
                   "start_with": {"all": "set:dev@1"}}
         out = self.post("/new-run/runner", {"recipe": recipe})
         self.assertEqual(out["errors"], [])
-        self.assertIn(["Dataset", "all · 4 tasks · 4 planned, 2 to begin (task set dev, revision 1)"], [r[1:] for r in out["review"]])
+        self.assertIn(["Dataset", "all · 4 planned, 2 to begin (task set dev, revision 1)"], [r[1:] for r in out["review"]])
         self.assertTrue(out["confirm"].startswith("Plan 4 tasks of Fake bench and begin 2 with "), out["confirm"])
         out = self.post("/new-run/runner", {"recipe": dict(recipe, start_with={"all": "9"})})
         self.assertEqual([e["message"] for e in out["errors"]], ["Start with 9 tasks: all plans 4."])

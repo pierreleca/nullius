@@ -19,8 +19,8 @@ from tests.test_task_set_recipe import Scratch
 class StartWith(Scratch):
     def test_a_number_or_a_set_compiles_to_the_option_and_review_says_planned_and_to_begin(self):
         sets.create(self.b, "first", dataset="all", units=["good", "slow"])
-        for given, word, said in (("2", "2", "all · 4 tasks · 4 planned, 2 to begin (the first 2)"),
-                                  ("set:first", "set:first@1", "all · 4 tasks · 4 planned, 2 to begin (task set first, revision 1)")):
+        for given, word, said in (("2", "2", "all · 4 planned, 2 to begin (the first 2)"),
+                                  ("set:first", "set:first@1", "all · 4 planned, 2 to begin (task set first, revision 1)")):
             with self.subTest(given=given):
                 out = self.compile(start_with={"all": given})
                 self.assertEqual(out["errors"], [])

@@ -105,6 +105,7 @@ class PartTest(unittest.TestCase):
                 self.assertEqual((row["state"], row["n_trials"], row["n_planned"], row["n_tasks"], row["n_tasks_run"]),
                                  ("finished", 2, 6, 6, 2))
                 self.assertEqual(row["start_with"], j.start_with)
+                self.assertEqual(row["mean_score"], j.mean_score)
                 self.assertIn("2 of 6 planned tasks run; the rest in this job: nullius standard rerun", lines[-1])
                 board = live.load(live.feed_path(job_dir)).snapshot()
                 self.assertEqual((board["state"], board["counts"]["total"], board["counts"]["completed"],

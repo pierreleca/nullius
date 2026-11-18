@@ -83,6 +83,8 @@ def job_row(job: parse.Job) -> dict:
         "n_infra": job.n_infra,
         "raw_solve_rate": job.raw_solve_rate,
         "adjusted_solve_rate": job.adjusted_solve_rate,
+        # the mean graded score, over the trials run: a benchmark scored, not solved, has it and no rate
+        "mean_score": job.mean_score,
         "started_at": _stamp(job.started_at),
         "finished_at": _stamp(job.finished_at),
     }

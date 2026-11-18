@@ -838,9 +838,11 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
     out["review"] = [[STEP["benchmark"], "Benchmark", f"{b['label']} · needs {', '.join(b['needs'])}"],
                      [STEP["runner"], "Runner", "Nullius"],
                      [STEP["dataset"], "Datasets" if many else "Dataset",
-                      ", ".join(f"{x.get('label') or x['id']}" + (f" · task set {set_of[x['id']]['name']}, revision {set_of[x['id']]['revision']} · {set_of[x['id']]['units']} {nouns}"
-                                                                   if x["id"] in set_of else f" · {x['units']} {nouns}" if x.get("units") else "")
-                                + (f" · {planned_of.get(x['id']) or 'all'} planned, {start_of[x['id']]['units']} to begin "
+                      ", ".join(f"{x.get('label') or x['id']}" + (f" · task set {set_of[x['id']]['name']}, revision {set_of[x['id']]['revision']}"
+                                                                   + ("" if x["id"] in start_of else f" · {set_of[x['id']]['units']} {nouns}")
+                                                                   if x["id"] in set_of else f" · {x['units']} {nouns}" if x.get("units") and x["id"] not in start_of else "")
+                                # begun on a part: what it plans in place of its count, and what begins
+                                + (f" · {planned_of.get(x['id']) or 'all its ' + nouns} planned, {start_of[x['id']]['units']} to begin "
                                    f"({start_of[x['id']]['label']})" if x["id"] in start_of else "") for x in dss)],
                      *[[STEP["dataset"], (b.get("options") or {})[k].get("label") or k.replace("_", " ").capitalize(),
                         f"{v}" + ("" if k in chosen_opts else " (its default)") + f" · {', '.join(x['id'] for x in dss if per_ds[x['id']].get(k) == v)}"]
