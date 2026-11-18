@@ -49,7 +49,7 @@ An acting call's image, and `step`'s with `screenshot` true, is the observation 
 | --- | --- |
 | Reading: `python`, `upload`, `read`, `screenshot` are no step | `info` and `screenshot` read what the benchmark already holds; `upload` and `prepare` live in the window; `python` and `read` are gone |
 | Input sent through `python` is outside the port | Gone with `python`. Input sent by `prepare` is outside the port |
-| The record | As version 1, and the benchmark's records list every action's text: a step's pass through its loop, a `prepare`'s go to a record of their own (`{start, actions, files}` per call, written before they run) |
+| The record | As version 1, and the benchmark's records list every action's text: a step's actions pass through its loop; a `prepare` call's go to a record of their own, `{start, actions, files}` per call, written before they run |
 | The limits | As version 1: `steps`, `steps_left`, `pause`. A `prepare` action is bounded as a step's action is |
 
 ## Known limits
