@@ -294,6 +294,17 @@ tick().then(() => process.stdout.write(JSON.stringify(destination)));
         r = self.post("r1", {"trials": ["t-5__u0005"]})
         self.assertEqual((r.status_code, r.json["error"]), (400, "r1 holds no trial t-5__u0005"))
 
+    def test_a_job_that_ran_on_a_host_is_finished_there(self):
+        d = self.run_of(host="bench")
+        self.interrupted(d)
+        self.open(d.parent)
+        self.assertIn('data-first="On bench, in this job:', self.page("/job/r1?view=results"))
+        r = self.post("r1", {"trials": ["t-4__u0004", "t-2__u0002"]})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        ((ex, part),) = self.asked
+        self.assertEqual((ex.plan.host.label, part["trials"]), ("bench", ["t-4__u0004", "t-2__u0002"]))
+        self.assertIn("--unit t-4__u0004 --unit t-2__u0002 --from-run", part["script"])
+
     def test_the_record_says_which_tasks_were_begun_and_which_had_no_result(self):
         d = self.run_of()
         top = json.loads((d / "result.json").read_text())
