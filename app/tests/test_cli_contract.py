@@ -297,14 +297,15 @@ class CommandLine(Scratch):
 
 class TaskSetCommands(Scratch):
     def test_help_and_refusals_of_the_task_set_commands(self):
-        """Each set command has help with its examples and exit codes; a
+        """Each set command, and units, has help with its examples and exit codes; a
         refusal is one line on stderr with nothing on stdout, 2 for a usage
         error or a refusal, 3 for what is not found, and writes nothing."""
         cat = os.path.join(self.tmp, "catalogue")
         env = {"NULLIUS_CATALOGUE": cat, "NULLIUS_HOME": os.path.join(self.tmp, "profile")}
-        for sub in ((), ("create",), ("update",), ("list",), ("show",), ("import",)):
+        for sub in (("set",), ("set", "create"), ("set", "update"), ("set", "list"), ("set", "show"), ("set", "import"),
+                    ("units",)):
             with self.subTest(help=sub):
-                out = self.sh("standard.cli", "set", *sub, "--help", env=env)
+                out = self.sh("standard.cli", *sub, "--help", env=env)
                 self.assertEqual(out.returncode, 0, out.stderr)
                 for line in ("usage:", "examples:", "exit codes:"):
                     self.assertIn(line, out.stdout)
@@ -318,6 +319,13 @@ class TaskSetCommands(Scratch):
             (["set", "show", "humaneval", "nowhere"], 3, "no task set 'nowhere'"),
             (["set", "update", "humaneval", "nowhere", "--add", "HumanEval/2"], 3, "no task set 'nowhere'"),
             (["set", "import", os.path.join(self.tmp, "absent.json")], 3, "no such file or job"),
+            (["set", "create", "humaneval", "ok", "--dataset", "humaneval", "--units", listed, "--bench-option", "a=b"], 2,
+             "unrecognized arguments: --bench-option"),
+            (["set", "create", "humaneval", "ok", "--dataset", "humaneval"], 2, "--units FILE, --from-job"),
+            (["units", "humaneval"], 2, "usage:"),
+            (["units", "humaneval", "--dataset", "nope"], 3, "no dataset 'nope'"),
+            (["units", "no-such-bench", "--dataset", "x"], 3, "no benchmark"),
+            (["units", "humaneval", "--dataset", "humaneval", "--category", "kind"], 2, "FIELD=VALUE"),
         ]
         for args, code, said in cases:
             with self.subTest(args=args):
