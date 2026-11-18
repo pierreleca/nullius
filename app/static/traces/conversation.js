@@ -96,6 +96,12 @@
     const indexHost = reader.querySelector('.reader-rows');
     const pages = reader.querySelector('.reader-pages');
     const noun = reader.dataset.noun || 'step', Noun = noun[0].toUpperCase() + noun.slice(1);   // the session's items: the head's word
+    const notice = value => new Map([
+      ['No steps match this search and filter.', `No ${noun}s match this search and filter.`],
+      ['That source step id is not in the current search and filter.', `That source ${noun} id is not in the current search and filter.`],
+      ['The trajectory contains no recorded steps.', `The trajectory contains no recorded ${noun}s.`],
+      ['No call in this search holds that source step.', `No call in this search holds that source ${noun}.`]
+    ]).get(value) || value;
     const change = patch => { state = {...state, ...patch}; loadConversation(); };
     // The view by model call: one row a call, then what it sent, its answer and the steps under it.
     const clock = iso => { const at = new Date(iso); return Number.isNaN(at.getTime()) ? '' : at.toLocaleTimeString(); };
@@ -134,7 +140,7 @@
       block.append(nav); return block;
     };
     const renderCalls = data => {
-      status.textContent = `${number(data.matches)} of ${number(data.total)} calls${data.query ? ` match “${data.query}”` : ''}. ${data.notice || 'Select a call to see what it sent and answered.'}`;
+      status.textContent = `${number(data.matches)} of ${number(data.total)} calls${data.query ? ` match “${data.query}”` : ''}. ${notice(data.notice) || 'Select a call to see what it sent and answered.'}`;
       indexHost.replaceChildren();
       data.rows.forEach(row => {
         const node = button('', () => change({position: row.position, section: null, chunk: 0}), false, 'reader-row');
@@ -152,7 +158,7 @@
       pages.querySelector('[data-page=next]').disabled = data.page >= data.pages;
       selectedHost.replaceChildren();
       const chosen = data.selected;
-      if (!chosen) { selectedHost.append(el('p', 'muted', data.notice || 'No calls match.')); return; }
+      if (!chosen) { selectedHost.append(el('p', 'muted', notice(data.notice) || 'No calls match.')); return; }
       const header = el('div', 'reader-step-nav'), info = el('div');
       info.append(el('h3', '', [chosen.label, chosen.model, chosen.side ? 'side call' : ''].filter(Boolean).join(' · ')));
       const facts = [`${chosen.match_number} of ${data.matches} calls`];
@@ -212,7 +218,7 @@
         history.replaceState(null, '', current);
         reader.querySelectorAll('[data-kind]').forEach(node => node.setAttribute('aria-pressed', String(node.dataset.kind === data.kind)));
         if (data.view === 'calls') { renderCalls(data); return; }
-        status.textContent = `${number(data.matches)} of ${number(data.total)} source ${noun}s${data.query ? ` match “${data.query}”` : ''}. ${data.notice || 'Select a row to keep its message and tools together.'}`;
+        status.textContent = `${number(data.matches)} of ${number(data.total)} source ${noun}s${data.query ? ` match “${data.query}”` : ''}. ${notice(data.notice) || 'Select a row to keep its message and tools together.'}`;
         reader.querySelectorAll('[data-kind]').forEach(node => node.setAttribute('aria-pressed', String(node.dataset.kind === data.kind)));
         indexHost.replaceChildren();
         data.rows.forEach(row => {
@@ -229,7 +235,7 @@
         pages.querySelector('[data-page=next]').disabled = data.page >= data.pages;
         selectedHost.replaceChildren();
         const chosen = data.selected;
-        if (!chosen) { selectedHost.append(el('p', 'muted', data.notice || `No ${noun}s match.`)); return; }
+        if (!chosen) { selectedHost.append(el('p', 'muted', notice(data.notice) || `No ${noun}s match.`)); return; }
         const header = el('div', 'reader-step-nav');
         const info = el('div'); info.append(el('h3', '', `${Noun} ${chosen.step_id} · ${chosen.source || 'Unspecified source'}`));
         const facts = [`${chosen.match_number} of ${data.matches} matching ${noun}s`];

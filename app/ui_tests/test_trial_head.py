@@ -14,13 +14,14 @@ import subprocess
 import tempfile
 import unittest
 from contextlib import ExitStack
+from dataclasses import replace
 from html import unescape
 from unittest.mock import patch
 
 from nullius import workspace
 from nullius.judge import store
 from nullius.runs import artifacts, parse
-from nullius.traces import trajectory
+from nullius.traces import calls, conversation, trajectory
 from tests.test_feasibility import swe_report, write_job
 from tests.test_reconcile import record
 from .test_routes import APP_DIR, web
@@ -149,6 +150,63 @@ class TrialHead(unittest.TestCase):
                 self.assertIn(f"All {word}s", said); self.assertIn(f"Source {word}", said)
                 if word == "item":
                     self.assertNotRegex(text_of(tab).lower(), r"\bsteps?\b")
+
+    def test_conversation_notices_use_the_heads_noun_in_both_panels(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node is required for the conversation reader")
+        traj = trajectory.load(str(NATIVE / "parts-arm/t1/agent/trajectory.json"))
+        query = "missing-conversation-text"
+        cases = [
+            (conversation.page(traj, query=query), "No {noun}s match this search and filter."),
+            (conversation.page(traj, query=query, step="absent"), "That source {noun} id is not in the current search and filter."),
+            (conversation.page(replace(traj, steps=[])), "The trajectory contains no recorded {noun}s."),
+            (conversation.page(replace(traj, error="source steps unreadable")), "Trajectory unreadable: source steps unreadable"),
+            (conversation.page(None), "No trajectory recorded for this trial."),
+            (calls.page({}, step="absent"), "No call in this search holds that source {noun}."),
+            (calls.page({}), "No calls match this search."),
+        ]
+        program = r"""
+const [file, cases] = process.argv.slice(1).map(JSON.parse);
+const source = require('node:fs').readFileSync(file, 'utf8');
+async function render(noun, data) {
+  function element() {
+    return {dataset: {}, children: [], nodes: new Map(), textContent: '',
+      append(...nodes) { this.children.push(...nodes); },
+      replaceChildren(...nodes) { this.children = nodes; },
+      setAttribute() {}, removeAttribute() {}, addEventListener() {},
+      querySelector(key) { if (!this.nodes.has(key)) this.nodes.set(key, element()); return this.nodes.get(key); },
+      querySelectorAll() { return []; }};
+  }
+  const reader = element(), tab = element();
+  reader.dataset = {noun, endpoint: '/conversation'}; tab.dataset.tab = 'conversation';
+  require('node:vm').runInNewContext(source, {
+    document: {getElementById: () => reader, createElement: element,
+      querySelectorAll: key => key === '.trial-tabs [role=tab]' ? [tab] : []},
+    location: {href: 'http://localhost/trial/r1/t1?tab=conversation', hash: ''},
+    history: {replaceState() {}}, window: {}, URL, AbortController,
+    nulliusFetch: async () => ({ok: true, json: async () => data})
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  const text = node => node.textContent + node.children.map(text).join('');
+  return [text(reader.querySelector('.reader-status')), text(reader.querySelector('.reader-selected'))];
+}
+(async () => {
+  const out = [];
+  for (const noun of ['item', 'step']) for (const data of cases) out.push(await render(noun, data));
+  process.stdout.write(JSON.stringify(out));
+})();
+"""
+        result = subprocess.run([node, "-e", program, json.dumps(str(APP_DIR / "static/traces/conversation.js")),
+                                 json.dumps([data for data, _ in cases])], stdin=subprocess.DEVNULL,
+                                capture_output=True, text=True, check=True, timeout=10)
+        drawn = iter(json.loads(result.stdout))
+        for noun in ("item", "step"):
+            for _, notice in cases:
+                with self.subTest(noun=noun, notice=notice):
+                    status, selected = next(drawn)
+                    self.assertTrue(status.endswith(notice.format(noun=noun)), status)
+                    self.assertEqual(selected, notice.format(noun=noun))
 
     def test_what_ended_the_work_is_beside_the_outcome_on_the_trial_and_the_jobs_table(self):
         """The record's cut, else the score's own end: by its name beside the outcome, on the trial's page and in
