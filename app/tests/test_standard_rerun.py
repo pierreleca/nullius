@@ -93,6 +93,22 @@ class RerunRecords(unittest.TestCase):
                 self.assertEqual(outside.exists(), exists)
                 self.assertTrue((path / "retried").is_symlink())
 
+    def test_a_no_result_marker_replaces_links_without_writing_their_target(self):
+        path = self.job()
+        outside = self.tmp / "evidence.bin"
+        outside.write_bytes(b"\x00original evidence\xff")
+        for unit, link in (("good", os.link), ("wrong", os.symlink)):
+            name = next(n for n, u in rerun.planned(str(path)) if u == unit)
+            (path / name / "result.json").unlink()
+            link(outside, path / name / rerun.NO_RESULT)
+            with self.subTest(link=link.__name__):
+                rerun.rerun(str(path), [unit], root=str(self.root), env={}, say=lambda s: None)
+                kept = path / "retried" / f"{name}.try-1" / rerun.NO_RESULT
+                self.assertEqual(outside.read_bytes(), b"\x00original evidence\xff")
+                self.assertFalse(kept.is_symlink())
+                self.assertNotEqual(kept.stat().st_ino, outside.stat().st_ino)
+                self.assertIsNone(json.loads(kept.read_text())["result"])
+
     def test_stop_emits_cancellation_before_restoring_the_previous_try(self):
         path = self.job()
         name = "good__u0000"
