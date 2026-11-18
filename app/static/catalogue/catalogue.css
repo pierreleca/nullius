@@ -459,6 +459,9 @@ a.std-need { font-size: .78rem; color: var(--text-dim); text-decoration: underli
 .tasks-table small { display: block; margin-top: 2px; font-size: 12px; }
 .tasks-tags { display: none; }
 .tasks-pages { display: flex; align-items: center; gap: 12px; margin-top: 14px; font-size: 13px; color: var(--text-dim); }
+.tasks-savebar { position: sticky; bottom: 12px; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; padding: 10px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); box-shadow: var(--shadow); }
+.tasks-savebar b { font-weight: 500; font-variant-numeric: tabular-nums; }
+.tasks-savebar.tasks-gone { visibility: hidden; }
 .tasks-save { padding: 22px; border: 1px solid var(--border-soft); border-radius: 12px; background: var(--surface); }
 .tasks-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
 .tasks-form + .tasks-form { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-soft); }

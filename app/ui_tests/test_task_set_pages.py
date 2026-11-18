@@ -226,6 +226,17 @@ class Saving(Case):
         self.assertEqual(r.status_code, 403)
         self.assertEqual(self.save({"name": "x", "units": []}, 400)["error"], "Tick at least one task.")
 
+    def test_the_count_and_the_way_to_save_close_the_rows_and_a_read_only_revision_has_neither(self):
+        def bar(html):
+            rows = html.index('id="tasks-rows"')
+            got = re.search(r'<div class="tasks-savebar" id="tasks-savebar">(.*?)</div>', html, re.S)
+            return got and (got.start() > rows and got.start() < html.index('id="tasks-save-title"'), visible(got.group(1)))
+        self.assertEqual(bar(self.get("/benchmarks/described/tasks/all").get_data(as_text=True)), (True, "0 chosen Save as task set"))
+        self.save({"name": "dev", "units": ["t001"]})
+        self.save({"set": "dev", "note": "", "units": ["t001", "t002"]})
+        self.assertEqual(bar(self.get("/benchmarks/described/tasks/all?set=dev").get_data(as_text=True)), (True, "0 chosen Save"))
+        self.assertIsNone(bar(self.get("/benchmarks/described/tasks/all?set=dev&rev=1").get_data(as_text=True)))
+
 
 class TheBenchmarksSection(Case):
     def section(self, key):

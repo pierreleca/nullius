@@ -64,6 +64,12 @@
     <nav class="tasks-pages" id="tasks-pages" aria-label="Pages" hidden>
       <button type="button" class="btn ghost sm" data-page="prev">Previous</button><span id="tasks-page-of"></span><button type="button" class="btn ghost sm" data-page="next">Next</button>
     </nav>
+    {% if writable and not read_only %}
+    <div class="tasks-savebar" id="tasks-savebar">
+      <b id="tasks-bar-chosen">0 chosen</b>
+      <a class="btn sm" href="#tasks-save-title" id="tasks-to-save">{{ 'Save' if entry else 'Save as task set' }}</a>
+    </div>
+    {% endif %}
   </section>
 
   {% if writable and not read_only %}

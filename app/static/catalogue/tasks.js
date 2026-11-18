@@ -20,6 +20,7 @@
   }
   function chosenLine() {
     $('tasks-chosen').textContent = `${chosen.size.toLocaleString('en-US')} chosen`;
+    if ($('tasks-bar-chosen')) $('tasks-bar-chosen').textContent = $('tasks-chosen').textContent;
     $('tasks-show').disabled = !chosen.size && !st.showing;
   }
   function row(t) {
@@ -80,7 +81,7 @@
     st.ready = true; st.total = got.total; st.pages = got.pages; st.page = got.page;
     facets(got.categories);
     const m = $('tasks-match');
-    if (m) { m.hidden = !writable || !got.total; m.textContent = `Select the ${got.total.toLocaleString('en-US')} that match`; }
+    if (m) { m.hidden = !writable || !got.total || st.showing; m.textContent = `Select the ${got.total.toLocaleString('en-US')} that match`; }
     if (st.showing) return showSelected();
     draw(got.tasks);
     $('tasks-count').textContent = `${count(got.total)}` + (got.total !== got.of ? ` of ${got.of.toLocaleString('en-US')}` : '')
@@ -148,6 +149,14 @@
   $('tasks-revise')?.addEventListener('submit', e => {
     e.preventDefault();
     save({set: d.set, note: e.target.elements.namedItem('note').value.trim()});
+  });
+  // the count and the way to save stay in view under the rows; the bar steps aside once the form is in view
+  const bar = $('tasks-savebar'), form = document.querySelector('.tasks-save');
+  if (bar && form && 'IntersectionObserver' in window)
+    new IntersectionObserver(([e]) => bar.classList.toggle('tasks-gone', e.isIntersecting)).observe(form);
+  $('tasks-to-save')?.addEventListener('click', e => {
+    const field = form?.querySelector('input'); if (!field) return;
+    e.preventDefault(); form.scrollIntoView({block: 'nearest'}); field.focus({preventScroll: true});
   });
   if (st.showing) { $('tasks-show').setAttribute('aria-pressed', 'true'); $('tasks-show').textContent = 'Show all'; }
   chosenLine();
