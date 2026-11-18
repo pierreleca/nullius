@@ -863,6 +863,27 @@ class Version(unittest.TestCase):
             for n in (1, 2):
                 self.assertTrue(exchanges.check(store.dir, "u0001", n)["same"])
 
+    def test_pending_marks_count_towards_the_first_calls_bound(self):
+        probe = exchanges.Store(str(self.root / "probe"))
+        req = {"messages": ["x"]}
+        probe.write("u0001", 1, 1.0, "/messages", req, json.dumps(req).encode(), {}, 200, False, b"{}")
+        size = sum(map(len, WithUpstream.files(probe.dir).values()))
+        for extra in (0, 1, 2 * len(exchanges.HEADER.encode())):
+            with self.subTest(extra=extra):
+                store = exchanges.Store(str(self.root / str(extra)), max_mb=1)
+                req = {"messages": ["x" * (store.bound - size + 1 + extra)]}
+                store.write("u0001", 1, 1.0, "/messages", req, json.dumps(req).encode(), {}, 200, False, b"{}")
+                line, = exchanges.lines(store.dir, "u0001")
+                self.assertEqual("cut" in line, extra > 0)
+                self.assertEqual(store.size, sum(map(len, WithUpstream.files(store.dir).values())))
+                if extra == 0:
+                    self.assertEqual(store.size, store.bound)
+                    self.assertTrue(exchanges.check(store.dir, "u0001", 1)["same"])
+                else:
+                    self.assertFalse((Path(store.dir) / exchanges.PARTS).exists())
+                    store.write("u0001", 2, 1.0, "/messages", {}, b"{}", {}, 200, False, b"{}")
+                    self.assertIn("cut", exchanges.lines(store.dir, "u0001")[1])
+
     def test_later_parts_are_refused_before_raw_cut_or_missing_requests(self):
         trial = mock.Mock(dir=str(self.root / "task__u0001"), trial_name="task__u0001")
         store = self.keep(os.path.join(trial.dir, ".work", "relay"))

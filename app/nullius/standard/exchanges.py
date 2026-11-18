@@ -223,7 +223,9 @@ class Store:
         with self.lock:
             new_parts = "".join(p + "\n" for h, p in parts.items() if h not in self.parts)
             new_blobs = [(h, kind, raw) for h, (kind, raw) in found.items() if h not in self.blobs] if self.mode == "whole" else []
-            if self.cut or self.size + len(new_parts) + sum(len(raw) for _, _, raw in new_blobs) + len(text) + 1 > self.bound:
+            paths = [os.path.join(self.dir, name) for name in [tag + ".jsonl"] + ([PARTS] if new_parts else [])]
+            marks = sum(len(HEADER) for path in paths if not os.path.exists(path) or not os.path.getsize(path))
+            if self.cut or self.size + marks + len(new_parts) + sum(len(raw) for _, _, raw in new_blobs) + len(text) + 1 > self.bound:
                 self.cut = True
                 self._append(tag + ".jsonl", json.dumps(dict(head, cut=f"the store reached its bound of {self.max_mb} MB: "
                                                                         "this call and every later one are not kept")) + "\n")
