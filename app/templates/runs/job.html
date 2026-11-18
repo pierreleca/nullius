@@ -111,7 +111,7 @@
 </div>
 {% endif %}
 {% endif %}
-{% if rerunning and live_board and not live_board.running %}
+{%- if rerunning and live_board and not live_board.running %}
 <script>
 // Tasks of this job are being run again, and its feed has not begun again yet: ask for it every two seconds, and
 // open the page again on its default view once the board runs (or nothing will: the run ended).
@@ -369,7 +369,7 @@
       </div></details><button class="x plain" type="button" hidden aria-label="Remove the flag filter">✕</button></div>
     {% endif %}
     <button class="fclear plain" id="clear-filters" type="button" hidden>Show all {{ job.trials|length }}</button>
-    {% if again and again.where %}
+    {%- if again and again.where %}
     <div class="pick" id="rerun-pick" role="group" aria-label="Run tasks again">
       <button class="fclear plain" id="pick-shown" type="button">Select the rows shown</button>
       <span class="pick-n" id="pick-count" aria-live="polite">0 chosen</span>
@@ -380,9 +380,9 @@
   <p class="sr" id="trials-live" aria-live="polite"></p>
   {% set show_cause = show_judge %}
   {% set show_flags = show_judge and judgement.judged %}
-  {#- the column of tries: whenever the job allowed retries, or a task was tried more than once (a re-run by hand) #}
-  {% set show_tries = job.retries or job.trials|selectattr('n_retries')|list %}
-  {% set picking = again and again.where %}
+  {#- the column of tries: whenever the job allowed retries, or a task was tried more than once (a re-run by hand) -#}
+  {%- set show_tries = job.retries or job.trials|selectattr('n_retries')|list -%}
+  {%- set picking = again and again.where %}
   {% set n_judge = (1 if show_cause else 0) + (1 if show_flags else 0) + (1 if show_ins else 0) %}
   <div class="tscroll" role="region" aria-label="Trials in this run" tabindex="0">
   <table class="tt">
@@ -490,7 +490,7 @@
   </table>
   </div>
 </section>
-{% if picking %}
+{%- if picking %}
 {#- what Run selected again asks: the count, a reason, a cap; the page fills the count and the names from the ticks #}
 <dialog class="rerun-ask" id="rerun-ask" aria-labelledby="rerun-ask-h" data-post="{{ url_for('job_rerun', job_id=job.job_id) }}" data-csrf="{{ csrf }}">
   <form method="dialog">
@@ -507,7 +507,7 @@
 
 {# behind a click: what the run recorded about its install, and the page's one block of prose #}
 <div class="more">
-  {% if job.reruns %}
+  {%- if job.reruns %}
   <details id="reruns" open>
     <summary><span class="tw"></span>Run again by hand<span class="end"><span>{{ job.reruns|length }}</span></span></summary>
     <dl class="gl reruns">
