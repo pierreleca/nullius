@@ -230,10 +230,11 @@ class Runs(Scratch):
         del before["identity"]
         before.update(runs_cli.job_row(job), harbor_label=job.harbor_label)
         for trial, raw in zip(job.trials, before["trials"]):
-            raw.update(outcome_label=trial.outcome_label, is_infra=trial.is_infra,
+            raw.update(outcome_label=trial.outcome_label, ended_label=trial.ended_label, is_infra=trial.is_infra,
                        is_regression=trial.is_regression, has_trace=trial.has_trace)
         before = json.loads(json.dumps(before, default=lambda value: value.isoformat()))
-        self.assertEqual({k: v for k, v in doc.items() if k not in {"identity", "mean_score", "mean_score_planned"}}, before)
+        apart = {"identity", "mean_score", "mean_score_planned"}                # each checked above
+        self.assertEqual({k: v for k, v in doc.items() if k not in apart}, {k: v for k, v in before.items() if k not in apart})
         self.assertIn("  mean score 0.50 over the trials scored · 0.38 over the 4 planned\n",
                       self.sh("runs.cli", "show", self.tmp, "scored").stdout)
 
