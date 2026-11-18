@@ -18,6 +18,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 from unittest import mock
 
 from nullius import paths
@@ -164,6 +165,40 @@ class WithoutDescribe(Scratch):
 
 
 class Cache(Scratch):
+    def test_cache_links_cannot_read_or_write_outside_the_cache_root(self):
+        path = Path(units.cache_path(self.b, self.b["datasets"][0], {"mode": "long"}))
+        outside = Path(self.tmp, "outside-cache")
+        outside.mkdir()
+        cached = outside / "listing.json"
+        cached.write_text(json.dumps({"tasks": [], "described": False}))
+        for link, target in ((path.parent.parent, outside), (path.parent, outside), (path, cached)):
+            with self.subTest(link=link.name):
+                link.parent.mkdir(parents=True, exist_ok=True)
+                link.symlink_to(target, target_is_directory=target.is_dir())
+                before = {p.name: p.read_bytes() for p in outside.iterdir()}
+                try:
+                    with self.assertRaisesRegex(units.Refused, "outside the cache root"):
+                        units.listing(self.b, "all")
+                    self.assertEqual(units.state(self.b, "all")["state"], "refused")
+                    self.assertEqual(self.starts(), 0)
+                    self.assertEqual({p.name: p.read_bytes() for p in outside.iterdir()}, before)
+                finally:
+                    link.unlink()
+
+    def test_a_linked_cache_root_keeps_the_listing_under_its_resolved_root(self):
+        root = Path(paths.cache_dir())
+        destination = Path(self.tmp, "cache-disk")
+        destination.mkdir()
+        root.parent.mkdir(parents=True, exist_ok=True)
+        root.symlink_to(destination, target_is_directory=True)
+        got = units.listing(self.b, "all")
+        path = Path(units.cache_path(self.b, self.b["datasets"][0], {"mode": "long"}))
+        self.assertTrue(path.resolve().is_relative_to(destination))
+        self.assertEqual(json.loads(path.read_text()), got)
+        self.assertEqual(units.state(self.b, "all")["state"], "cached")
+        self.assertEqual(units.listing(self.b, "all"), got)
+        self.assertEqual(self.starts(), 1)
+
     def test_the_second_listing_starts_no_driver_and_another_option_lists_again(self):
         units.find(self.b, "all")
         units.find(self.b, "all", search="t1", page=2)

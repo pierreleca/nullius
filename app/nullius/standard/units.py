@@ -104,8 +104,16 @@ def _digest(bench: dict, ds: dict, values: dict) -> str:
     return h.hexdigest()
 
 
+def _cache_contained(path: str) -> str:
+    root = os.path.realpath(paths.cache_dir())
+    resolved = os.path.realpath(path)
+    if os.path.commonpath((resolved, root)) != root:
+        raise Refused(f"{path}: outside the cache root {root}")
+    return resolved
+
+
 def cache_path(bench: dict, ds: dict, values: dict) -> str:
-    return os.path.join(paths.cache_dir(), FOLDER, bench["key"], _digest(bench, ds, values) + ".json")
+    return _cache_contained(os.path.join(paths.cache_dir(), FOLDER, bench["key"], _digest(bench, ds, values) + ".json"))
 
 
 def _start(bench: dict, ds: dict, values: dict, work: str) -> jsonl.Proc:
@@ -144,7 +152,7 @@ def _described(got: object, ids: List[str]) -> Dict[str, dict]:
 
 
 def _list(bench: dict, ds: dict, values: dict) -> dict:
-    folder = os.path.join(paths.cache_dir(), FOLDER)
+    folder = _cache_contained(os.path.join(paths.cache_dir(), FOLDER))
     os.makedirs(folder, exist_ok=True)
     work = tempfile.mkdtemp(prefix=".listing-", dir=folder)
     try:
@@ -177,6 +185,7 @@ def listing(bench: dict, dataset: str, options: Optional[dict] = None) -> dict:
     except (OSError, ValueError):
         pass
     got = _list(bench, ds, values)
+    path = _cache_contained(path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=".units-", suffix=".json", dir=os.path.dirname(path))
     with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -221,9 +230,10 @@ def state(bench: dict, dataset: str, options: Optional[dict] = None) -> dict:
 
     try:
         values = option_values(bench, ds["id"], options)
+        path = cache_path(bench, ds, values)
     except Refused as e:
         return refused(str(e))
-    if _cached(cache_path(bench, ds, values)):
+    if _cached(path):
         return {"state": "cached", "fetch": [], "reason": ""}
     prepare = f"cannot prepare {key}'s dataset {ds['id']} for its listing: "
     fetch, needs = [], []
