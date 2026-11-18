@@ -275,10 +275,11 @@ class RenameAndDelete(Scratch):
     def test_a_delete_of_a_link_removes_the_link_and_not_the_set_it_leads_to(self):
         self.make("dev", "good\n")
         folder = os.path.join(self.cat, "sets", "fakebench")
-        os.symlink(os.path.join(folder, "dev.json"), os.path.join(folder, "alias.json"))
+        path = os.path.join(folder, "alias.json")
+        os.symlink(os.path.join(folder, "dev.json"), path)
         code, out, err = self.cli("set", "delete", "fakebench", "alias")
         self.assertEqual(code, 0, err)
-        self.assertIn("could not read", out)
+        self.assertEqual(out.strip(), f"deleted {path}: an entry this version could not read")
         self.assertEqual(sorted(os.listdir(folder)), ["dev.json"])
         self.assertEqual(sets.revision(sets.load("fakebench", "dev"))["units"], ["good"])
 

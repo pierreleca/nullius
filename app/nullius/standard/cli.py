@@ -768,7 +768,7 @@ def cmd_set_rename(a):
 
 
 def cmd_set_delete(a):
-    path = sets.path_of(a.benchmark, a.name)
+    path = sets._file_of(a.benchmark, a.name, None)
     entry = sets.delete(a.benchmark, a.name)
     if entry is None:
         print(f"deleted {path}: an entry this version could not read")
