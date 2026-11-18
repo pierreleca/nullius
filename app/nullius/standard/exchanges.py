@@ -41,7 +41,9 @@ import re
 import threading
 from typing import Dict, List, Optional
 
-MODES = ("whole", "text", "off")
+from nullius import settings
+
+MODES =("whole", "text", "off")
 DEFAULT = "whole"
 MAX_MB = 256                                     # a unit's store, in millions of bytes
 FOLDER = "exchanges"
@@ -181,7 +183,8 @@ class Store:
         if isinstance(max_mb, bool) or not isinstance(max_mb, int) or max_mb < 1:
             raise ValueError(f"exchanges_max_mb {max_mb!r}: a whole number of MB, at least 1")
         self.dir, self.mode, self.max_mb, self.bound = os.path.join(record_dir, FOLDER), mode, max_mb, max_mb * 10 ** 6
-        self.keys = tuple(sorted({k for k in keys if k and k != "local"}, key=len, reverse=True))
+        # the placeholder a provider without a key is sent is no secret, and a common word
+        self.keys = tuple(sorted({k for k in keys if k and k != settings.MODEL_KEY_PLACEHOLDER}, key=len, reverse=True))
         self.parts: set = set()
         self.blobs: set = set()
         self.size = 0                            # bytes written so far
