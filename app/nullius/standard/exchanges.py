@@ -216,15 +216,24 @@ class Store:
 
     def _append(self, name: str, text: str) -> None:
         os.makedirs(self.dir, exist_ok=True)
-        with open(os.path.join(self.dir, name), "a") as f:
-            f.write(text)
+        path = os.path.join(self.dir, name)
+        before = os.path.getsize(path) if os.path.exists(path) else 0
+        try:
+            with open(path, "a") as f:
+                if f.write(text) != len(text):
+                    raise OSError("the store append was incomplete")
+        except Exception:
+            if os.path.exists(path):
+                os.truncate(path, before)
+            raise
         self.size += len(text)                   # ASCII: json.dumps escapes the rest
 
     def _put(self, name: str, data: bytes) -> None:
         path = os.path.join(self.dir, name)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path + ".part", "wb") as f:
-            f.write(data)
+            if f.write(data) != len(data):
+                raise OSError("the stored picture was incomplete")
         os.replace(path + ".part", path)
         self.size += len(data)
 

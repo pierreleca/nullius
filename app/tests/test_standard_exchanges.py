@@ -283,6 +283,85 @@ class StoreFiles(unittest.TestCase):
         self.assertEqual(line["headers"], {"X-Trace-[REDACTED]": "trace", "X-Value": "[REDACTED]"})
         self.assertTrue(exchanges.check(store.dir, "u0001", 1)["same"])
 
+    @contextlib.contextmanager
+    def failed_write(self, target, failure):
+        original = open
+        failed = False
+
+        @contextlib.contextmanager
+        def opened(path, mode="r", *args, **kwargs):
+            nonlocal failed
+            with original(path, mode, *args, **kwargs) as file:
+                if Path(path) != target or mode not in ("a", "wb") or failed:
+                    yield file
+                    return
+                failed = True
+
+                def write(data):
+                    count = file.write(data[:20])
+                    file.flush()
+                    if failure == "write":
+                        raise OSError(28, "No space left on device")
+                    return count
+
+                proxy = mock.Mock(wraps=file)
+                if failure != "close":
+                    proxy.write.side_effect = write
+                yield proxy
+            if failure == "close":
+                raise OSError(28, "No space left on device")
+
+        with mock.patch("builtins.open", side_effect=opened):
+            yield
+        self.assertTrue(failed)
+
+    def test_failed_appends_restore_the_earlier_length_and_retry_whole_parts(self):
+        for name in (exchanges.PARTS, "u0001.jsonl"):
+            for failure in ("write", "short", "close"):
+                with self.subTest(name=name, failure=failure):
+                    store = self.store()
+                    self.keep(store, {"messages": ["earlier"]})
+                    path = Path(store.dir) / name
+                    before = path.read_bytes()
+                    req = {"messages": ["a later part"]}
+                    with self.failed_write(path, failure):
+                        with self.assertRaises(OSError):
+                            store._append(name, '{"unfinished":"a long value"}\n')
+                    self.assertEqual(path.read_bytes(), before)
+                    if name == exchanges.PARTS:
+                        prior_parts = set(store.parts)
+                        with self.failed_write(path, failure):
+                            self.keep(store, req, 2)
+                        self.assertEqual(path.read_bytes(), before)
+                        self.assertEqual(store.parts, prior_parts)
+                    else:
+                        with self.failed_write(path, failure):
+                            self.keep(store, req, 2)
+                        self.assertEqual(path.read_bytes()[:len(before)], before)
+                    rows = exchanges.lines(store.dir, "u0001")
+                    self.assertEqual([row["n"] for row in rows], [1, 2])
+                    self.assertIn("error", rows[1])
+                    for n in (3, 4):
+                        self.keep(store, req, n)
+                        self.assertTrue(exchanges.check(store.dir, "u0001", n)["same"])
+                    self.assertEqual(store.size, sum(p.stat().st_size for p in Path(store.dir).rglob("*") if p.is_file()))
+
+    def test_incomplete_pictures_are_not_marked_stored_and_are_written_again(self):
+        for failure in ("write", "short", "close"):
+            with self.subTest(failure=failure):
+                store = self.store()
+                req = {"messages": [data_url(PNG)]}
+                blob = Path(store.dir) / exchanges.BLOBS / (hashlib.sha256(PNG).hexdigest() + ".png")
+                with self.failed_write(Path(str(blob) + ".part"), failure):
+                    self.keep(store, req)
+                self.assertFalse(blob.exists())
+                self.assertEqual((store.parts, store.blobs), (set(), set()))
+                line, = exchanges.lines(store.dir, "u0001")
+                self.assertIn("error", line)
+                self.keep(store, req, 2)
+                self.assertEqual(blob.read_bytes(), PNG)
+                self.assertTrue(exchanges.check(store.dir, "u0001", 2)["same"])
+
 
 class ByteForByte(WithUpstream):
     def test_each_shape_rebuilds_to_the_bytes_sent_streamed_or_not_and_a_changed_part_fails(self):
