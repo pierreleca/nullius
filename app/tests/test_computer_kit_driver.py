@@ -1157,6 +1157,18 @@ class Fake(FakeDesktop):
 
 
 class Fixture(unittest.TestCase):
+    def test_click_places_the_button_at_each_supplied_position(self):
+        fixture = driver.fixture
+        for at in ([0.2, 0.7], [0.8, 0.3]):
+            with self.subTest(at=at):
+                f = fixture.Fixture.__new__(fixture.Fixture)
+                f.tk, f.root = mock.Mock(), object()
+                f.values = {"labels": ["BUTTON"], "at": at}
+                f.images, f.names = [], {}
+                with mock.patch.object(fixture, "bitmap"):
+                    f._click()
+                f.tk.Frame.return_value.place.assert_called_once_with(relx=at[0], rely=at[1], anchor="center")
+
     def test_the_fake_starts_blank_and_draws_the_button_only_when_the_fixture_starts(self):
         values = {"screen": "click", "labels": ["BUTTON"]}
         d = Fake("desktop", values)
