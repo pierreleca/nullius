@@ -1,7 +1,7 @@
 """OSWorld's driver for the Nullius standard (JSON lines on stdin and stdout).
 
 An agent benchmark: it runs as its setups, its null control and an agent on
-agent.computer/v2. Everything that acts and scores is OSWorld's own code at
+agent.computer/v1. Everything that acts and scores is OSWorld's own code at
 the tested commit ($NULLIUS_UPSTREAM), run as published; this driver names the
 task, starts the upstream's script (or, for an agent, runner.py beside it) and
 reads what it wrote. Each unit's script runs in the unit's folder, so its logs, its task
@@ -113,7 +113,7 @@ RESULTS = "results"
 START_LOCK = "/tmp/nullius-osworld1-vm-start.lck"
 STARTED = "Started container with ports"                     # the provider's line once the container runs
 START_SECONDS = 120
-# an agent's unit (agent.computer/v2): the desktop user's password line, as OSWorld's own agents are told it; the
+# an agent's unit (agent.computer/v1): the desktop user's password line, as OSWorld's own agents are told it; the
 # agent's time, the setups'; the unit's budget (the module's text) and the bounds that follow from it
 PASSWORD_LINE = "If you need a password for sudo, the password of the computer is '{password}'."
 AGENT_SECONDS = 7200

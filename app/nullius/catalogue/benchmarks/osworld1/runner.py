@@ -1,5 +1,5 @@
 """One unit of an agent on OSWorld1: the upstream's DesktopEnv and its own run_single_example, imported and called as
-they are, with the computer port's bridge as the loop's agent (nullius.standard.computer_port, agent.computer/v2).
+they are, with the computer port's bridge as the loop's agent (nullius.standard.computer_port, agent.computer/v1).
 
     runner.py --example TASK_JSON --result-dir DIR --socket PATH --ready FILE --lifeline FD --steps N --pause SECONDS
               --vm VM_IMAGE --calls FILE [--held FOLDER] [--prepared FILE] [--given FILE]
