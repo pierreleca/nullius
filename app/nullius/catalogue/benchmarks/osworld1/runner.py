@@ -36,11 +36,9 @@ import tempfile
 import threading
 
 SCREEN = (1920, 1080)
-PYTHON_SECONDS = 120                                 # the upstream controller's wait on a command's reply
 FINISH_SECONDS = 5                                   # the bridge's end and the server's close
 CLOSE_SECONDS = 25                                   # the desktop's close: the provider stops and removes its container
 STOP_SECONDS = FINISH_SECONDS + CLOSE_SECONDS
-VERSION = 2                                          # the computer port's version the entry names (standard.json)
 FOLDER = "/tmp/agent"                                # the agent's own folder in the VM
 
 
@@ -179,9 +177,8 @@ def run(a, port, stop, turn):
                          enable_proxy=False)
         os.makedirs(where, exist_ok=True)
         desktop = Desktop(env, os.path.dirname(os.path.abspath(a.calls)))
-        bridge = port.Bridge(desktop, a.steps, a.pause, SCREEN, PYTHON_SECONDS, on_first=first,
-                             held=port.Held(a.held) if a.held else None, version=VERSION, folder=FOLDER,
-                             window=bool(a.given), prepared=a.prepared)
+        bridge = port.Bridge(desktop, a.steps, a.pause, SCREEN, FOLDER, on_first=first,
+                             held=port.Held(a.held) if a.held else None, window=bool(a.given), prepared=a.prepared)
         server = port.Server(bridge, a.socket, a.calls)
         turn.bridge = bridge
         lib_run_single.run_single_example(bridge, Watched(env, desktop), example, a.steps, example["instruction"],

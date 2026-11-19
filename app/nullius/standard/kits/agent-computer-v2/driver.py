@@ -38,7 +38,7 @@ v1 = _load("nullius_kit_computer_v1", os.path.join(V1, "driver.py"))
 port, desktop, checks = v1.port, v1.desktop, v1.checks
 
 UNITS = checks.CHECKS + ("late",)
-FOLDER = "/tmp/agent"                        # the agent's own folder in the desktop
+FOLDER = v1.FOLDER                           # the agent's own folder in the desktop
 LATE_SECONDS = 3.0                           # late: the button appears this long after the task is given
 
 
@@ -79,7 +79,7 @@ class Server(port.Server):
             if self.bridge.booked >= self.bridge.steps:
                 self.bridge.past += 1
             try:
-                port.checked(call, self.bridge.screen, self.bridge.version, self.bridge.folder)
+                port.checked(call, self.bridge.screen, self.bridge.folder)
             except port.Refused as e:
                 call.answer(error=str(e))
                 return
@@ -143,8 +143,8 @@ class Unit(v1.Unit):
         v1.REAPER.tell(f"+folder {folder}")
         self.folder = folder
         os.mkdir(folder, 0o700)
-        self.bridge = v1.KitBridge(Pictures(self.desktop, self), self.steps, v1.PAUSE, desktop.SCREEN,
-                                   v1.PYTHON_SECONDS, version=2, folder=FOLDER, window=True, prepared=self.prepared)
+        self.bridge = v1.KitBridge(Pictures(self.desktop, self), self.steps, v1.PAUSE, desktop.SCREEN, FOLDER,
+                                   window=True, prepared=self.prepared)
         self.server = Server(self.bridge, self.socket(), log=self.log)
         self.loop = threading.Thread(target=self.run_loop, name=f"kit-loop-{self.unit}", daemon=True)
         self.loop.start()

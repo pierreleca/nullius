@@ -743,7 +743,6 @@ class Runner(unittest.TestCase):
 
     def test_the_entry_serves_version_2_and_a_steps_observation_is_the_one_the_loop_hands(self):
         from tests.test_standard_computer_port import Client, error, image, value
-        self.assertEqual(self.r.VERSION, 2)
         with open(os.path.join(ENTRY, "standard.json")) as f:
             definition = json.load(f)
         self.assertEqual(definition["needs"], ["agent.computer/v2"])
