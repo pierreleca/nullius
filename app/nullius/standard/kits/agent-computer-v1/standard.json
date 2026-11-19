@@ -1,9 +1,9 @@
 {
   "schema": "nullius.benchmark/v1",
   "key": "agent-computer-v1",
-  "kit_version": 1,
+  "kit_version": 2,
   "label": "Kit: agent.computer/v1",
-  "summary": "Eight checks on a small real desktop, reached through the computer port's MCP server: four basic - read the screen, click, type, stop at the step budget - and four skills - drag, scroll, recover from an error, several actions in one step. The desktop's own records decide each one.",
+  "summary": "Nine checks on a small real desktop, reached through the computer port's MCP server, where the desktop is reached through steps alone once the task is given: four basic - read the screen, click, type, stop at the step budget - and five skills - drag, scroll, recover from an error, several actions in one step, and a button that appears late, seen by looking again with a step. The desktop's own records decide each one.",
   "family": "agent",
   "needs": [
     "agent.computer/v1"
@@ -18,10 +18,12 @@
     "drag": "drags a handle into a marked zone",
     "scroll": "scrolls a list to read what it shows at first below its edge",
     "recover": "reads an acting call's error and acts again",
-    "batch": "sends several actions in one step"
+    "batch": "sends several actions in one step",
+    "late": "looks again with a step to find what appeared after the task was given"
   },
   "driver": {
     "unit_end": true,
+    "task_given": true,
     "command": [
       "python3",
       "{here}/driver.py"
@@ -50,7 +52,7 @@
   "datasets": [
     {
       "id": "kit",
-      "units": 8
+      "units": 9
     }
   ],
   "units": {
@@ -69,7 +71,7 @@
   },
   "score": {
     "kind": "pass",
-    "says": "the desktop's records show the task done, every pointer and key event inside an acting call, and the final message holds what the screen showed"
+    "says": "the desktop's records show the task done, every pointer and key event inside an acting call, and the final message holds what the screen showed; for late, a step's observation showed the button before the press"
   },
   "limits": {
     "turn_seconds": 600
@@ -114,6 +116,11 @@
       "label": "Several actions in one step",
       "task": "Fill three text fields with a budget of two steps.",
       "passes": "Each field holds its word, every key inside an acting call."
+    },
+    "late": {
+      "label": "Look again by a step",
+      "task": "A button appears a few seconds after the task is given; click it once.",
+      "passes": "A left press on the button, every input inside an acting call, and an observation taken as a step ended, after the button appeared, reached the agent before the press."
     }
   },
   "proven": {
