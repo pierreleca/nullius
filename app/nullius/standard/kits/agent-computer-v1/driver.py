@@ -16,8 +16,8 @@ as a client.
 
 **late.** One labelled button appears ``LATE_SECONDS`` after the task is given, away from the screen's centre at a
 place drawn for the unit (``late_place``), so that no click at a fixed point finds it; the agent clicks it. It passes
-when the click is the check ``click``'s, and an observation taken as a step ended, after the button was up, reached
-the agent before the press: it looked again by a step. Its times are the driver's own clock (when the button was up,
+when the click is the check ``click``'s, and a picture was taken as a step ended, after the button was up and before
+the action holding the press began. Its times are the driver's own clock (when the button was up,
 each picture of a step's end, each action's start), the press matched to its action on the desktop's clock.
 
 **What is left when a unit never reaches ``score``.** Nothing: a new ``setup`` ends the unit before it, and the
