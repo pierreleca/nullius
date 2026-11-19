@@ -14,9 +14,10 @@ starts; every prepare call is recorded in ``verifier/computer-prepare.jsonl``, t
 and removes the desktop and the socket. ``oracle`` is the reference: the right calls, sent to the unit's own server
 as a client.
 
-**late.** One labelled button appears ``LATE_SECONDS`` after the task is given; the agent clicks it. It passes when
-the click is the check ``click``'s, and an observation taken as a step ended, after the button was up, reached the
-agent before the press: it looked again by a step. Its times are the driver's own clock (when the button was up,
+**late.** One labelled button appears ``LATE_SECONDS`` after the task is given, away from the screen's centre at a
+place drawn for the unit (``late_place``), so that no click at a fixed point finds it; the agent clicks it. It passes
+when the click is the check ``click``'s, and an observation taken as a step ended, after the button was up, reached
+the agent before the press: it looked again by a step. Its times are the driver's own clock (when the button was up,
 each picture of a step's end, each action's start), the press matched to its action on the desktop's clock.
 
 **What is left when a unit never reaches ``score``.** Nothing: a new ``setup`` ends the unit before it, and the
@@ -64,6 +65,7 @@ PYTHON_SECONDS = 90                          # one desktop call's reply
 AGENT_SECONDS = 600                          # the agent's turn
 FOLDER = "/tmp/agent"                        # the agent's own folder in the desktop
 LATE_SECONDS = 3.0                           # late: the button appears this long after the task is given
+LATE_PLACES = ((0.15, 0.35), (0.65, 0.85))   # late: where the button's centre may be, as fractions of each side
 LOOP_SECONDS = PYTHON_SECONDS + desktop.SETTLE + PAUSE + 30     # the loop's end, once the turn has ended
 USE = "Use the tools of the MCP server named computer, given to this session: they show and drive a desktop. "
 DONE = " Then reply with the word done."
@@ -242,7 +244,8 @@ class Unit:
         self.unit, self.trial = unit, os.path.dirname(os.path.abspath(dir))
         if unit == "late":                           # the click screen with one button, drawn later
             label = secrets.SystemRandom().choice(checks.LABELS)
-            self.values, self.expected = {"screen": "click", "labels": [label]}, {"target": label, "labels": [label]}
+            self.values = {"screen": "click", "labels": [label], "at": late_place()}
+            self.expected = {"target": label, "labels": [label]}
         else:
             self.values, self.expected = checks.draw(unit)
         self.steps = checks.steps(unit)
@@ -440,6 +443,14 @@ def close_all(*, shutdown=True):
 def job_of(dir):
     """The job a unit's folder belongs to: <job>/<trial>/workspace."""
     return os.path.basename(os.path.dirname(os.path.dirname(os.path.abspath(dir)))) or None
+
+
+def late_place(rng=None):
+    """Where ``late`` draws its button: the point its frame is centred on, as fractions of the screen's width and
+    height, each in one of ``LATE_PLACES``. The button never covers the screen's centre, and the place is drawn anew
+    for each unit."""
+    rng = rng or secrets.SystemRandom()
+    return [round(rng.uniform(*rng.choice(LATE_PLACES)), 3) for _ in range(2)]
 
 
 def late_verdict(u, events, actions, message):

@@ -119,7 +119,7 @@
     },
     "late": {
       "label": "Look again by a step",
-      "task": "A button appears a few seconds after the task is given; click it once.",
+      "task": "A button appears a few seconds after the task is given, away from the screen's centre at a place drawn for each unit; click it once.",
       "passes": "A left press on the button, every input inside an acting call, and an observation taken as a step ended, after the button appeared, reached the agent before the press."
     }
   },

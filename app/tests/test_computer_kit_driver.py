@@ -8,6 +8,7 @@ import importlib.util
 import inspect
 import io
 import json
+import math
 import os
 import queue
 import random
@@ -1144,6 +1145,9 @@ class Fake(FakeDesktop):
         self.values = values
         self.boxes = {label: [100 + 300 * i, 100, 300 + 300 * i, 200]
                       for i, label in enumerate(values.get("labels") or [])}
+        if values.get("at"):                                 # one button, around the point the values name
+            x, y = int(values["at"][0] * desktop.SCREEN[0]), int(values["at"][1] * desktop.SCREEN[1])
+            self.boxes = {label: [x - 120, y - 45, x + 120, y + 45] for label in values["labels"]}
         self.boxes.update(field=[600, 500, 1200, 560], handle=[200, 500, 260, 560], zone=[1300, 400, 1700, 700],
                           list=[600, 300, 1300, 800])
         self.log.append({"kind": "ready", "t": time.monotonic(), "boxes": dict(self.boxes)})
@@ -1166,6 +1170,25 @@ class Fixture(unittest.TestCase):
         self.assertEqual(len(d.events()), 1)
         self.assertEqual(d.events()[0]["kind"], "ready")
         self.assertEqual(d.events()[0]["boxes"], d.boxes)
+
+
+def blind_clicks(sock, u):
+    """A control that must fail ``late``: a script that never looks. Once the task is given, one step clicks the
+    screen's centre and waits there until the button has had time to appear, so that the step's observation, which it
+    never reads, is taken with the button up; a second step clicks the centre again. A button drawn at the centre
+    would take that second click, after a look by a step."""
+    c = driver.Client(sock)
+    try:
+        x, y = desktop.SCREEN[0] // 2, desktop.SCREEN[1] // 2
+        waits = math.ceil((driver.LATE_SECONDS + 1) / driver.PAUSE) + 1
+        said = [c.call("step", {"actions": [f"pyautogui.click({x}, {y})"] + ["WAIT"] * waits})]
+        if not u.up.wait(30):
+            raise AssertionError("the button was never drawn")
+        said.append(c.call("click", {"x": x, "y": y}))
+    finally:
+        c.close()
+    if any(failed for failed, _ in said):
+        raise AssertionError(f"a blind click was refused: {said}")
 
 
 class Window(unittest.TestCase):
@@ -1254,6 +1277,30 @@ class Window(unittest.TestCase):
         got = driver.score("late", ws, [], "done")
         self.assertFalse(got["passed"])
         self.assertIn("without looking again by a step", got["detail"]["why"])
+
+    def test_late_draws_its_button_away_from_the_centre_at_a_place_drawn_for_each_unit(self):
+        rng, places = random.Random(7), set()
+        for _ in range(1000):
+            place = tuple(driver.late_place(rng))
+            for f, side in zip(place, desktop.SCREEN):
+                self.assertTrue(0.15 <= f <= 0.35 or 0.65 <= f <= 0.85, place)
+                self.assertGreater(abs(f - 0.5) * side, 0.15 * side - 1)         # the centre is never on the button
+            places.add(place)
+        self.assertGreater(len(places), 990)
+        ws, s = self.unit("late")
+        first = driver.OPEN["late"].values["at"]
+        ws, s = self.unit("late")
+        self.assertNotEqual(driver.OPEN["late"].values["at"], first)
+
+    def test_late_fails_blind_clicks_at_the_screens_centre(self):
+        ws, s = self.unit("late")
+        u = driver.OPEN["late"]
+        driver.task_given("late", ws)
+        blind_clicks(s["mcp"][0]["args"][0], u)
+        got = driver.score("late", ws, [], "done")
+        self.assertFalse(got["passed"])
+        self.assertEqual(got["detail"]["steps_used"], 2)
+        self.assertIn(f"no left press on the button {u.expected['target']}", got["detail"]["why"])
 
     def test_late_fails_the_null_control_and_draws_no_button_when_the_task_is_never_given(self):
         ws, s = self.unit("late")
@@ -1416,6 +1463,15 @@ class DockerKit(unittest.TestCase):
             with self.subTest(unit=unit, control="nop"):
                 ws, _ = self.unit(unit)
                 self.assertFalse(driver.score(unit, ws, [], "")["passed"])
+
+    def test_blind_clicks_at_the_screens_centre_fail_late(self):
+        ws, s = self.unit("late")
+        u = driver.OPEN["late"]
+        driver.task_given("late", ws)
+        blind_clicks(s["mcp"][0]["args"][0], u)
+        got = driver.score("late", ws, [], "done")
+        self.assertFalse(got["passed"], got)
+        self.assertIn("no left press on the button", got["detail"]["why"])
 
     def test_scripted_clients_that_type_through_prepare_or_act_past_their_budget_fail(self):
         ws, s = self.unit("type")
