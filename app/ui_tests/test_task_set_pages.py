@@ -22,7 +22,7 @@ from unittest.mock import patch
 
 from nullius import workspace
 from nullius.standard import definitions, install, job, jsonl, recipe, sets, units
-from tests.test_standard_units_listing import DRIVER
+from tests.test_standard_units_listing import DRIVER, MODE
 from .test_routes import web
 
 FIXTURES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tests", "fixtures", "standard", "catalogue")
@@ -234,6 +234,21 @@ async function flush() { for (let n = 0; n < 20; n++) await Promise.resolve(); }
 
 
 class TheTasksPagesData(Case):
+    def test_the_picker_lists_the_limited_plan_under_its_benchmark_options(self):
+        units.listing(self.fake, "all")
+        path = "/benchmarks/fakebench/tasks/all/listing?limit=1"
+        self.assertEqual([t["id"] for t in self.get(path).get_json()["tasks"]], ["good"])
+        self.assertEqual(self.get(path + "&q=wrong&ids=1").get_json()["ids"], [])
+        self.b["options"] = MODE
+        units.listing(self.b, "all", {"mode": "short"})
+        self.assertFalse(self.listing()["ready"])
+        path = '/benchmarks/described/tasks/all/listing?options={"mode":"short"}&limit=10'
+        got = self.get(path).get_json()
+        self.assertEqual(([t["id"] for t in got["tasks"]], got["of"]), ([f"t{i:03}" for i in range(10)], 10))
+        self.assertEqual(self.get(path + "&q=t019&ids=1").get_json()["ids"], [])
+        got = self.post('/benchmarks/described/tasks/all/rows?options={"mode":"short"}', {"units": ["t007", "t024"]})
+        self.assertEqual(([t["id"] for t in got["tasks"]], got["unknown"]), (["t007"], ["t024"]))
+
     def test_each_search_category_and_page_gives_what_the_listings_function_gives(self):
         units.listing(self.b, "all")                         # in the cache: the page reads it
         before = self.starts()
@@ -723,6 +738,7 @@ class BuilderCase(Case):
         super().setUp()
         load = definitions.load
         self.stack.enter_context(patch.object(definitions, "load", lambda kind, root=None, every=False: load(kind, FIXTURES, every=every)))
+        units.listing(self.fake, "all")
         sets.create(self.fake, "dev", dataset="all", units=["good", "wrong"], description="two of them")
 
 
@@ -747,6 +763,65 @@ class TheBuilder(BuilderCase):
 class TheDatasetStep(BuilderCase):
     """Which tasks? and Start with, under the chosen datasets: the dataset's name in their titles only when several
     are chosen."""
+
+    def test_the_picker_and_selection_follow_limits_and_benchmark_options(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node is required for the dataset step")
+        html = self.get("/new-run").get_data(as_text=True)
+        schema = json.loads(re.search(r'<script id="nb-schema" type="application/json">(.*?)</script>', html, re.S).group(1))
+        folder = Path(__file__).resolve().parents[1] / "static/builder"
+        page = (folder / "command-builder.js").read_text()
+        cut = lambda start, end: page[page.index(start):page.index(end, page.index(start))]
+        program = (f"const schema={json.dumps(schema)};const C=require({json.dumps(str(folder / 'command-builder-core.js'))})(schema);\n"
+                   + cut("  function pickTasks(", "  function standardForm(")
+                   + cut("  function compileRunner(", "  // the number of units"))
+        program += r"""
+const assert = require('node:assert/strict'), timers = [], notices = [];
+const rec = C.createStandard('fakebench'), r = () => rec;
+const S = {model: 3, dataset: 2}, REVIEW = 6, step = S.dataset;
+const unitsOf = () => ({nouns: 'tasks'}), window = {nulliusNotify: text => notices.push(text)};
+let runnerKey = '', runnerOut, runnerTimer, runnerServed, result;
+const setTimeout = f => { timers.push(f); return timers.length; }, clearTimeout = () => {};
+const refreshPlan = () => {}, renderForm = () => {};
+const acceptCompile = (rec, served, out, key, current) => ({served, current: key === current && key === JSON.stringify(rec)});
+const nulliusFetch = async (url, args) => {
+  assert.equal(JSON.parse(args.body).recipe.limit, rec.limit);
+  return {json: async () => result};
+};
+const mount = {dataset: {}}, dialog = {showModal() {}}, elements = {
+  'nb-tasks': dialog, 'nb-tasks-list': {content: {firstElementChild: {cloneNode: () => mount}}},
+  'nb-tasks-body': {replaceChildren: p => assert.equal(p, mount)}, 'nb-tasks-title': {},
+  'nb-tasks-close': {}, 'nb-tasks-done': {}
+};
+const document = {getElementById: id => elements[id]};
+let picked;
+globalThis.nulliusTasks = (p, options) => { picked = options; };
+(async () => {
+  rec.limit = 2; rec.bench_options = {mode: 'short'};
+  C.setStartWith(rec, 'all', ['good', 'wrong']);
+  pickTasks('all');
+  assert.equal(mount.dataset.limit, 2);
+  assert.deepEqual(JSON.parse(mount.dataset.options), {mode: 'short'});
+  assert.deepEqual(picked.chosen, ['good', 'wrong']);
+  for (const change of ['limit', 'option']) {
+    C.setStartWith(rec, 'all', ['good', 'wrong']);
+    if (change === 'limit') rec.limit = 1;
+    else rec.bench_options.mode = 'long';
+    result = {errors: [{dataset: 'all', dropped: ['wrong'], message: 'Outside the plan.'}]};
+    compileRunner();
+    assert.equal(runnerOut.errors[0].message, 'Checking the tasks ticked.');
+    await timers.shift()();
+    assert.deepEqual(rec.start_with.all, ['good']);
+    assert.equal(notices.at(-1), 'Removed tasks outside the current plan: wrong.');
+  }
+  C.setStartWith(rec, 'all', ['wrong']);
+  compileRunner(); await timers.shift()();
+  assert.deepEqual(rec.start_with.all, []);
+})().catch(e => { console.error(e); process.exitCode = 1; });
+"""
+        got = subprocess.run([node, "-e", program], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
+        self.assertEqual(got.returncode, 0, got.stderr)
 
     def test_the_titles_name_the_dataset_only_when_several_are_chosen(self):
         node = shutil.which("node")

@@ -44,7 +44,7 @@ from typing import Callable, Dict, List, Optional
 
 from nullius import constraints as limits, hosts, providers
 from nullius.providers import PROVIDERS, STEP
-from nullius.standard import boat, exchanges, hostreq, definitions, ledger, match, ports, prove, relay, run, sets
+from nullius.standard import boat, exchanges, hostreq, definitions, ledger, match, ports, prove, relay, run, sets, units
 from nullius.standard.retries import MAX_RETRIES
 
 CHOOSE_PROVIDER = "Choose a provider: OpenRouter, OpenAI, Anthropic or a custom provider."
@@ -798,6 +798,21 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
     limit = recipe.get("limit")
     if limit not in ("", None) and _int(limit, 1) is None:
         add("limits", "The number of units is a whole number of at least 1, or empty for all of them.")
+    for ds_id, start in start_of.items():
+        given = (recipe.get("start_with") or {}).get(ds_id)
+        if not isinstance(given, list):
+            continue
+        if units.state(b, ds_id, chosen_opts)["state"] != "cached":
+            add("dataset", f"Open the task picker for {ds_id} to prepare the list and check the tasks ticked.")
+            continue
+        plan = units.find(b, ds_id, chosen_opts, size=None, within=set_of.get(ds_id, {}).get("ids"),
+                          limit=limit if isinstance(limit, int) else None)
+        start["planned"] = plan["total"]
+        held = {t["id"] for t in plan["tasks"]}
+        dropped = [i for i in given if i not in held]
+        if dropped:
+            errors.append({"step": STEP["dataset"], "dataset": ds_id, "dropped": dropped,
+                           "message": "Start with: tasks outside the current plan: " + ", ".join(dropped) + "."})
     # empty: one at a time; on Boat, as many as the account runs at once (the run caps it to that, boat.slots)
     conc = _int(recipe.get("concurrency") or (MAX_CONCURRENT if backend == "boat" else 1), 1, MAX_CONCURRENT)
     if conc is None:
@@ -916,6 +931,7 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
     # a plan begun on a part: what it plans and what it begins, by dataset
     planned_of = {x["id"]: min(limit, e) if isinstance(limit, int) and e else (limit if isinstance(limit, int) else e)
                   for x, e in zip(dss, each)}
+    planned_of.update({ds_id: s["planned"] for ds_id, s in start_of.items() if "planned" in s})
     planned = sum(planned_of.values()) if all(planned_of.values()) else None
     starts = [start_of.get(x["id"], {}).get("units", planned_of[x["id"]]) for x in dss]
     begin = sum(starts) if all(starts) else None

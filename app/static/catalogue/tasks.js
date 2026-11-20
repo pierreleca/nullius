@@ -15,7 +15,12 @@ function mount(page, opts = {}) {
   const label = field => field.charAt(0).toUpperCase() + field.slice(1).replace(/_/g, ' ');
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
   // the listing at the version the page shows (data-version, empty for the benchmark's default)
-  const at = url => d.version ? url + (url.includes('?') ? '&' : '?') + 'version=' + encodeURIComponent(d.version) : url;
+  const at = url => {
+    const params = new URLSearchParams();
+    if (d.version) params.set('version', d.version);
+    if (d.options) params.set('options', d.options);
+    return String(params) ? url + (url.includes('?') ? '&' : '?') + params : url;
+  };
   const post = (url, body) => nulliusFetch(at(url), {method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': d.csrf}, body: JSON.stringify(body)});
   const count = n => `${n.toLocaleString('en-US')} ${n === 1 ? nouns.replace(/s$/, '') : nouns}`;
 
@@ -67,6 +72,8 @@ function mount(page, opts = {}) {
     Object.entries(extra || {}).forEach(([k, v]) => u.set(k, v));
     if (d.version) u.set('version', d.version);
     if (d.within) u.set('within', d.within);
+    if (d.options) u.set('options', d.options);
+    if (d.limit) u.set('limit', d.limit);
     return d.listing + '?' + u;
   }
   let polling = null, asked = 0;

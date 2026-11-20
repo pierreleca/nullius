@@ -13,11 +13,43 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from nullius.standard import cli, payload, recipe, rerun, sets
+from nullius.standard import cli, payload, recipe, rerun, sets, units, run, definitions
 from tests.test_task_set_recipe import Scratch
 
 
 class StartWith(Scratch):
+    def setUp(self):
+        super().setUp()
+        units.listing(self.b, "all")
+
+    def test_review_refuses_a_ticked_task_outside_the_limited_plan(self):
+        out = self.compile(limit=1, start_with={"all": ["wrong"]})
+        self.assertTrue(out["errors"])
+        self.assertEqual(out["errors"][0]["dropped"], ["wrong"])
+        runner = run.Run(self.b, definitions.control(self.b, "nop"), model="", provider="openai",
+                         jobs_root=str(self.tmp / "jobs"), name="limited", env={}, say=lambda s: None,
+                         limit=1, start_with={"ids": ["wrong"]})
+        with self.assertRaisesRegex(run.Refused, "outside the plan of 1 task: wrong"):
+            runner.start()
+        self.assertEqual(self.compile(limit=1, start_with={"all": ["good"]})["errors"], [])
+
+    def test_review_checks_the_listing_under_the_changed_benchmark_options(self):
+        self.b["options"] = {"mode": {"summary": "Tasks", "values": ["long", "short"], "default": "long"}}
+        rows = {"long": ["good", "wrong"], "short": ["good"]}
+        def listing(bench, dataset, options=None, **kw):
+            return {"tasks": [{"id": i, "title": "", "text": "", "categories": {}}
+                              for i in rows[(options or {}).get("mode", "long")]], "described": False}
+        with mock.patch.object(units, "state", return_value={"state": "cached"}), mock.patch.object(units, "listing", listing):
+            self.assertEqual(self.compile(start_with={"all": ["wrong"]})["errors"], [])
+            out = self.compile(bench_options={"mode": "short"}, start_with={"all": ["wrong"]})
+            self.assertEqual(out["errors"][0]["dropped"], ["wrong"])
+            out = self.compile(bench_options={"mode": "short"}, start_with={"all": ["good"]})
+            self.assertEqual(out["errors"], [])
+            self.assertIn("nothing is left for later", next(r[2] for r in out["review"] if r[1] == "Dataset"))
+        with mock.patch.object(units, "state", return_value={"state": "full"}), mock.patch.object(units, "listing") as listed:
+            self.assertTrue(self.compile(start_with={"all": ["wrong"]})["errors"])
+            listed.assert_not_called()
+
     def test_a_start_on_a_part_asks_nothing_at_run_and_review_counts_what_it_plans_and_begins(self):
         for datasets, limit, planned, begun in ((["all", "more"], None, 8, 5),
                                                (["all", "more"], 2, 4, 3),
