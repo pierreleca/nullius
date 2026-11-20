@@ -59,3 +59,28 @@ class LimitsStep(CompilerCase):
         got = json.loads(subprocess.run([self.node, "-"], input=program, check=True, capture_output=True, text=True).stdout)
         self.assertEqual(got, [39, 39, "", 400])
         self.assertIn("value=d.field==='limit'?atMost(el,typed):typed", page)           # what is typed in the field
+
+    def test_what_the_record_keeps_of_the_model_calls_is_a_choice_wired_to_the_command_line(self):
+        agent = "r.others=[C.standardOthers(r).find(o=>!o.setup&&!o.control&&!o.why.length).key];"
+        pressed = lambda html: re.findall(r'data-std-exchanges="(\w+)" aria-pressed="true"', html)
+        html = self.draw("osworld1", agent)
+        self.assertEqual(re.findall(r'data-std-exchanges="(\w+)"', html), ["whole", "text", "off"])
+        self.assertEqual(pressed(html), ["whole"])                         # pictures and text, by default
+        for label in ("Pictures and text</strong><small>default</small>", "Text alone</strong>", "Nothing</strong>"):
+            self.assertIn(label, html)
+        self.assertEqual(pressed(self.draw("osworld1", agent + "r.exchanges='text';")), ["text"])
+        self.assertNotIn("data-std-exchanges", self.draw("gsm8k", "r.others=['nop'];"))      # a run that calls no model keeps none
+        # the choice stays in the recipe, and the run is told it
+        kept = self.js("const r=C.fromJSON(JSON.stringify({...C.createStandard('osworld1'),exchanges:'off'}));process.stdout.write(JSON.stringify(r.exchanges));")
+        self.assertEqual(kept, "off")
+        from nullius.standard import recipe
+        mine = {"version": 1, "harness": "standard", "name": "t", "title": "t", "benchmark": "gsm8k", "datasets": ["test"], "others": ["original"],
+                "model_choice": "any", "provider": "openrouter", "model": "vendor/m", "limit": 1, "concurrency": 1, "where": "local"}
+        for keep, flag in (("text", "--exchanges text"), ("off", "--exchanges off"), ("", None)):
+            with self.subTest(keep=keep):
+                out = recipe.compile(dict(mine, **({"exchanges": keep} if keep else {})))
+                self.assertEqual(out["errors"], [])
+                if flag:
+                    self.assertIn(flag, out["script"])
+                else:
+                    self.assertNotIn("--exchanges", out["script"])
