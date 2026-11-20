@@ -643,6 +643,10 @@ class Texts(unittest.TestCase):
         self.assertIn("(2 hours)", cut)
         with open(os.path.join(ENTRY, "standard.json")) as f:
             self.assertEqual(json.load(f)["limits"]["scored_cuts"], ["time", "calls", "end"])
+        for v, block in (entry.get("versions") or {}).items():    # the cuts are scored at every version: each one's text says so
+            with self.subTest(version=v):
+                self.assertIn(line, block.get("limitations", limits))
+                self.assertIn(cut, block.get("good_to_know", entry["good_to_know"]))
         page = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(ENTRY))), "..", "..", "docs", "benchmarks",
                             "supported", "osworld1.md")
         if os.path.exists(page):
