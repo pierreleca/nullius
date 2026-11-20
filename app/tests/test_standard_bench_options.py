@@ -313,7 +313,7 @@ class MachineDocker(unittest.TestCase):
                 setups = {n["name"]: n for n in out["host"]["needs"]}
                 rows = prerequisites.check_here([], setups, which=lambda p: None)
                 self.assertEqual([(x["name"], x["state"]) for x in rows], [("setup:docker", "missing")])
-                self.assertEqual(rows[0]["label"], "docker")
+                self.assertEqual(rows[0]["label"], "Docker for the tasks' VMs")       # named for what it is for
                 self.assertFalse(prerequisites.ready([{"rows": rows}]))
                 self.assertTrue(prerequisites.ready([{"rows": prerequisites.check_here([], setups, which=lambda p: "/usr/bin/" + p)}]))
 
