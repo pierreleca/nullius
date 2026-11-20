@@ -130,7 +130,7 @@ _PREPARING_LOCK = threading.Lock()
 def _std_dataset(key: str, dataset: str, version: str = ""):
     """(the standard's definition of ``key``, at ``version`` or its default, and its dataset) or a 404. The definition
     goes to the listing as the command line gives it, so both read the same cached listing."""
-    if version and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", version):
+    if version and not standard_definitions._VERSION.match(version):
         abort(404)
     bench = standard_definitions.get("benchmark", f"{key}@{version}" if version else key)
     ds = next((d for d in (bench or {}).get("datasets") or [] if d["id"] == dataset), None)

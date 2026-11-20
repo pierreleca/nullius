@@ -234,6 +234,25 @@ async function flush() { for (let n = 0; n < 20; n++) await Promise.resolve(); }
 
 
 class TheTasksPagesData(Case):
+    def test_task_pages_accept_the_definitions_version_syntax(self):
+        versions = ["1.0+fix", "A_b-c.d+2", "v" + "0" * 39]
+        spec = {k: v for k, v in self.fake.items() if not k.startswith("_")}
+        spec.update(upstream={"license": "unknown"}, default=versions[0], versions={v: {} for v in versions})
+        self.assertEqual(definitions.problems(spec, "benchmark"), [])
+        root = self.tmp / "versions"
+        folder = root / "benchmarks" / "fakebench"
+        folder.mkdir(parents=True)
+        (folder / "standard.json").write_text(json.dumps(spec))
+        self.stack.enter_context(patch.object(definitions, "get", lambda kind, ref, root_=None: _GET(kind, ref, str(root))))
+        for version in versions:
+            with self.subTest(version=version):
+                self.assertEqual(definitions.get("benchmark", f"fakebench@{version}")["_version"], version)
+                response = self.client.get("/benchmarks/fakebench/tasks/all", query_string={"version": version})
+                self.addCleanup(response.close)
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(f'data-version="{version}"', response.get_data(as_text=True))
+        self.get("/benchmarks/fakebench/tasks/all?version=unknown", status=404)
+
     def test_the_picker_lists_the_limited_plan_under_its_benchmark_options(self):
         units.listing(self.fake, "all")
         path = "/benchmarks/fakebench/tasks/all/listing?limit=1"
