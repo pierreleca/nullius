@@ -84,6 +84,84 @@ class Case(unittest.TestCase):
 
 
 class TheTaskFilters(unittest.TestCase):
+    def test_detached_responses_cannot_change_another_picker(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node is required for the task picker")
+        script = Path(__file__).resolve().parents[1] / "static/catalogue/tasks.js"
+        program = r"""
+const assert = require('node:assert/strict');
+const source = require('node:fs').readFileSync(process.argv[1], 'utf8');
+async function check(rows, detached, failed) {
+  let active;
+  const requests = [], callbacks = {a: [], b: []};
+  function picker(name) {
+    const elements = new Map();
+    const element = id => {
+      if (['tasks-chosen-ids', 'tasks-savebar', 'tasks-create', 'tasks-to-save'].includes(id)) return null;
+      if (!elements.has(id)) elements.set(id, {
+        innerHTML: '', textContent: '', listeners: {}, attributes: {}, classList: {toggle() {}},
+        addEventListener(type, callback) { this.listeners[type] = callback; },
+        setAttribute(key, value) { this.attributes[key] = value; },
+        querySelector() { return {disabled: false}; }
+      });
+      return elements.get(id);
+    };
+    return {isConnected: true, element,
+      dataset: {writable: 'true', listing: '/' + name, rows: '/' + name + '/rows'},
+      querySelector: selector => selector.startsWith('#') ? element(selector.slice(1)) : null,
+      querySelectorAll: () => []};
+  }
+  const scope = {
+    document: {getElementById: id => id === 'tasks-page' ? null : active.element(id),
+      querySelector: () => null, querySelectorAll: () => []},
+    URLSearchParams, window: {}, setTimeout, clearTimeout,
+    nulliusFetch: url => new Promise((resolve, reject) => requests.push({url, resolve, reject}))
+  };
+  require('node:vm').runInNewContext(source, scope);
+  async function flush() { for (let i = 0; i < 20; i++) await Promise.resolve(); }
+  function answer(request, id) {
+    request.resolve({json: async () => ({ok: true, ready: true, total: 1, of: 1,
+      page: 1, pages: 1, described: true, categories: {}, unknown: [], tasks: [{id}]})});
+    return flush();
+  }
+  const a = active = picker('a');
+  scope.nulliusTasks(a, {chosen: ['task-a'], onChange: ids => callbacks.a.push(ids)});
+  let pending = requests[0];
+  if (rows) {
+    await answer(pending, 'task-a');
+    a.element('tasks-show').listeners.click();
+    await answer(requests[1], 'task-a');
+    pending = requests[2];
+    assert.equal(pending.url, '/a/rows');
+  }
+  a.isConnected = !detached;
+  const before = a.element('tasks-rows').innerHTML;
+  const b = active = picker('b');
+  scope.nulliusTasks(b, {onChange: ids => callbacks.b.push(ids)});
+  await answer(requests.at(-1), 'task-b');
+  if (failed) { pending.reject(Error('unavailable')); await flush(); }
+  else await answer(pending, 'late-a');
+  assert.ok(b.element('tasks-rows').innerHTML.includes('data-id="task-b"'));
+  assert.equal(b.element('tasks-state').textContent, '');
+  if (detached) {
+    assert.equal(a.element('tasks-rows').innerHTML, before);
+    assert.equal(a.element('tasks-state').textContent, '');
+  }
+  const box = {checked: true, closest: () => ({dataset: {id: 'task-b'}})};
+  b.element('tasks-rows').listeners.change({target: {closest: () => box}});
+  assert.equal(JSON.stringify(callbacks.b), '[["task-b"]]');
+  assert.equal(callbacks.a.length, 0);
+}
+(async () => {
+  for (const rows of [false, true]) for (const detached of [false, true])
+    for (const failed of [false, true]) await check(rows, detached, failed);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        got = subprocess.run([node, "-e", program, str(script)], stdin=subprocess.DEVNULL,
+                             capture_output=True, text=True, timeout=10)
+        self.assertEqual(got.returncode, 0, got.stderr)
+
     def filtered(self, action):
         node = shutil.which("node")
         if not node:
@@ -101,6 +179,8 @@ function element(id) {
   });
   return elements.get(id);
 }
+element('tasks-page').querySelector = s => s.startsWith('#') ? element(s.slice(1)) : null;
+element('tasks-page').querySelectorAll = () => [];
 element('tasks-page').dataset = {set: 'dev', writable: 'true', listing: '/listing', rows: '/rows'};
 element('tasks-chosen-ids').textContent = '["alpha","beta"]';
 const tasks = ['alpha', 'beta'].map(id => ({id, title: id, categories: {kind: id}}));
@@ -216,6 +296,8 @@ function element(id) {
   });
   return elements.get(id);
 }
+element('tasks-page').querySelector = s => s.startsWith('#') ? element(s.slice(1)) : null;
+element('tasks-page').querySelectorAll = () => [];
 element('tasks-page').dataset = {writable: 'true', listing: '/listing', rows: '/rows'};
 const long = 'Open the report and ' + 'make the second table match the first one, '.repeat(6);
 const tasks = [{id: 'os__a', title: long.slice(0, 99) + '…', text: long, categories: {}}, {id: 'b', title: '', text: '', categories: {}}];

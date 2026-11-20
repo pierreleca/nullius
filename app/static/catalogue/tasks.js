@@ -6,7 +6,7 @@
 // its sets (data-within), its ticks given back through onChange.
 (() => {
 function mount(page, opts = {}) {
-  const $ = id => document.getElementById(id), d = page.dataset, nouns = d.nouns || 'tasks';
+  const $ = id => page.querySelector('#' + id), d = page.dataset, nouns = d.nouns || 'tasks';
   const writable = d.writable === 'true';
   const chosen = new Set(opts.chosen || JSON.parse(($('tasks-chosen-ids') || {}).textContent || '[]'));
   const changed = () => opts.onChange && opts.onChange([...chosen]);
@@ -20,6 +20,7 @@ function mount(page, opts = {}) {
   const count = n => `${n.toLocaleString('en-US')} ${n === 1 ? nouns.replace(/s$/, '') : nouns}`;
 
   function say(text, warn) {
+    if (page.isConnected === false) return;
     const el = $('tasks-state'); el.hidden = !text; el.textContent = text || ''; el.classList.toggle('tasks-warn', !!warn);
   }
   function chosenLine() {
@@ -44,7 +45,7 @@ function mount(page, opts = {}) {
     const fields = [...new Set(tasks.flatMap(t => Object.keys(t.categories || {})))];
     $('tasks-cat-head').hidden = !fields.length;
     $('tasks-cat-head').textContent = fields.map(label).join(' · ');
-    document.querySelectorAll('#tasks-rows td.tasks-catcol').forEach(td => { td.hidden = !fields.length; });
+    page.querySelectorAll('#tasks-rows td.tasks-catcol').forEach(td => { td.hidden = !fields.length; });
   }
   function facets(cats) {
     $('tasks-cats').innerHTML = Object.entries(cats || {}).map(([field, values]) =>
@@ -79,7 +80,10 @@ function mount(page, opts = {}) {
     clearTimeout(polling);
     if (!got.preparing && d.local !== 'true') return say('The list is prepared from a browser on the application host. Ids can still be pasted.', true);
     if (!got.preparing && !asked++)
-      return post(d.prepare, {}).then(r => r.json()).then(g => { say(g.say || got.say); polling = setTimeout(load, 2500); })
+      return post(d.prepare, {}).then(r => r.json()).then(g => {
+        if (page.isConnected === false) return;
+        say(g.say || got.say); polling = setTimeout(load, 2500);
+      })
         .catch(() => say('The list could not be started. Reload the page.', true));
     polling = setTimeout(load, 2500);
   }
@@ -87,6 +91,7 @@ function mount(page, opts = {}) {
     if (page.isConnected === false) return;            // a list the builder's dialog has since replaced asks nothing more
     let got;
     try { got = await (await nulliusFetch(query({page: st.page}))).json(); } catch { return say('The list could not be read. Reload the page.', true); }
+    if (page.isConnected === false) return;
     if (!got.ok) return say(got.error || 'The list could not be read.', true);
     if (!got.ready) { $('tasks-count').textContent = ''; draw([...chosen].map(id => ({id}))); pager(); chosenLine(); return notReady(got); }
     say('');
@@ -104,6 +109,7 @@ function mount(page, opts = {}) {
     const ids = [...chosen];
     let got = {tasks: ids.map(id => ({id})), unknown: []};
     try { got = await (await post(d.rows, {units: ids})).json(); } catch { /* the ids alone */ }
+    if (page.isConnected === false) return;
     const unknown = new Set(got.unknown || []);
     draw([...got.tasks, ...[...unknown].map(id => ({id, unknown: true}))]);
     $('tasks-count').textContent = `${count(ids.length)} chosen` + (unknown.size ? ` · ${unknown.size} not in the listing` : '');
@@ -143,6 +149,7 @@ function mount(page, opts = {}) {
   });
   $('tasks-match')?.addEventListener('click', async () => {
     const got = await (await nulliusFetch(query({ids: 1}))).json();
+    if (page.isConnected === false) return;
     if (got.ok && got.ready) { got.ids.forEach(id => chosen.add(id)); changed(); load(); }
   });
   $('tasks-clear')?.addEventListener('click', () => { chosen.clear(); changed(); load(); });
@@ -154,11 +161,12 @@ function mount(page, opts = {}) {
     load();
   });
 
-  const msg = (text, bad) => { const el = $('tasks-msg'); if (el) { el.textContent = text; el.classList.toggle('bad', !!bad); } };
+  const msg = (text, bad) => { const el = $('tasks-msg'); if (el && page.isConnected !== false) { el.textContent = text; el.classList.toggle('bad', !!bad); } };
   async function save(body) {
     if (!chosen.size) return msg('Tick at least one task.', true);
     let got;
     try { got = await (await post(d.save, {...body, units: [...chosen]})).json(); } catch { return msg('Not saved: the server did not answer.', true); }
+    if (page.isConnected === false) return;
     if (!got.ok) return msg(got.error, true);
     location.href = got.open;
   }
@@ -168,7 +176,7 @@ function mount(page, opts = {}) {
       ...(d.version ? {version: d.version} : {})});
   });
   // the count and the way to save stay in view under the rows; the bar steps aside once the form is in view
-  const bar = $('tasks-savebar'), form = document.querySelector('.tasks-save');
+  const bar = $('tasks-savebar'), form = page.querySelector('.tasks-save');
   if (bar && form && 'IntersectionObserver' in window)
     new IntersectionObserver(([e]) => bar.classList.toggle('tasks-gone', e.isIntersecting)).observe(form);
   $('tasks-to-save')?.addEventListener('click', e => {
@@ -182,5 +190,5 @@ function mount(page, opts = {}) {
 }
 globalThis.nulliusTasks = mount;
 const page = document.getElementById('tasks-page');
-if (page && !page.dataset.manual) mount(page);
+if (page && !page.dataset.manual) mount(page, {chosen: JSON.parse(document.getElementById('tasks-chosen-ids')?.textContent || '[]')});
 })();
