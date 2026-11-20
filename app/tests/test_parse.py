@@ -739,6 +739,17 @@ class RateLimitsRetried(unittest.TestCase):
                     self.assertNotEqual(workspace.signature(tmp), now)
         self.assertGreaterEqual(int(parse.SCHEMA), 23)
 
+    def test_a_job_cached_while_sets_had_revisions_is_parsed_again(self):
+        # a job's task set is read by its label, with no revision: a cache of the shape that kept its revision misses
+        from nullius import workspace
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "result.json"), "w") as f:
+                f.write("{}")
+            now = workspace.signature(tmp)
+            with mock.patch.object(parse, "SCHEMA", "23"):
+                self.assertNotEqual(workspace.signature(tmp), now)
+        self.assertGreaterEqual(int(parse.SCHEMA), 24)
+
 class UnverifiedJobHasNoRate(unittest.TestCase):
     """A job nothing scored has no solve rate, not a rate of zero.
 
