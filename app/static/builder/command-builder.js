@@ -809,9 +809,11 @@
       const sets = b.datasets.filter(x => C.datasetsOf(rec).includes(x.id)), per = sets.length > 1 ? ' of each dataset' : '';
       // empty is the default, shown as the placeholder: every unit, one at a time, one attempt
       const ds = sets.length === 1 ? sets[0] : null, mine = ds && (ds.sets || []).find(s => [s.name, s.name + '@' + s.revision].includes((rec.task_sets || {})[ds.id]));
-      const all = mine ? String(mine.units) : ds && ds.units ? String(ds.units) : 'all';
+      const all = mine ? String(mine.units) : ds && ds.units ? String(ds.units) : 'all', most = /^\d+$/.test(all) ? all : '';
+      // the field takes that many at most: more would be all of them
       return '<div class="nb-sectionhead"><h2>Scope</h2></div><div class="nb-two">'
-        + field('Number of ' + u.nouns, 'limit', rec.limit, {type: 'number', min: 1, placeholder: all, hint: 'The first ones' + per + ', in its order.'})
+        + field('Number of ' + u.nouns, 'limit', rec.limit, {type: 'number', min: 1, max: most, placeholder: all,
+            hint: 'Empty: all' + (most ? ' ' + most : '') + per + '. Else the first ones, in order.'})
         + field('Concurrent ' + u.nouns, 'concurrency', rec.concurrency, {type: 'number', min: 1, max: 32, placeholder: rec.backend === 'boat' ? String((schema.standardHere || {}).boatSlots || 'Boat\'s limit') : '1'}) + '</div>'
         // attempts are scored runs of a unit; a retry runs a try again after an error, never after a failed unit (standard.retries)
         + '<div class="nb-two">' + field('Attempts per ' + u.noun, 'repeat', rec.repeat || '', {type: 'number', min: 1, max: 32, placeholder: '1',
@@ -902,6 +904,8 @@
       refreshPlan();
     }, 120);
   }
+  // the number of units a run takes, as typed: a number past the most the field takes is that most
+  const atMost = (el, value) => el.max !== '' && value !== '' && Number(value) > Number(el.max) ? Number(el.max) : value;
   const field = (label,key,value,{type='text',hint='',list='',min='',max='',placeholder='',declared=false}={}) => `<label class="nb-field">${label}<input${declared?' class="nb-declared"':''} aria-label="${esc(label)}" data-field="${key}" type="${type}" value="${esc(value)}" ${list?`list="${list}"`:''} ${min!==''?`min="${min}"`:''} ${max!==''?`max="${max}"`:''} ${type==='number'?'step="any"':''} placeholder="${esc(placeholder)}" autocomplete="off" spellcheck="false">${hint?`<small>${hint}</small>`:''}</label>`;
   const select = (label,key,value,options) => `<label class="nb-field">${label}<select data-field="${key}">${options.map(([v,t])=>`<option value="${esc(v)}" ${v===value?'selected':''}>${esc(t)}</option>`).join('')}</select></label>`;
   const fixed = (label,value,whose='official') => `<label class="nb-field ui-field-row"><span class="ui-field-copy">${esc(label)}</span><span class="nb-fixed">${esc(value)} (${whose})</span></label>`;
@@ -1213,7 +1217,7 @@
     if(d.servedBy!==undefined)return;   // what is typed in a Served by filters its menu: a pick, or Enter, adds it (nb-pick)
     if(d.providerModel && rec.modelFormat !== 'provider-id'){for(const key of ['model','userModel','evalModel'])if(typeof rec[key]==='string')rec[key]=C.bareModel(rec[key]);rec.modelFormat='provider-id';}
     if(d.field){const p=d.field.startsWith('param:')?C.parameters().find(p=>p.key===d.field.slice(6)):null;
-      const value=el.type==='number'?(el.value===''?'':Number(el.value)):el.value;
+      const typed=el.type==='number'?(el.value===''?'':Number(el.value)):el.value,value=d.field==='limit'?atMost(el,typed):typed;
       if(p)rec.params[p.key]=p.type==='optional-boolean'?(value==='__default__'?null:value==='true'):value;
       else if(d.field==='timeoutMultiplier'){rec.timeoutMultiplier=value;rec.agentMinutes='';}
       else if(d.field.startsWith('adapterPath:')){const id=d.field.slice(12);if(String(value).trim())rec.adapterPaths[id]=String(value).trim();else delete rec.adapterPaths[id];}
@@ -1239,6 +1243,7 @@
   root.addEventListener('focusout',event=>{
     const el=event.target;
     if(el.type==='number'&&(el.dataset.field||el.dataset.stdMinutes||el.dataset.benchOptSelect)&&el.validity&&el.validity.badInput){el.value='';window.nulliusNotify?.(`${el.getAttribute('aria-label')}: enter a number.`,{error:true,key:'bad-number'});}
+    else if(el.dataset.field==='limit'&&el.value!==''&&atMost(el,Number(el.value))!==Number(el.value)){el.value=el.max;window.nulliusNotify?.(`${el.getAttribute('aria-label')}: at most ${el.max}, all of them.`,{key:'at-most'});}
   });
   // a provider picked in a Served by, or slugs typed there and Enter: they join its list, after the ones there
   root.addEventListener('nb-pick',event=>{const role=event.target.dataset.servedBy;if(!role)return;C.addServed(r(),role,event.detail);syncServed();refreshPlan();});
