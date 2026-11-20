@@ -316,6 +316,14 @@
         },
         "participant": true,
         "unit_end": true,
+        "describe": true,
+        "list_command": [
+          "python3",
+          "{here}/driver.py",
+          "{here}/agents.json",
+          "{here}/nop.py",
+          "{here}/runner.py"
+        ],
         "task_given": true
       },
       "setups": {

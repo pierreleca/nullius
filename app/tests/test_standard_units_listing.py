@@ -332,6 +332,11 @@ class Definition(unittest.TestCase):
             osworld1 = json.load(f)
         self.assertEqual(definitions.problems(osworld1, "benchmark"), [])
         self.assertEqual(osworld1["driver"]["list_command"][1:], osworld1["driver"]["command"][1:])
+        for v, block in osworld1["versions"].items():        # a version's driver replaces the shared one whole
+            driver = block.get("driver") or osworld1["driver"]
+            with self.subTest(version=v):
+                self.assertIs(driver.get("describe"), True)
+                self.assertEqual(driver.get("list_command"), osworld1["driver"]["list_command"])
 
 
 class State(Scratch):
@@ -476,6 +481,8 @@ class OSWorld1Light(Scratch):
         with mock.patch.object(units.install, "upstream", return_value=up), \
                 mock.patch.object(units.install, "dataset", return_value=meta), no_environment():
             got = units.listing(bench, "test_small")
+            earlier = units.listing(definitions.get("benchmark", "osworld1@044bc33"), "test_small")
+        self.assertEqual(earlier["tasks"], got["tasks"])          # each version lists by the same light start
         import importlib.util
         spec = importlib.util.spec_from_file_location("osworld1_driver_units", os.path.join(OSWORLD1, "driver.py"))
         driver = importlib.util.module_from_spec(spec)
