@@ -286,6 +286,8 @@ tick().then(() => process.stdout.write(JSON.stringify(destination)));
         self.assertEqual(rows, {"t-2__u0002": "t-2 No result begun, ended with none", "t-3__u0003": "t-3 No result never run",
                                 "t-4__u0004": "t-4 No result never run"})
         self.assertIn('data-first="On this machine, in this job: a task with no result gets its first;', html)
+        for n in waiting:                                                        # the question says "with no result"
+            self.assertIn(f'value="{n}" data-first="none"', html)
         r = self.post("r1", {"trials": ["t-3__u0003", trial_name(1)]})
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
         self.assertIn("--unit t-3__u0003 --unit t-1__u0001 --from-run", self.asked[-1][1]["script"])

@@ -153,7 +153,7 @@
   addEventListener('scroll', hide, { passive: true });
 
   // ---- tasks to run again: a tick per trial, the rows the filters show at once, the count, then the question ----
-  // a task with no result (data-first) is run, not run again: the words say which
+  // a task with no result (data-first, "none" when its run ended with none) is run, not run again: the words say which
   const ticks = $$('#trial-rows .pick-row'), ask = $('#rerun-ask');
   if (ticks.length && ask) {
     const pickN = $('#pick-count'), go = $('#rerun-open'), form = $('form', ask), err = $('[data-error]', ask);
@@ -171,12 +171,17 @@
       recount(); go.click();
     }));
     go.addEventListener('click', () => {
-      const picked = chosen(), fresh = picked.filter(first).length;
-      const words = 'Run ' + tasks(picked.length) + (!fresh ? ' again' : fresh < picked.length ? ', ' + (picked.length - fresh) + ' again' : '');
+      // tasks with no result alone: one short question, no names and no reason; else the names, and a reason asked
+      const picked = chosen(), fresh = picked.filter(first).length, short = picked.length > 0 && fresh === picked.length;
+      const words = short ? `Run the ${tasks(picked.length)} ${picked.some(x => x.dataset.first === 'none') ? 'with no result' : 'not yet run'}, on ${ask.dataset.where}?`
+        : 'Run ' + tasks(picked.length) + (!fresh ? ' again' : fresh < picked.length ? ', ' + (picked.length - fresh) + ' again' : '');
       $('#rerun-ask-h').textContent = words;
-      $('[data-go]', ask).textContent = words;
+      $('[data-go]', ask).textContent = short ? 'Run' : words;
       where.textContent = fresh && where.dataset.first ? where.dataset.first : again;
-      $('[data-names]', ask).replaceChildren(...picked.map(x => { const li = document.createElement('li'); li.textContent = x.getAttribute('aria-label').replace(/^Choose /, ''); return li; }));
+      const names = $('[data-names]', ask), reason = $('[data-reason]', ask);
+      where.hidden = names.hidden = reason.hidden = short;
+      if (short) form.elements.reason.value = '';
+      names.replaceChildren(...(short ? [] : picked).map(x => { const li = document.createElement('li'); li.textContent = x.getAttribute('aria-label').replace(/^Choose /, ''); return li; }));
       err.hidden = true; $('[data-go]', ask).disabled = 'spent' in $('[data-go]', ask).dataset; ask.showModal();
     });
     form.addEventListener('submit', async e => {

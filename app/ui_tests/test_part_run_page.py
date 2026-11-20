@@ -174,6 +174,59 @@ new Function('$', '$$', 'rows', 'document', 'nulliusFetch', 'URL', 'location',
             self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
             self.assertEqual(self.asked[-1][1]["trials"], body["trials"])
 
+    def test_tasks_never_run_get_one_short_question_and_a_reason_is_asked_only_beside_a_result(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node is required for the question")
+        d = self.run_of()
+        self.begun_on_a_part(d)
+        top = json.loads((d / "result.json").read_text())
+        top["budget"] = {"max_usd": 4.0, "spent_usd": 0.31, "stopped": False, "cut_off": [], "not_run": []}
+        (d / "result.json").write_text(json.dumps(top))
+        self.open(d.parent)
+        html = self.page("/job/r1?view=results")
+        self.assertIn('data-where="this machine"', html)
+        self.assertEqual(text(html, r'<p class="small" id="rerun-budget">.*?</p>'), "Budget for the whole run: $4.00, $3.69 left.")
+        self.assertNotIn('name="max_usd" min="0" step="any" inputmode="decimal">', html.split('id="cap-ask"')[0])   # no cap asked
+        ticks = [dict(value=v, first=f) for v, f in re.findall(r'<input class="pick-row" type="checkbox" value="([^"]+)"( data-first)?', html)]
+        board = Path(__file__).resolve().parents[1] / "static/runs/board.js"
+        program = r"""
+const [file, values, picks] = process.argv.slice(1).map(JSON.parse), elements = new Map();
+function element(id) {
+  if (!elements.has(id)) elements.set(id, {dataset: {}, listeners: {}, textContent: '', hidden: false,
+    addEventListener(k, fn) { this.listeners[k] = fn; }, click() { this.listeners.click(); },
+    replaceChildren(...xs) { this.children = xs; }, showModal() {}, closest() { return null; }});
+  return elements.get(id);
+}
+element('#rerun-ask').dataset.where = 'this machine';
+const ticks = values.map(x => Object.assign(element(x.value), {value: x.value,
+  dataset: x.first ? {first: ''} : {}, getAttribute() { return 'Choose ' + x.value; }}));
+element('form').elements = {reason: {value: 'typed before'}};
+const source = require('node:fs').readFileSync(file, 'utf8');
+new Function('$', '$$', 'rows', 'document', 'nulliusFetch', 'URL', 'location',
+  source.slice(source.indexOf('  const ticks ='), source.lastIndexOf('  apply();')))(
+  element, s => s === '#trial-rows .pick-row' ? ticks : [], [], {createElement: () => ({})},
+  async () => ({ok: true, json: async () => ({ok: true})}), URL, {href: 'http://localhost/job/r1', assign() {}});
+const out = [];
+for (const pick of picks) {
+  ticks.forEach(x => { x.checked = pick.includes(x.value); });
+  element('#rerun-open').click();
+  out.push({head: element('#rerun-ask-h').textContent, go: element('[data-go]').textContent, reason: !element('[data-reason]').hidden,
+            names: (element('[data-names]').children || []).length, where: !element('p.muted').hidden,
+            typed: element('form').elements.reason.value});
+}
+process.stdout.write(JSON.stringify(out));
+"""
+        rest = [t["value"] for t in ticks if t["first"]]
+        picks = [rest, rest[:1], [trial_name(0), rest[0]], [trial_name(0)]]
+        got = json.loads(subprocess.run([node, "-e", program, json.dumps(str(board)), json.dumps(ticks), json.dumps(picks)],
+                                        capture_output=True, text=True, check=True, timeout=10).stdout)
+        short = dict(go="Run", reason=False, names=0, where=False, typed="")
+        self.assertEqual(got[0], dict(short, head="Run the 3 tasks not yet run, on this machine?"))
+        self.assertEqual(got[1], dict(short, head="Run the 1 task not yet run, on this machine?"))
+        self.assertEqual(got[2], dict(head="Run 2 tasks, 1 again", go="Run 2 tasks, 1 again", reason=True, names=2, where=True, typed=""))
+        self.assertEqual(got[3], dict(head="Run 1 task again", go="Run 1 task again", reason=True, names=1, where=True, typed=""))
+
     def test_while_a_part_runs_the_board_queues_its_tasks_and_says_not_run_for_the_rest(self):
         node = shutil.which("node")
         if not node:
