@@ -361,7 +361,7 @@ class TaskSetCommands(Scratch):
         error or a refusal, 3 for what is not found, and writes nothing."""
         cat = os.path.join(self.tmp, "catalogue")
         env = {"NULLIUS_CATALOGUE": cat, "NULLIUS_HOME": os.path.join(self.tmp, "profile")}
-        for sub in (("set",), ("set", "create"), ("set", "update"), ("set", "list"), ("set", "show"), ("set", "rename"),
+        for sub in (("set",), ("set", "create"), ("set", "list"), ("set", "show"), ("set", "rename"),
                     ("set", "delete"), ("set", "import"), ("units",)):
             with self.subTest(help=sub):
                 out = self.sh("standard.cli", *sub, "--help", env=env)
@@ -372,11 +372,12 @@ class TaskSetCommands(Scratch):
         listed = write_json(Path(self.tmp, "ten.txt"), "HumanEval/0\nHumanEval/1\n")
         cases = [
             (["set", "create", "humaneval"], 2, "usage:"),
-            (["set", "create", "humaneval", "a/b", "--dataset", "humaneval", "--units", listed], 2, "not a task set's name"),
+            (["set", "create", "humaneval", "..", "--dataset", "humaneval", "--units", listed], 2, "needs a letter or a digit"),
+            (["set", "show", "humaneval", "a/b"], 2, "not a task set's name"),
             (["set", "create", "humaneval", "ok", "--dataset", "nope", "--units", listed], 2, "no dataset 'nope'"),
             (["set", "create", "no-such-bench", "ok", "--dataset", "x", "--units", listed], 3, "no benchmark"),
             (["set", "show", "humaneval", "nowhere"], 3, "no task set 'nowhere'"),
-            (["set", "update", "humaneval", "nowhere", "--add", "HumanEval/2"], 3, "no task set 'nowhere'"),
+            (["set", "update", "humaneval", "nowhere", "--add", "HumanEval/2"], 2, "invalid choice: 'update'"),     # a set is frozen
             (["set", "rename", "humaneval", "nowhere", "elsewhere"], 3, "no task set 'nowhere'"),
             (["set", "rename", "humaneval", "nowhere"], 2, "usage:"),
             (["set", "delete", "humaneval", "nowhere"], 3, "no task set 'nowhere'"),
