@@ -726,6 +726,19 @@ class RateLimitsRetried(unittest.TestCase):
         # a cache written before a null model name read as none would give the runs list its None back
         self.assertGreaterEqual(int(parse.SCHEMA), 22)
 
+    def test_a_job_cached_before_its_own_agent_was_named_is_parsed_again(self):
+        # an OSWorld job from before is named by the benchmark's own agent it ran: a cache of either earlier
+        # shape (one without that name, one without the fields added since) keys on a signature that no longer matches
+        from nullius import workspace
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "result.json"), "w") as f:
+                f.write("{}")
+            now = workspace.signature(tmp)
+            for before in ("17", "22"):
+                with self.subTest(schema=before), mock.patch.object(parse, "SCHEMA", before):
+                    self.assertNotEqual(workspace.signature(tmp), now)
+        self.assertGreaterEqual(int(parse.SCHEMA), 23)
+
 class UnverifiedJobHasNoRate(unittest.TestCase):
     """A job nothing scored has no solve rate, not a rate of zero.
 
