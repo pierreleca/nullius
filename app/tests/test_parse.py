@@ -722,6 +722,10 @@ class RateLimitsRetried(unittest.TestCase):
         # the field would read every trial as unmeasured.
         self.assertGreaterEqual(int(parse.SCHEMA), 3)
 
+    def test_a_null_model_name_is_not_read_from_a_cache_of_the_earlier_shape(self):
+        # a cache written before a null model name read as none would give the runs list its None back
+        self.assertGreaterEqual(int(parse.SCHEMA), 22)
+
 class UnverifiedJobHasNoRate(unittest.TestCase):
     """A job nothing scored has no solve rate, not a rate of zero.
 
