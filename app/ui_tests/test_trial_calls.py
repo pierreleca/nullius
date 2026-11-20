@@ -83,7 +83,7 @@ class TrialCalls(unittest.TestCase):
         stack.enter_context(patch.object(workspace, "list_all", return_value=[self.ws]))
         stack.enter_context(patch.object(workspace, "job_index", return_value={}))
         stack.enter_context(patch.object(workspace, "load", side_effect=lambda home, name: self.ws if name == "active" else None))
-        stack.enter_context(patch.object(workspace, "load_jobs", side_effect=lambda ws, roots: [self.job, self.other]))
+        stack.enter_context(patch.object(workspace, "load_jobs", side_effect=lambda ws, roots, *_: [self.job, self.other]))
         self.client = web.app.test_client()
 
     def get(self, path, status=200, **kw):

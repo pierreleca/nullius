@@ -662,6 +662,9 @@ class Off(WithUpstream):
         self.assertFalse(os.path.exists(self.store(default)))      # the relay's own default: off
         normalized = lambda c: {k: 0.0 if k in ("t0", "t1") else v for k, v in c.items()}
         (a,), (b,), (c,) = off.calls("u0001"), whole.calls("u0001"), default.calls("u0001")
+        # every record holds the request's digest; keeping the exchange or not leaves it as it is
+        digests = {x["request"].pop("sha256") for x in (a, b, c)}
+        self.assertEqual(len(digests), 1)
         expected = {
             "t0": 0.0, "t1": 0.0, "path": "/chat/completions", "model": "m", "model_asked": "m", "status": 200,
             "request": {"n_messages": 4, "last": [{"role": "assistant", "content": ""}, {"role": "tool", "content": ""}],

@@ -228,7 +228,7 @@ async function render(noun, data) {
                     table = self.client.get(f"/job/{job.job_id}")
                 self.addCleanup(trial.close)
                 self.addCleanup(table.close)
-                title = trial.get_data(as_text=True).split('<div class="page-title trial-title">', 1)[1].split("</div>", 1)[0]
+                title = trial.get_data(as_text=True).split('<div class="page-head-sub">', 1)[1].split("</div>", 1)[0]
                 self.assertIn(f'title="What ended the agent\'s work">{label}</span>', unescape(title))
                 row = table.get_data(as_text=True).split('data-trial="t1"', 1)[1].split("</tr>", 1)[0]
                 self.assertIn(f'<span class="badge ended-by" title="What ended the agent\'s work">{label}</span>', unescape(row))

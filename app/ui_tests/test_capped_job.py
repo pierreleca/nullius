@@ -215,8 +215,8 @@ class RunFactsOnTheJobPage(unittest.TestCase):
         self.addCleanup(response.close)
         self.assertEqual(response.status_code, 200)
         html = response.get_data(as_text=True)
-        self.assertRegex(self.text(html, r'<th class="rowhead"[^>]*>Mean score</th>.*?</tr>'), r"^Mean score 0\.50 ")
-        self.assertEqual(self.text(html, r'<th class="rowhead"[^>]*>Mean over planned</th>.*?</tr>'), "Mean over planned 0.38")
+        self.assertRegex(self.text(html, r'<th class="[^"]*rowhead[^"]*"[^>]*>Mean score</th>.*?</tr>'), r"^Mean score 0\.50 ")
+        self.assertEqual(self.text(html, r'<th class="[^"]*rowhead[^"]*"[^>]*>Mean over planned</th>.*?</tr>'), "Mean over planned 0.38")
 
     def test_both_runs_list_views_show_the_planned_mean(self):
         response = self.client.get("/runs")
