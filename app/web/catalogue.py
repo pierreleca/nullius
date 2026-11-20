@@ -122,7 +122,7 @@ def benchmark_page(key):
 
 # --- a dataset's tasks: browsed, chosen and kept as a task set ---------------------------------
 
-# The listings being prepared, keyed by benchmark, dataset and options.
+# The listings being prepared, keyed by benchmark, resolved version, dataset and options.
 _PREPARING: dict = {}
 _PREPARING_LOCK = threading.Lock()
 
@@ -151,7 +151,7 @@ def _listing_options() -> dict:
 
 
 def _listing_key(bench: dict, dataset: str, options: dict):
-    return bench["key"], dataset, tuple(sorted(options.items()))
+    return bench["key"], standard_definitions.version_of(bench), dataset, tuple(sorted(options.items()))
 
 
 def _listing_state(bench: dict, dataset: str, options=None) -> dict:

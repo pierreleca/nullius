@@ -348,6 +348,39 @@ class AFirstListing(Case):
     fetches said; full, never started, with what it needs said; refused, why. No request starts a fetch or an
     install inside itself."""
 
+    def test_preparation_errors_belong_to_the_resolved_version(self):
+        from web import catalogue
+        versions = {v: dict(self.b, _version=v, _ref=f"described@{v}") for v in ("1", "2")}
+        def get(kind, ref, root=None):
+            return versions[ref.partition("@")[2] or "2"] if ref.startswith("described") else self.get_def(kind, ref, root)
+        self.stack.enter_context(patch.object(definitions, "get", get))
+        self.stack.enter_context(patch.object(units, "state", return_value={"state": "light", "fetch": [], "reason": ""}))
+        self.stack.enter_context(patch.dict(catalogue._PREPARING, {}, clear=True))
+        called = []
+        def make(bench, dataset, options=None):
+            called.append((bench["_version"], options))
+            if bench["_version"] == "1":
+                raise units.Refused("Version 1 is unavailable")
+        self.stack.enter_context(patch.object(units, "listing", make))
+        def join():
+            for job in list(catalogue._PREPARING.values()):
+                job["thread"].join(5)
+                self.assertFalse(job["thread"].is_alive())
+        self.addCleanup(join)
+        path = '/benchmarks/described/tasks/all/'
+        self.post(path + 'prepare?version=1&options={"mode":"short"}', {})
+        join()
+        failed = self.get(path + 'listing?version=1&options={"mode":"short"}').get_json()
+        self.assertEqual(failed["error"], "Version 1 is unavailable")
+        for suffix in ('', '&version=2'):
+            got = self.get(path + 'listing?options={"mode":"short"}' + suffix).get_json()
+            self.assertEqual((got["state"], got["error"], got["preparing"]), ("light", "", False))
+        self.post(path + 'prepare?options={"mode":"short"}', {})
+        join()
+        self.assertEqual(called, [("1", {"mode": "short"}), ("2", {"mode": "short"})])
+        self.assertEqual(self.get(path + 'listing?version=2&options={"mode":"short"}').get_json()["error"], "")
+        self.assertEqual(self.get(path + 'listing?version=1&options={"mode":"short"}').get_json()["error"], failed["error"])
+
     def no_fetch_no_install(self):
         def refuse(*a, **k):
             raise AssertionError("a request fetched, installed or started a driver")
