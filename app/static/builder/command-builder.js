@@ -773,7 +773,8 @@
     const page = document.getElementById('nb-tasks-list').content.firstElementChild.cloneNode(true);
     const base = `/benchmarks/${encodeURIComponent(b.key)}/tasks/${encodeURIComponent(id)}`;
     Object.assign(page.dataset, {listing: base + '/listing', prepare: base + '/prepare', rows: base + '/rows', csrf: schema.csrf || '',
-      local: schema.local ? 'true' : 'false', nouns: u.nouns, version: b.version || '', within: set ? set.name : ''});
+      local: schema.local ? 'true' : 'false', nouns: u.nouns, version: b.version || '', within: set ? set.name : '',
+      limit: rec.limit || '', options: JSON.stringify({...(rec.model_choice === 'leaderboard' ? (b.leaderboard || {}).bench_options : {}), ...rec.bench_options})});
     document.getElementById('nb-tasks-body').replaceChildren(page);
     document.getElementById('nb-tasks-title').textContent = 'Start with: ' + (set ? set.label : x.label);
     const was = (rec.start_with || {})[id];
@@ -788,6 +789,19 @@
     document.getElementById('nb-tasks-close').onclick = close;
     dialog.oncancel = e => { e.preventDefault(); close(); };
     dialog.showModal();
+  }
+  function dropStartTasks(rec, errors) {
+    let changed = false;
+    for (const e of errors || []) {
+      const chosen = (rec.start_with || {})[e.dataset];
+      if (!e.dropped || !Array.isArray(chosen)) continue;
+      const kept = chosen.filter(id => !e.dropped.includes(id));
+      if (kept.length === chosen.length) continue;
+      C.setStartWith(rec, e.dataset, kept);
+      window.nulliusNotify?.('Removed tasks outside the current plan: ' + e.dropped.join(', ') + '.');
+      changed = true;
+    }
+    return changed;
   }
   function standardForm(rec) {
     const st = C.standard(), b = C.standardBench(rec);
@@ -943,6 +957,10 @@
     const rec = r(), key = JSON.stringify(rec);
     if (key === runnerKey) return;
     runnerKey = key;
+    if (Object.values(rec.start_with || {}).some(Array.isArray)) {
+      runnerOut = {errors: [{step: S.dataset, message: 'Checking the tasks ticked.'}], notes: [], review: []};
+      if (step === REVIEW) renderForm();
+    }
     clearTimeout(runnerTimer);
     runnerTimer = setTimeout(async () => {
       let out;
@@ -954,8 +972,9 @@
       runnerServed = accepted.served;
       if (step === S.model) syncServed();
       if (!accepted.current) return;
+      const dropped = dropStartTasks(r(), out.errors);
       runnerOut = out;
-      if (step === REVIEW) renderForm();
+      if (step === REVIEW || dropped && step === S.dataset) renderForm();
       refreshPlan();
     }, 120);
   }

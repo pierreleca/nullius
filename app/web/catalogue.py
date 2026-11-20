@@ -122,7 +122,7 @@ def benchmark_page(key):
 
 # --- a dataset's tasks: browsed, chosen and kept as a task set ---------------------------------
 
-# the listings being made out of a request: {(benchmark, dataset): {"thread", "error"}}
+# The listings being prepared, keyed by benchmark, resolved version, dataset and options.
 _PREPARING: dict = {}
 _PREPARING_LOCK = threading.Lock()
 
@@ -130,7 +130,7 @@ _PREPARING_LOCK = threading.Lock()
 def _std_dataset(key: str, dataset: str, version: str = ""):
     """(the standard's definition of ``key``, at ``version`` or its default, and its dataset) or a 404. The definition
     goes to the listing as the command line gives it, so both read the same cached listing."""
-    if version and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", version):
+    if version and not standard_definitions._VERSION.match(version):
         abort(404)
     bench = standard_definitions.get("benchmark", f"{key}@{version}" if version else key)
     ds = next((d for d in (bench or {}).get("datasets") or [] if d["id"] == dataset), None)
@@ -139,12 +139,27 @@ def _std_dataset(key: str, dataset: str, version: str = ""):
     return bench, ds
 
 
-def _listing_state(bench: dict, dataset: str) -> dict:
+def _listing_options() -> dict:
+    """The benchmark options of the plan the picker lists."""
+    try:
+        options = json.loads(request.args.get("options", "{}"))
+    except ValueError:
+        abort(400)
+    if not isinstance(options, dict) or not all(isinstance(v, str) for v in options.values()):
+        abort(400)
+    return options
+
+
+def _listing_key(bench: dict, dataset: str, options: dict):
+    return bench["key"], standard_definitions.version_of(bench), dataset, tuple(sorted(options.items()))
+
+
+def _listing_state(bench: dict, dataset: str, options=None) -> dict:
     """The state function's answer; whether a listing is being made here now, and why the last one failed; and
     ``say``, the line the page shows while the listing is not there."""
-    got = units.state(bench, dataset)
+    got = units.state(bench, dataset, options)
     with _PREPARING_LOCK:
-        job = _PREPARING.get((bench["key"], dataset)) or {}
+        job = _PREPARING.get(_listing_key(bench, dataset, options or {})) or {}
     alive = bool(job.get("thread") and job["thread"].is_alive())
     got = dict(got, preparing=alive and got["state"] != "cached", error="" if alive else job.get("error", ""))
     nouns = (bench.get("units") or {}).get("nouns", "tasks")
@@ -197,7 +212,8 @@ def benchmark_tasks_listing(key, dataset):
     """One page of the dataset's tasks for a search and category values, once the listing is in the cache; before
     that, the state function's answer alone: this request never makes a listing."""
     bench, _ = _std_dataset(key, dataset, request.args.get("version", ""))
-    st = _listing_state(bench, dataset)
+    options = _listing_options()
+    st = _listing_state(bench, dataset, options)
     if st["state"] != "cached":
         return jsonify(ok=True, ready=False, **st)
     cats: dict = {}
@@ -206,6 +222,10 @@ def benchmark_tasks_listing(key, dataset):
         if eq and field_ and value:
             cats.setdefault(field_, []).append(value)
     page = request.args.get("page", "1")
+    limit = request.args.get("limit", "")
+    if limit and (not limit.isdigit() or int(limit) < 1):
+        return jsonify(ok=False, error="The task limit must be a whole number above zero."), 400
+    limit = int(limit) if limit else None
     # ``within=NAME``: the tasks of that set alone, as the run builder's start on specific tasks lists them
     within = None
     if request.args.get("within"):
@@ -216,10 +236,10 @@ def benchmark_tasks_listing(key, dataset):
         within = sets.latest(entry)["units"]
     try:
         if request.args.get("ids"):           # every match's id, for "select the N that match"
-            got = units.find(bench, dataset, search=request.args.get("q", ""), categories=cats, size=None, within=within)
+            got = units.find(bench, dataset, options, search=request.args.get("q", ""), categories=cats, size=None, within=within, limit=limit)
             return jsonify(ok=True, ready=True, total=got["total"], ids=[t["id"] for t in got["tasks"]])
-        got = units.find(bench, dataset, search=request.args.get("q", ""), categories=cats,
-                         page=int(page) if page.isdigit() and int(page) >= 1 else 1, within=within)
+        got = units.find(bench, dataset, options, search=request.args.get("q", ""), categories=cats,
+                         page=int(page) if page.isdigit() and int(page) >= 1 else 1, within=within, limit=limit)
     except units.Refused as e:
         return jsonify(ok=False, error=str(e)), 400
     return jsonify(ok=True, ready=True, **got)
@@ -233,21 +253,23 @@ def benchmark_tasks_prepare(key, dataset):
     if not settings_web._local_client():
         abort(403, description="Listings are prepared from a browser on the application host only.")
     bench, _ = _std_dataset(key, dataset, request.args.get("version", ""))
-    st = units.state(bench, dataset)
+    options = _listing_options()
+    identity = _listing_key(bench, dataset, options)
+    st = units.state(bench, dataset, options)
     if st["state"] != "light":
-        return jsonify(ok=st["state"] == "cached", **_listing_state(bench, dataset))
+        return jsonify(ok=st["state"] == "cached", **_listing_state(bench, dataset, options))
 
     def make():
         try:
-            units.listing(bench, dataset)
+            units.listing(bench, dataset, options)
         except (units.Refused, OSError) as e:
-            _PREPARING[(key, dataset)]["error"] = str(e)
+            _PREPARING[identity]["error"] = str(e)
     with _PREPARING_LOCK:
-        job = _PREPARING.get((key, dataset))
+        job = _PREPARING.get(identity)
         if not (job and job["thread"].is_alive()):
-            job = _PREPARING[(key, dataset)] = {"thread": threading.Thread(target=make, daemon=True), "error": ""}
+            job = _PREPARING[identity] = {"thread": threading.Thread(target=make, daemon=True), "error": ""}
             job["thread"].start()
-    return jsonify(ok=True, **_listing_state(bench, dataset))
+    return jsonify(ok=True, **_listing_state(bench, dataset, options))
 
 
 @app.route("/benchmarks/<key>/tasks/<dataset>/rows", methods=["POST"])
@@ -255,10 +277,11 @@ def benchmark_tasks_rows(key, dataset):
     """The chosen ids as rows (show selected, ids pasted): each with its title and categories when the listing is in
     the cache, and ``unknown``, the ids it does not list; without the listing, the ids alone."""
     bench, _ = _std_dataset(key, dataset, request.args.get("version", ""))
+    options = _listing_options()
     ids = [str(u) for u in (request.get_json(silent=True) or {}).get("units") or [] if isinstance(u, str)]
-    if units.state(bench, dataset)["state"] != "cached":
+    if units.state(bench, dataset, options)["state"] != "cached":
         return jsonify(ok=True, ready=False, tasks=[{"id": u, "title": "", "text": "", "categories": {}} for u in ids], unknown=[])
-    have = {t["id"]: t for t in units.listing(bench, dataset)["tasks"]}
+    have = {t["id"]: t for t in units.listing(bench, dataset, options)["tasks"]}
     return jsonify(ok=True, ready=True, tasks=[have[u] for u in ids if u in have], unknown=[u for u in ids if u not in have])
 
 

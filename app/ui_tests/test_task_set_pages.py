@@ -22,7 +22,7 @@ from unittest.mock import patch
 
 from nullius import workspace
 from nullius.standard import definitions, install, job, jsonl, recipe, sets, units
-from tests.test_standard_units_listing import DRIVER
+from tests.test_standard_units_listing import DRIVER, MODE
 from .test_routes import web
 
 FIXTURES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tests", "fixtures", "standard", "catalogue")
@@ -84,6 +84,84 @@ class Case(unittest.TestCase):
 
 
 class TheTaskFilters(unittest.TestCase):
+    def test_detached_responses_cannot_change_another_picker(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node is required for the task picker")
+        script = Path(__file__).resolve().parents[1] / "static/catalogue/tasks.js"
+        program = r"""
+const assert = require('node:assert/strict');
+const source = require('node:fs').readFileSync(process.argv[1], 'utf8');
+async function check(rows, detached, failed) {
+  let active;
+  const requests = [], callbacks = {a: [], b: []};
+  function picker(name) {
+    const elements = new Map();
+    const element = id => {
+      if (['tasks-chosen-ids', 'tasks-savebar', 'tasks-create', 'tasks-to-save'].includes(id)) return null;
+      if (!elements.has(id)) elements.set(id, {
+        innerHTML: '', textContent: '', listeners: {}, attributes: {}, classList: {toggle() {}},
+        addEventListener(type, callback) { this.listeners[type] = callback; },
+        setAttribute(key, value) { this.attributes[key] = value; },
+        querySelector() { return {disabled: false}; }
+      });
+      return elements.get(id);
+    };
+    return {isConnected: true, element,
+      dataset: {writable: 'true', listing: '/' + name, rows: '/' + name + '/rows'},
+      querySelector: selector => selector.startsWith('#') ? element(selector.slice(1)) : null,
+      querySelectorAll: () => []};
+  }
+  const scope = {
+    document: {getElementById: id => id === 'tasks-page' ? null : active.element(id),
+      querySelector: () => null, querySelectorAll: () => []},
+    URLSearchParams, window: {}, setTimeout, clearTimeout,
+    nulliusFetch: url => new Promise((resolve, reject) => requests.push({url, resolve, reject}))
+  };
+  require('node:vm').runInNewContext(source, scope);
+  async function flush() { for (let i = 0; i < 20; i++) await Promise.resolve(); }
+  function answer(request, id) {
+    request.resolve({json: async () => ({ok: true, ready: true, total: 1, of: 1,
+      page: 1, pages: 1, described: true, categories: {}, unknown: [], tasks: [{id}]})});
+    return flush();
+  }
+  const a = active = picker('a');
+  scope.nulliusTasks(a, {chosen: ['task-a'], onChange: ids => callbacks.a.push(ids)});
+  let pending = requests[0];
+  if (rows) {
+    await answer(pending, 'task-a');
+    a.element('tasks-show').listeners.click();
+    await answer(requests[1], 'task-a');
+    pending = requests[2];
+    assert.equal(pending.url, '/a/rows');
+  }
+  a.isConnected = !detached;
+  const before = a.element('tasks-rows').innerHTML;
+  const b = active = picker('b');
+  scope.nulliusTasks(b, {onChange: ids => callbacks.b.push(ids)});
+  await answer(requests.at(-1), 'task-b');
+  if (failed) { pending.reject(Error('unavailable')); await flush(); }
+  else await answer(pending, 'late-a');
+  assert.ok(b.element('tasks-rows').innerHTML.includes('data-id="task-b"'));
+  assert.equal(b.element('tasks-state').textContent, '');
+  if (detached) {
+    assert.equal(a.element('tasks-rows').innerHTML, before);
+    assert.equal(a.element('tasks-state').textContent, '');
+  }
+  const box = {checked: true, closest: () => ({dataset: {id: 'task-b'}})};
+  b.element('tasks-rows').listeners.change({target: {closest: () => box}});
+  assert.equal(JSON.stringify(callbacks.b), '[["task-b"]]');
+  assert.equal(callbacks.a.length, 0);
+}
+(async () => {
+  for (const rows of [false, true]) for (const detached of [false, true])
+    for (const failed of [false, true]) await check(rows, detached, failed);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        got = subprocess.run([node, "-e", program, str(script)], stdin=subprocess.DEVNULL,
+                             capture_output=True, text=True, timeout=10)
+        self.assertEqual(got.returncode, 0, got.stderr)
+
     def filtered(self, action):
         node = shutil.which("node")
         if not node:
@@ -101,6 +179,8 @@ function element(id) {
   });
   return elements.get(id);
 }
+element('tasks-page').querySelector = s => s.startsWith('#') ? element(s.slice(1)) : null;
+element('tasks-page').querySelectorAll = () => [];
 element('tasks-page').dataset = {set: 'dev', writable: 'true', listing: '/listing', rows: '/rows'};
 element('tasks-chosen-ids').textContent = '["alpha","beta"]';
 const tasks = ['alpha', 'beta'].map(id => ({id, title: id, categories: {kind: id}}));
@@ -154,6 +234,40 @@ async function flush() { for (let n = 0; n < 20; n++) await Promise.resolve(); }
 
 
 class TheTasksPagesData(Case):
+    def test_task_pages_accept_the_definitions_version_syntax(self):
+        versions = ["1.0+fix", "A_b-c.d+2", "v" + "0" * 39]
+        spec = {k: v for k, v in self.fake.items() if not k.startswith("_")}
+        spec.update(upstream={"license": "unknown"}, default=versions[0], versions={v: {} for v in versions})
+        self.assertEqual(definitions.problems(spec, "benchmark"), [])
+        root = self.tmp / "versions"
+        folder = root / "benchmarks" / "fakebench"
+        folder.mkdir(parents=True)
+        (folder / "standard.json").write_text(json.dumps(spec))
+        self.stack.enter_context(patch.object(definitions, "get", lambda kind, ref, root_=None: _GET(kind, ref, str(root))))
+        for version in versions:
+            with self.subTest(version=version):
+                self.assertEqual(definitions.get("benchmark", f"fakebench@{version}")["_version"], version)
+                response = self.client.get("/benchmarks/fakebench/tasks/all", query_string={"version": version})
+                self.addCleanup(response.close)
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(f'data-version="{version}"', response.get_data(as_text=True))
+        self.get("/benchmarks/fakebench/tasks/all?version=unknown", status=404)
+
+    def test_the_picker_lists_the_limited_plan_under_its_benchmark_options(self):
+        units.listing(self.fake, "all")
+        path = "/benchmarks/fakebench/tasks/all/listing?limit=1"
+        self.assertEqual([t["id"] for t in self.get(path).get_json()["tasks"]], ["good"])
+        self.assertEqual(self.get(path + "&q=wrong&ids=1").get_json()["ids"], [])
+        self.b["options"] = MODE
+        units.listing(self.b, "all", {"mode": "short"})
+        self.assertFalse(self.listing()["ready"])
+        path = '/benchmarks/described/tasks/all/listing?options={"mode":"short"}&limit=10'
+        got = self.get(path).get_json()
+        self.assertEqual(([t["id"] for t in got["tasks"]], got["of"]), ([f"t{i:03}" for i in range(10)], 10))
+        self.assertEqual(self.get(path + "&q=t019&ids=1").get_json()["ids"], [])
+        got = self.post('/benchmarks/described/tasks/all/rows?options={"mode":"short"}', {"units": ["t007", "t024"]})
+        self.assertEqual(([t["id"] for t in got["tasks"]], got["unknown"]), (["t007"], ["t024"]))
+
     def test_each_search_category_and_page_gives_what_the_listings_function_gives(self):
         units.listing(self.b, "all")                         # in the cache: the page reads it
         before = self.starts()
@@ -216,6 +330,8 @@ function element(id) {
   });
   return elements.get(id);
 }
+element('tasks-page').querySelector = s => s.startsWith('#') ? element(s.slice(1)) : null;
+element('tasks-page').querySelectorAll = () => [];
 element('tasks-page').dataset = {writable: 'true', listing: '/listing', rows: '/rows'};
 const long = 'Open the report and ' + 'make the second table match the first one, '.repeat(6);
 const tasks = [{id: 'os__a', title: long.slice(0, 99) + '…', text: long, categories: {}}, {id: 'b', title: '', text: '', categories: {}}];
@@ -250,6 +366,39 @@ class AFirstListing(Case):
     """Each answer of the state function: in the cache, shown at once; light, made out of the request with what it
     fetches said; full, never started, with what it needs said; refused, why. No request starts a fetch or an
     install inside itself."""
+
+    def test_preparation_errors_belong_to_the_resolved_version(self):
+        from web import catalogue
+        versions = {v: dict(self.b, _version=v, _ref=f"described@{v}") for v in ("1", "2")}
+        def get(kind, ref, root=None):
+            return versions[ref.partition("@")[2] or "2"] if ref.startswith("described") else self.get_def(kind, ref, root)
+        self.stack.enter_context(patch.object(definitions, "get", get))
+        self.stack.enter_context(patch.object(units, "state", return_value={"state": "light", "fetch": [], "reason": ""}))
+        self.stack.enter_context(patch.dict(catalogue._PREPARING, {}, clear=True))
+        called = []
+        def make(bench, dataset, options=None):
+            called.append((bench["_version"], options))
+            if bench["_version"] == "1":
+                raise units.Refused("Version 1 is unavailable")
+        self.stack.enter_context(patch.object(units, "listing", make))
+        def join():
+            for job in list(catalogue._PREPARING.values()):
+                job["thread"].join(5)
+                self.assertFalse(job["thread"].is_alive())
+        self.addCleanup(join)
+        path = '/benchmarks/described/tasks/all/'
+        self.post(path + 'prepare?version=1&options={"mode":"short"}', {})
+        join()
+        failed = self.get(path + 'listing?version=1&options={"mode":"short"}').get_json()
+        self.assertEqual(failed["error"], "Version 1 is unavailable")
+        for suffix in ('', '&version=2'):
+            got = self.get(path + 'listing?options={"mode":"short"}' + suffix).get_json()
+            self.assertEqual((got["state"], got["error"], got["preparing"]), ("light", "", False))
+        self.post(path + 'prepare?options={"mode":"short"}', {})
+        join()
+        self.assertEqual(called, [("1", {"mode": "short"}), ("2", {"mode": "short"})])
+        self.assertEqual(self.get(path + 'listing?version=2&options={"mode":"short"}').get_json()["error"], "")
+        self.assertEqual(self.get(path + 'listing?version=1&options={"mode":"short"}').get_json()["error"], failed["error"])
 
     def no_fetch_no_install(self):
         def refuse(*a, **k):
@@ -641,6 +790,7 @@ class BuilderCase(Case):
         super().setUp()
         load = definitions.load
         self.stack.enter_context(patch.object(definitions, "load", lambda kind, root=None, every=False: load(kind, FIXTURES, every=every)))
+        units.listing(self.fake, "all")
         sets.create(self.fake, "dev", dataset="all", units=["good", "wrong"], description="two of them")
 
 
@@ -665,6 +815,65 @@ class TheBuilder(BuilderCase):
 class TheDatasetStep(BuilderCase):
     """Which tasks? and Start with, under the chosen datasets: the dataset's name in their titles only when several
     are chosen."""
+
+    def test_the_picker_and_selection_follow_limits_and_benchmark_options(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node is required for the dataset step")
+        html = self.get("/new-run").get_data(as_text=True)
+        schema = json.loads(re.search(r'<script id="nb-schema" type="application/json">(.*?)</script>', html, re.S).group(1))
+        folder = Path(__file__).resolve().parents[1] / "static/builder"
+        page = (folder / "command-builder.js").read_text()
+        cut = lambda start, end: page[page.index(start):page.index(end, page.index(start))]
+        program = (f"const schema={json.dumps(schema)};const C=require({json.dumps(str(folder / 'command-builder-core.js'))})(schema);\n"
+                   + cut("  function pickTasks(", "  function standardForm(")
+                   + cut("  function compileRunner(", "  // the number of units"))
+        program += r"""
+const assert = require('node:assert/strict'), timers = [], notices = [];
+const rec = C.createStandard('fakebench'), r = () => rec;
+const S = {model: 3, dataset: 2}, REVIEW = 6, step = S.dataset;
+const unitsOf = () => ({nouns: 'tasks'}), window = {nulliusNotify: text => notices.push(text)};
+let runnerKey = '', runnerOut, runnerTimer, runnerServed, result;
+const setTimeout = f => { timers.push(f); return timers.length; }, clearTimeout = () => {};
+const refreshPlan = () => {}, renderForm = () => {};
+const acceptCompile = (rec, served, out, key, current) => ({served, current: key === current && key === JSON.stringify(rec)});
+const nulliusFetch = async (url, args) => {
+  assert.equal(JSON.parse(args.body).recipe.limit, rec.limit);
+  return {json: async () => result};
+};
+const mount = {dataset: {}}, dialog = {showModal() {}}, elements = {
+  'nb-tasks': dialog, 'nb-tasks-list': {content: {firstElementChild: {cloneNode: () => mount}}},
+  'nb-tasks-body': {replaceChildren: p => assert.equal(p, mount)}, 'nb-tasks-title': {},
+  'nb-tasks-close': {}, 'nb-tasks-done': {}
+};
+const document = {getElementById: id => elements[id]};
+let picked;
+globalThis.nulliusTasks = (p, options) => { picked = options; };
+(async () => {
+  rec.limit = 2; rec.bench_options = {mode: 'short'};
+  C.setStartWith(rec, 'all', ['good', 'wrong']);
+  pickTasks('all');
+  assert.equal(mount.dataset.limit, 2);
+  assert.deepEqual(JSON.parse(mount.dataset.options), {mode: 'short'});
+  assert.deepEqual(picked.chosen, ['good', 'wrong']);
+  for (const change of ['limit', 'option']) {
+    C.setStartWith(rec, 'all', ['good', 'wrong']);
+    if (change === 'limit') rec.limit = 1;
+    else rec.bench_options.mode = 'long';
+    result = {errors: [{dataset: 'all', dropped: ['wrong'], message: 'Outside the plan.'}]};
+    compileRunner();
+    assert.equal(runnerOut.errors[0].message, 'Checking the tasks ticked.');
+    await timers.shift()();
+    assert.deepEqual(rec.start_with.all, ['good']);
+    assert.equal(notices.at(-1), 'Removed tasks outside the current plan: wrong.');
+  }
+  C.setStartWith(rec, 'all', ['wrong']);
+  compileRunner(); await timers.shift()();
+  assert.deepEqual(rec.start_with.all, []);
+})().catch(e => { console.error(e); process.exitCode = 1; });
+"""
+        got = subprocess.run([node, "-e", program], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
+        self.assertEqual(got.returncode, 0, got.stderr)
 
     def test_the_titles_name_the_dataset_only_when_several_are_chosen(self):
         node = shutil.which("node")
