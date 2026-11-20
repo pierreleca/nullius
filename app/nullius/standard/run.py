@@ -2210,13 +2210,15 @@ class Run:
         if not self.base:
             return None                          # a control with no judge: no model is called
         record = os.path.join(trial, ".work", "relay")
+        # whether the relay keeps its agent's calls whole, and its bound: the class's defaults for a stand-in of a run
+        keep = {"exchanges": getattr(self, "exchanges", Run.exchanges),
+                "exchanges_max_mb": getattr(self, "exchanges_max_mb", Run.exchanges_max_mb)}
         side = tuple((self.other.get("model") or {}).get("side_models") or ())
         key_header = self.key_header
         if self.backend in ("local", "boat") and not getattr(self, "relay_container", False):     # boat: the agent reaches it through its VM's tunnel
             rl = relay.Relay(self.base, self.key, record, prices=getattr(self, "prices", None), model=self.model, side_models=side,
                              key_header=key_header, ledger=self.ledger_file(), serving=getattr(self, "serving", None),
-                             timeout=self.call_seconds, max_calls=self.max_calls, exchanges=self.exchanges,
-                             exchanges_max_mb=self.exchanges_max_mb).start()
+                             timeout=self.call_seconds, max_calls=self.max_calls, **keep).start()
             rl.unit_url = rl.url(tag)
             return rl
         routes = {tag + "-judge": self.judge_model} if self.judge_model else {}
@@ -2229,7 +2231,7 @@ class Run:
                                 routes=routes, side_models=side, key_header=key_header,
                                 prices=price_list.given(self.models_called(), getattr(self, "prices", None)),
                                 hosts=door.hosts if door else None, ledger=self.ledger_file(),
-                                serving=self.serving, max_calls=self.max_calls, timeout=self.call_seconds).start()
+                                serving=self.serving, max_calls=self.max_calls, timeout=self.call_seconds, **keep).start()
             rl.unit_url = rl.url(tag)  # driver and agent run on this host, outside the relay container
             return rl
         doors, listeners = [], []
@@ -2256,8 +2258,7 @@ class Run:
                             prices=price_list.given(self.models_called(), getattr(self, "prices", None)),   # a sidecar's argv: its models' rows
                             servers=self.agent_servers(env_def), doors=doors, hosts=door.hosts if door else None,
                             ledger=self.ledger_file(), serving=getattr(self, "serving", None), max_calls=self.max_calls,
-                            exchanges=self.exchanges, exchanges_max_mb=self.exchanges_max_mb,
-                            timeout=self.call_seconds if self.call_seconds != relay.TIMEOUT else None,
+                            **keep, timeout=self.call_seconds if self.call_seconds != relay.TIMEOUT else None,
                             network_probe=probe, probe_now=bool(probe) and self.first_probe())
         rl.mcp_listeners = listeners
         try:

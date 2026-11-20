@@ -777,6 +777,28 @@ class TheSidecar(WithUpstream):
         (started,) = [a for a in ran if a[:1] == ["run"]]
         self.assertEqual(started[started.index("--exchanges") + 1:started.index("--exchanges") + 4], ["whole", "--exchanges-max-mb", "32"])
 
+    def test_a_relay_container_beside_local_processes_is_given_them(self):
+        r = run.Run.__new__(run.Run)
+        r.base, r.key, r.model, r.name, r.image, r.key_header = "http://b", "k", "m", "job", "img", "authorization"
+        r.other, r.judge_model, r.simulator_model, r.backend, r.relay_container = {"_kind": "agent"}, "", "", "local", True
+        r.serving, r.max_calls, r.call_seconds, r.exchanges, r.exchanges_max_mb = {}, None, relay.TIMEOUT, "text", 64
+        made = {}
+
+        class Unit:
+            def __init__(self, *args, **kw):
+                made.update(kw)
+
+            def start(self):
+                return self
+
+            def url(self, tag):
+                return "http://relay/" + tag
+        with mock.patch.object(container, "Unit", Unit), mock.patch.object(run.Run, "ledger_file", return_value=None), \
+                mock.patch.object(run.Run, "models_called", return_value=[]):
+            got = r.unit_relay("u0", os.path.join(self.tmp, "trial"), {})
+        self.assertEqual(got.unit_url, "http://relay/u0")
+        self.assertEqual((made["exchanges"], made["exchanges_max_mb"]), ("text", 64))
+
     def test_the_relays_own_command_takes_them(self):
         """The sidecar's process: given ``text``, it keeps the call and none of its pictures' bytes."""
         key, record = os.path.join(self.tmp, "key"), os.path.join(self.tmp, "rec")
