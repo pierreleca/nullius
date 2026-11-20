@@ -529,12 +529,14 @@
     if ((rec.backend || 'local') === 'container' && chosen.length && chosen.every(o => o.setup)) return '';
     const reqs = need.map(n => [n, (b.host || {})[n]]).filter(([, r]) => r);
     const local = ((schema.standardHere || {}).host || {})[b.key] || {};
+    const lacks = [];                     // a chosen machine known to lack one: said once, under the requirements
     return reqs.map(([name, req]) => {
       const lines = req.install || [];
       const machines = C.whereList(rec);
       const rows = machines.map(w => {
         const st = hostState[b.key + ':' + w + ':' + name] || (w === 'local' ? {missing: local[name] ? {[name]: local[name]} : {}} : null);
         const missing = st && st.missing && st.missing[name];
+        if (missing && missing.length) lacks.push(`${w === 'local' ? 'This machine' : C.machineLabel(w)} lacks ${req.label} (${missing.join(', ')})`);
         const state = !st ? 'Not checked' : st.error ? st.error : missing && missing.length ? 'Missing' : 'Ready';
         const attrs = `data-hostreq-name="${esc(name)}"`;
         return `<div class="std-hostreq-row">${machines.length > 1 || w !== 'local' ? `<strong>${esc(w === 'local' ? 'This machine' : C.machineLabel(w))}</strong>` : ''}`
@@ -546,7 +548,7 @@
       }).join('');
       return `<div class="nb-sectionhead std-wherehead"><h3>${esc(req.label)}</h3></div><div class="std-hostreq">${rows}`
         + (lines.length ? `<details><summary>Install manually</summary><div class="std-code"><div class="std-code-head"><span></span><button type="button" class="std-copy" data-copy-code>Copy</button></div><pre><code>${esc(lines.join('\n'))}</code></pre></div></details>` : '') + '</div>';
-    }).join('');
+    }).join('') + (lacks.length ? `<p class="nb-note nb-error std-hostreq-lacks" role="status">${esc(lacks.join('; '))}: ${esc(b.label)} cannot run there. Run waits until it is there.</p>` : '');
   }
   async function hostReq(entry, what, name) {
     const rec = r(), b = C.standardBench(rec), key = b.key + ':' + entry + ':' + name;

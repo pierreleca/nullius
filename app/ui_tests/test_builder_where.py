@@ -99,6 +99,14 @@ class StandardWhere(CompilerCase):
         self.assertIn("OSWorld starts each task&#39;s VM in it", html)
         self.assertIn('<input type="checkbox" data-std-unsandboxed > Run it as me, not sandboxed', html)     # never ticked for the person
 
+    def test_a_machine_known_to_lack_a_requirement_is_refused_on_the_step_with_what_it_lacks(self):
+        lacks = self.draw(None, host={"osworld1": {"docker": ["docker not on PATH"]}})["osworld1 local"]
+        self.assertIn("This machine lacks Docker for the tasks&#39; VMs (docker not on PATH): OSWorld1 cannot run there. Run waits until it is there.", lacks)
+        self.assertEqual(lacks.count("std-hostreq-lacks"), 1)
+        for name, html in self.draw(None).items():          # nothing known to be missing: nothing said
+            with self.subTest(name):
+                self.assertNotIn("std-hostreq-lacks", html)
+
     def test_every_standard_benchmark_draws_its_where_step_and_says_why_docker_is_not_offered_once(self):
         missing, here = self.draw("docker is not installed"), self.draw(None)
         self.assertEqual(len(missing), 2 * len(self.schema["standard"]["benchmarks"]))
