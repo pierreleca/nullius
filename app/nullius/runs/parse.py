@@ -421,7 +421,8 @@ class Job:
     # job from before labels) and id, its benchmark, and ``units``, its number of ids. {} for every other job.
     task_set: dict = field(default_factory=dict)
     # A Nullius standard job planned on a whole and begun on a part of it (config ``standard.start_with``): how the
-    # part was named, ``by`` count, file or set, and ``name`` (the file's, or the set's label; "" for a count),
+    # part was named, ``by`` count, file, set or ids (named one by one), and ``name`` (the file's, the set's label,
+    # "the tasks chosen" for ids; "" for a count),
     # and ``units``, the part's number of units. {} for every other job: the plan is then the job's from the start.
     start_with: dict = field(default_factory=dict)
     # Each time chosen trials of a Nullius standard job were run again in it (``result.json`` ``reruns``,
@@ -1203,9 +1204,10 @@ def parse_job(job_dir: str, reuse=None, trials: bool = True) -> Job:
     sw = std.get("start_with") if isinstance(std.get("start_with"), dict) else {}
     if isinstance(sw.get("units"), list):
         src = sw.get("units_file") if isinstance(sw.get("units_file"), dict) else sw.get("task_set") if isinstance(sw.get("task_set"), dict) else {}
-        by = "file" if sw.get("units_file") else "set" if sw.get("task_set") else "count"
+        by = "file" if sw.get("units_file") else "set" if sw.get("task_set") else "count" if "count" in sw else "ids"
         job.start_with = {"by": by, "units": len(sw["units"]),
-                          "name": (str(src.get("label") or src.get("name") or "") if by == "set" else str(src.get("name") or ""))}
+                          "name": (str(src.get("label") or src.get("name") or "") if by == "set" else "the tasks chosen" if by == "ids"
+                                   else str(src.get("name") or ""))}
     job.budget = _budget(res.get("budget"))
     job.identity = identity_of(cfg, res, job.agent_version)
     job.reruns = _reruns(res)

@@ -1307,8 +1307,9 @@ class Run:
                 return None, (f"--start-with {n}: more {words['nouns']} than the plan holds, {len(plan)} "
                               f"{many(len(plan))} of {self.ds['id']}")
             return plan[:n], ""
-        source = given.get("units_file") or given.get("task_set") or {}
-        named = (f"set:{source['name']}" if given.get("task_set") else source.get("name", ""))
+        source = given.get("units_file") or given.get("task_set") or ({"units": given["ids"]} if "ids" in given else {})
+        named = (f"set:{source['name']}" if given.get("task_set") else ("ids:" + ",".join(given["ids"][:3]) + (",..." if len(given["ids"]) > 3 else "")) if "ids" in given
+                 else source.get("name", ""))
         held = set(plan)
         outside = [u for u in source.get("units") or [] if u not in held]
         if outside:
@@ -1319,11 +1320,11 @@ class Run:
 
     def part_record(self, part: List[str]) -> dict:
         """What the job's config keeps of the part it began with (``standard.start_with``): how it was named -
-        a count, a file (its name, sha256 and units) or a task set (``sets.record``) - and its units, in the
-        plan's order."""
+        a count, a file (its name, sha256 and units) or a task set (``sets.record``); ids named on the command
+        line, nothing more - and its units, in the plan's order."""
         given = self.start_with or {}
         how = ({"count": given["count"]} if "count" in given else {"units_file": given["units_file"]} if given.get("units_file")
-               else {"task_set": given["task_set"]})
+               else {"task_set": given["task_set"]} if given.get("task_set") else {})
         return dict(how, units=list(part))
 
     def run_units(self, work: list, write: Callable[[List[dict], Optional[dict]], None], first=None) -> tuple:

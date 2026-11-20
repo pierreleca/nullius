@@ -14,7 +14,7 @@
     PYTHONPATH=app python3 -m nullius.standard.cli merge JOB_DIR... -o OUT [--force]
     PYTHONPATH=app python3 -m nullius.standard.cli set create|list|show|rename|delete|import ...
     PYTHONPATH=app python3 -m nullius.standard.cli run ... --set NAME
-    PYTHONPATH=app python3 -m nullius.standard.cli run ... --start-with N|FILE|set:NAME
+    PYTHONPATH=app python3 -m nullius.standard.cli run ... --start-with N|FILE|set:NAME|ids:ID,ID...
     PYTHONPATH=app python3 -m nullius.standard.cli units BENCHMARK --dataset D [--search TEXT] [--category FIELD=VALUE ...] [--json]
     PYTHONPATH=app python3 -m nullius.standard.cli rerun JOB_DIR (--unit ID ... | --units FILE | --unfinished | --next N | --set NAME) [--reason TEXT] [-j N] [--retries N] [--max-usd USD]
     PYTHONPATH=app python3 -m nullius.standard.cli fidelity AGENT --model M [--provider P] [--option NAME=VALUE ...] [--passes N] --unsandboxed
@@ -630,12 +630,21 @@ def cmd_run(a):
 
 def start_with(bench: dict, value: str) -> dict:
     """``run --start-with``: the part a run begins with (``run.Run``'s ``start_with``). A whole number is a count,
-    ``set:NAME`` a task set of the benchmark, anything else a file of ids (``run.units_file``)."""
+    ``set:NAME`` a task set of the benchmark, ``ids:ID,ID,...`` the units named there (the run builder's form),
+    anything else a file of ids (``run.units_file``)."""
     value = value.strip()
     if value.isdigit():
         if int(value) < 1:
             raise run.Refused(f"--start-with {value}: begin with one unit at least")
         return {"count": int(value)}
+    if value.startswith("ids:"):
+        ids = value[4:].split(",")
+        if not value[4:] or any(not u or u != u.strip() or u.startswith("#") for u in ids):
+            raise run.Refused(f"--start-with ids:ID,ID,...: ids separated by commas, none empty or with a space around it")
+        twice = sorted({u for u in ids if ids.count(u) > 1})
+        if twice:
+            raise run.Refused(f"--start-with ids: {', '.join(twice)} given more than once")
+        return {"ids": ids}
     if value.startswith("set:"):
         name, rev = sets.split_ref(value[4:])
         entry = sets.load(bench["key"], name)
@@ -1472,10 +1481,10 @@ def main(argv=None):
                            help="only the units of this task set (nullius standard set): its dataset is the run's, the "
                                 "options the run's own; the job's config records the set")
             p.add_argument("--limit", type=int)
-            p.add_argument("--start-with", metavar="N|FILE|set:NAME",
+            p.add_argument("--start-with", metavar="N|FILE|set:NAME|ids:ID,ID...",
                            help="plan the whole (the dataset, or what --units, --set, --limit name) and begin with a part: "
-                                "its first N units, the units a file lists, or a task set's; the rest stay planned with no "
-                                "attempt, for rerun to run in the job later")
+                                "its first N units, the units a file lists, a task set's, or the units named after ids:, "
+                                "separated by commas; the rest stay planned with no attempt, for rerun to run in the job later")
             p.add_argument("-j", "--concurrency", type=int, default=4)
             p.add_argument("--judge-model", help="a benchmark scored by a model: this judge instead of its official one")
             p.add_argument("--simulator-model", help="a benchmark whose user a model plays: this model instead of its official one")

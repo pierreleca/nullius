@@ -86,7 +86,7 @@ class PartTest(unittest.TestCase):
 
     def test_a_plan_of_six_begun_on_two_by_a_count_a_file_and_a_set(self):
         for how, given in (("count", {"count": 2}), ("file", self.units_file(["t3", "t1"])),
-                           ("set", self.a_set("first-two", ["t1", "t3"]))):
+                           ("set", self.a_set("first-two", ["t1", "t3"])), ("ids", {"ids": ["t3", "t1"]})):
             with self.subTest(how=how):
                 lines = []
                 job_dir = self.plan(name=f"job-{how}", start_with=given, lines=lines)
@@ -94,8 +94,8 @@ class PartTest(unittest.TestCase):
                 part = ["t0", "t1"] if how == "count" else ["t1", "t3"]                 # in the plan's order
                 self.assertEqual(cfg["datasets"][0]["n_tasks"], 6)                     # the plan is the whole
                 self.assertEqual(cfg["standard"]["start_with"]["units"], part)
-                self.assertEqual(set(cfg["standard"]["start_with"]) - {"units"}, {{"count": "count", "file": "units_file",
-                                                                                   "set": "task_set"}[how]})
+                self.assertEqual(set(cfg["standard"]["start_with"]) - {"units"}, {"count": {"count"}, "file": {"units_file"},
+                                                                                   "set": {"task_set"}, "ids": set()}[how])
                 self.assertEqual(res["n_total_trials"], 6)
                 self.assertNotIn("budget", res)
                 self.assertEqual([n for n, _ in rerun.planned(job_dir)], [f"t{i}__u{i:04d}" for i in range(6)])
@@ -103,7 +103,7 @@ class PartTest(unittest.TestCase):
                 j = parse.parse_job(job_dir)
                 self.assertEqual((len(j.trials), j.n_planned, j.n_tasks, j.n_tasks_run, j.state), (2, 6, 6, 2, "finished"))
                 self.assertEqual(j.start_with, {"by": how, "units": 2,
-                                                "name": {"count": "", "file": "first.txt", "set": "first-two"}[how]})
+                                                "name": {"count": "", "file": "first.txt", "set": "first-two", "ids": "the tasks chosen"}[how]})
                 self.assertEqual(j.raw_solve_rate, 1.0)                                  # over the tasks run
                 text, row = self.show(job_dir)
                 self.assertIn("2 trial(s) of 6 planned", text)
@@ -191,7 +191,7 @@ class PartTest(unittest.TestCase):
             self.again(limited, [], task_set=self.a_set("beyond", ["t2", "t4"]))
         self.assertIn("the task set beyond@1 names 1 task limited did not plan: t4", str(e.exception))
 
-    def test_the_command_line_names_the_part_three_ways(self):
+    def test_the_command_line_names_the_part_four_ways(self):
         b = definitions.get("benchmark", "fakebench", self.catalogue())
         self.assertEqual(std_cli.start_with(b, "3"), {"count": 3})
         Path(self.tmp, "ids.txt").write_text("t2\n# a comment\nt0\n")
@@ -206,6 +206,17 @@ class PartTest(unittest.TestCase):
         self.assertEqual((got["dataset"], got["task_set"]["units"], got["task_set"]["id"]), ("all", ["t4"], entry["id"]))
         with self.assertRaises(sets.NotFound):
             std_cli.start_with(b, "set:nothing")
+        # ids inline, as the run builder writes them
+        self.assertEqual(std_cli.start_with(b, "ids:t2,t0"), {"ids": ["t2", "t0"]})
+        for bad, said in (("ids:", "ids separated by commas"), ("ids:t1,,t2", "ids separated by commas"),
+                          ("ids:t1, t2", "with a space around it"), ("ids:t1,t1", "t1 given more than once")):
+            with self.subTest(bad=bad), self.assertRaises(run.Refused) as e:
+                std_cli.start_with(b, bad)
+            self.assertIn(said, str(e.exception))
+        # an id outside the plan refuses the run before any unit, naming it
+        with self.assertRaises(run.Refused) as e:
+            self.plan(name="outside", start_with={"ids": ["t1", "nope"]})
+        self.assertIn("--start-with ids:t1,nope names 1 task outside the plan of 6 tasks: nope", str(e.exception))
 
 
 if __name__ == "__main__":
