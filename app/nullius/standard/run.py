@@ -1173,23 +1173,6 @@ class Run:
             held = set(everything)
             unknown = [u for u in listed if u not in held]
             if unknown:
-                # what the run holds is let go as when its driver cannot list the units: on the container
-                # backend that includes the containers its driver or its doors started
-                for d in self.drivers:
-                    d.close()
-                if self.bench_relay is not None:
-                    self.bench_relay.stop()
-                if self.backend == "container" or self.relay_container:
-                    container.sweep(self.name)
-                # the record a refusal in ready() leaves, which the runs list reads (execution's refused):
-                # the job's folder with its progress.jsonl, the driver's working folders and logs taken out
-                work = os.path.join(self.job_dir, ".work")
-                for name in os.listdir(work):
-                    path = os.path.join(work, name)
-                    if name in ("driver", "driver-home"):
-                        shutil.rmtree(path, ignore_errors=True)
-                    elif name.startswith("driver-") and name.endswith(".log"):
-                        os.remove(path)
                 words = self.bench["units"]
                 if self.units_file:
                     why = (f"{self.units_file['name']} lists {len(unknown)} {words['noun'] if len(unknown) == 1 else words['nouns']} "
@@ -1216,7 +1199,7 @@ class Run:
                 d.close()
             if self.bench_relay is not None:
                 self.bench_relay.stop()
-            if self.backend == "container":
+            if self.backend == "container" or self.relay_container:
                 container.sweep(self.name)
             # the record a refusal in ready() leaves, which the runs list reads (execution's refused):
             # the job's folder with its progress.jsonl, the driver's working folders and logs taken out
