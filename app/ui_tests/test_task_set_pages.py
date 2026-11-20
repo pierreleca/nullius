@@ -346,6 +346,8 @@ class RenameAndDelete(Case):
         self.assertIn("Build a run", actions)
         self.assertIn('class="bench-delete tasks-rename"', actions)
         self.assertNotIn('class="bench-head"', html)
+        # its search is the shared search box of the table toolkit's controls
+        self.assertRegex(html, r'<label class="st-search tasks-find"><svg class="ic"[^>]*><use href="#i-search"/></svg><input type="search" id="tasks-q"')
 
     def test_a_rename_keeps_the_id_and_the_revisions_and_opens_the_new_name(self):
         before = sets.load("described", "dev")
