@@ -209,6 +209,37 @@ new Function('$', '$$', 'rows', 'document', 'nulliusFetch', 'URL', 'location',
         writer.emit("job.end")                                                   # ended: the board's own count, no part
         self.assertNotIn("part", json.loads(self.page("/job/r1/live")))
 
+    def test_while_a_later_part_runs_each_of_its_tasks_not_begun_has_a_row_marked_queued(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node is required for the board")
+        d = self.tmp / "loose" / "r1"
+        rerun_page.standard_job(d, "r1")
+        self.begun_on_a_part(d)
+        board = Path(__file__).resolve().parents[1] / "static/runs/live-board.js"
+        program = ("const L=require(" + json.dumps(str(board)) + ");const s=JSON.parse(process.argv[1]);"
+                   "process.stdout.write(JSON.stringify(L.render(s,{})));")
+        name = lambda k: f"t-{k}__u{k:04d}"
+        events = [("job.start", None, dict(n_total=6, tasks=PLAN))] + [("trial.queued", name(k), dict(position=k)) for k in range(6)]
+        events += [("trial.end", name(k), dict(outcome="resolved", reward=1.0)) for k in range(3)]
+        events += [("job.end", None, {}), ("job.start", None, dict(n_total=6, tasks=["t-3", "t-4"])),
+                   ("trial.queued", name(3), dict(position=0)), ("trial.phase", name(3), dict(task="t-3", phase="agent_run"))]
+        (d / "events.jsonl").unlink()
+        writer = feed.Writer(str(d / "events.jsonl"), "r1")
+        for event, trial, data in events:
+            writer.emit(event, trial, **data)
+        self.open(d.parent)
+        snap = json.loads(self.page("/job/r1/live"))
+        out = json.loads(subprocess.run([node, "-e", program, json.dumps(snap)], capture_output=True, text=True,
+                                        check=True, timeout=10).stdout)
+        rows = {re.search(r'data-trial="([^"]+)"', row)[1]: text(row, r".*")
+                for row in re.findall(r'<tr class="lb-row.*?</tr>', out["flight"], re.S)}
+        self.assertEqual(sorted(rows), [name(k) for k in range(5)])               # t-5 is outside the part: no row
+        self.assertEqual(rows[name(4)], "u0004 Queued —")
+        self.assertIn('class="lb-row lb-queued"', out["flight"])
+        self.assertTrue(rows[name(3)].startswith("t-3 agent run"), rows[name(3)])
+        self.assertEqual(text(out["stats"], r".*").split(" Rate")[0], "Done 3 /6 Running 1 Queued 1 Not run 1")
+
     def test_a_task_first_run_in_a_later_part_names_that_try_by_what_it_was(self):
         d = self.run_of()
         name, first, again = trial_name(1), "2026-11-18T15:40:12+00:00", "2026-11-18T15:50:00+00:00"
