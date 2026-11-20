@@ -693,7 +693,7 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
     # each attempt run again up to N times when it ends in a failure a further try may mend (standard.retries)
     retries = 0 if recipe.get("retries") in (None, "") else _int(recipe.get("retries"), 0, MAX_RETRIES)
     if retries is None:
-        add("limits", f"Retries per attempt: a whole number from 0 to {MAX_RETRIES}.")
+        add("limits", f"Retries after an error: a whole number from 0 to {MAX_RETRIES}.")
         retries = 0
     sim_model = str(recipe.get("simulator_model") or "").strip()
     judge_model = str(recipe.get("judge_model") or "").strip()
