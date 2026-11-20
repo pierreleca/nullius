@@ -13,8 +13,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from nullius.standard import cli, payload, recipe, rerun, sets
-from tests.test_task_set_recipe import Scratch
+from nullius.standard import cli, definitions, payload, recipe, rerun, run, sets, units
+from tests.test_task_set_recipe import NOP, ROOT, Scratch
 
 
 class StartWith(Scratch):
@@ -98,6 +98,73 @@ class StartWith(Scratch):
     def test_a_recipe_without_it_compiles_as_before(self):
         self.assertEqual(self.compile(), self.compile(start_with={}))
         self.assertNotIn("--start-with", self.compile()["shards"][0]["command"])
+
+
+class TicksAgainstThePlan(Scratch):
+    """The tasks ticked, checked again at each compile against the plan the listing in the cache gives: a tick the
+    plan no longer holds is refused on the Dataset step with the ids it drops. The stand-in's file has versions, so
+    its title (``Fake bench 1.0``) is not its label, as at a real benchmark with versions."""
+    def setUp(self):
+        super().setUp()
+        profile = mock.patch.dict(os.environ, {"NULLIUS_HOME": str(self.tmp / "profile")})   # a cache of its own
+        profile.start()
+        self.addCleanup(profile.stop)
+        root = self.tmp / "versioned"
+        shutil.copytree(os.path.join(ROOT, "benchmarks", "fakebench"), root / "benchmarks" / "fakebench")
+        spec = json.loads((root / "benchmarks" / "fakebench" / "standard.json").read_text())
+        spec.update(upstream={"license": "unknown"}, default="1.0", versions={"1.0": {}, "2.0": {}})
+        (root / "benchmarks" / "fakebench" / "standard.json").write_text(json.dumps(spec))
+        self.b = dict(definitions.get("benchmark", "fakebench", str(root)), controls=NOP,
+                      datasets=[{"id": "all", "units": 4}, {"id": "more", "units": 4}])
+        self.defs = {"benchmark": [self.b], "agent": [], "capability": []}
+        self.assertNotEqual(definitions.title(self.b), self.b["label"])
+
+    def test_a_tick_the_lowered_number_leaves_out_is_refused_and_a_tick_inside_passes(self):
+        units.listing(self.b, "all")                     # as the task picker lists it
+        out = self.compile(limit=1, start_with={"all": ["wrong"]})
+        self.assertEqual([(e["step"], e.get("dropped")) for e in out["errors"]], [(recipe.STEP["dataset"], ["wrong"])])
+        self.assertEqual(out["errors"][0]["message"], "Start with: tasks outside the current plan: wrong.")
+        runner = run.Run(self.b, definitions.control(self.b, "nop"), model="", provider="openai",
+                         jobs_root=str(self.tmp / "jobs"), name="limited", env={}, say=lambda s: None,
+                         limit=1, start_with={"ids": ["wrong"]})
+        with self.assertRaisesRegex(run.Refused, "outside the plan of 1 task: wrong"):
+            runner.start()                               # what Run would say at its start, said at Review now
+        out = self.compile(limit=1, start_with={"all": ["good"]})
+        self.assertEqual(out["errors"], [])
+        self.assertIn("--limit 1 --start-with ids:good", out["shards"][0]["command"])
+        self.assertEqual(self.compile(start_with={"all": ["wrong"]})["errors"], [])
+
+    def test_review_checks_the_listing_under_the_changed_benchmark_options(self):
+        self.b["options"] = {"mode": {"summary": "Tasks", "values": ["long", "short"], "default": "long"}}
+        rows = {"long": ["good", "wrong"], "short": ["good"]}
+
+        def made(bench, ds, values):
+            return {"tasks": [{"id": i, "title": "", "text": "", "categories": {}} for i in rows[values["mode"]]],
+                    "described": False}
+        with mock.patch.object(units, "_list", made):
+            for mode in rows:
+                units.listing(self.b, "all", {"mode": mode})
+        with mock.patch.object(units, "_list", side_effect=AssertionError("listed again")):
+            self.assertEqual(self.compile(start_with={"all": ["wrong"]})["errors"], [])
+            out = self.compile(bench_options={"mode": "short"}, start_with={"all": ["wrong"]})
+            self.assertEqual(out["errors"][0]["dropped"], ["wrong"])
+            out = self.compile(bench_options={"mode": "short"}, start_with={"all": ["good"]})
+            self.assertEqual(out["errors"], [])
+            self.assertIn("nothing is left for later", next(r[2] for r in out["review"] if r[1] == "Dataset"))
+
+    def test_a_listing_not_in_the_cache_asks_nothing(self):
+        self.assertNotEqual(units.state(self.b, "all")["state"], "cached")
+        with mock.patch.object(units, "listing", side_effect=AssertionError("listed")):
+            out = self.compile(limit=1, start_with={"all": ["pasted-id"]})
+        self.assertEqual(out["errors"], [])              # Run checks them at its start
+        self.assertIn("--start-with ids:pasted-id", out["shards"][0]["command"])
+
+    def test_ids_pasted_for_a_listing_that_needs_the_full_environment_are_accepted(self):
+        with mock.patch.object(units, "state", return_value={"state": "full", "fetch": [], "reason": ""}), \
+                mock.patch.object(units, "listing", side_effect=AssertionError("listed")):
+            out = self.compile(start_with={"all": ["pasted-a", "pasted-b"]})
+        self.assertEqual(out["errors"], [])
+        self.assertIn("--start-with ids:pasted-a,pasted-b", out["shards"][0]["command"])
 
 
 class OnAHost(Scratch):
