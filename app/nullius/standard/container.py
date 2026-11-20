@@ -142,11 +142,25 @@ def _runs_podman(path: str) -> bool:
     return head.startswith(b"#!") and re.search(rb"^\s*exec\s+\S*podman\b", head, re.M) is not None
 
 
+def _answers(program: str) -> bool:
+    """Whether ``<program> ps`` succeeds, as the host probe asks (``hosts.PROBE``)."""
+    try:
+        return subprocess.run([program, "ps"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, timeout=10).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def engine() -> str:
     """``podman`` when it is on the PATH and ``docker`` is not, or is podman
-    under that name; else ``docker``."""
+    under that name, or does not answer while podman does; else ``docker``.
+    Only a machine with both is asked, so one engine costs no call."""
     docker, podman = shutil.which("docker"), shutil.which("podman")
-    return "podman" if podman and (not docker or _runs_podman(docker)) else "docker"
+    if not podman:
+        return "docker"
+    if not docker or _runs_podman(docker):
+        return "podman"
+    return "podman" if not _answers(docker) and _answers(podman) else "docker"
 
 
 DOCKER = engine()                          # the engine's program, chosen once
@@ -271,7 +285,7 @@ def unusable() -> Optional[str]:
         hint = (" (add this user to the docker group, then log in again)"
                 if not podman() and "permission denied" in r.stderr.lower() else "")
         if not podman() and shutil.which("podman"):     # docker wins (engine), so say podman is there
-            hint += ". podman is on this machine: Nullius uses it when docker is not on the PATH"
+            hint += ". podman is on this machine: Nullius uses it when docker does not answer and podman does"
         return f"{DOCKER} is installed but not usable by this user: " + (said[-1][:200] if said else f"exit {r.returncode}") + hint
     if podman():
         try:
@@ -725,7 +739,8 @@ def relay_argv(image: str, *, name: str, job: str, app: str, record: str, key_fi
                model: Optional[str], routes: Dict[str, str], prices: Optional[dict] = None, side_models=(),
                key_header: str = "authorization", hosts: Optional[Dict[str, str]] = None,
                ledger: Optional[str] = None, serving: Optional[Dict[str, List[str]]] = None,
-               max_calls: Optional[int] = None, exchanges: str = "off", exchanges_max_mb: int = exchange_store.MAX_MB) -> List[str]:
+               timeout: Optional[int] = None, max_calls: Optional[int] = None, exchanges: str = "off",
+               exchanges_max_mb: int = exchange_store.MAX_MB) -> List[str]:
     """``docker run`` for a unit's relay: on the default bridge (its way to the
     provider), its port published on 127.0.0.1 only. The key is never given:
     ``key_file``, its file, is mounted read-only at ``RELAY_KEY_IN`` with
@@ -767,6 +782,8 @@ def relay_argv(image: str, *, name: str, job: str, app: str, record: str, key_fi
             a += ["--served-by", f"{m}={','.join(slugs)}"]
     if key_header != "authorization":
         a += ["--key-header", key_header]
+    if timeout:
+        a += ["--timeout", str(timeout)]
     return a
 
 
@@ -1028,13 +1045,14 @@ class Unit:
                  side_models=(), key_header: str = "authorization", servers: Iterable[str] = (),
                  doors: Iterable[Tuple[str, int, str]] = (), hosts: Optional[Dict[str, str]] = None,
                  ledger: Optional[str] = None, network_probe: Optional[str] = None, probe_now: bool = True,
-                 serving: Optional[Dict[str, List[str]]] = None, max_calls: Optional[int] = None,
+                 serving: Optional[Dict[str, List[str]]] = None, timeout: Optional[int] = None, max_calls: Optional[int] = None,
                  exchanges: str = "off", exchanges_max_mb: int = exchange_store.MAX_MB):
         self.job, self.tag, self.dir, self.image, self.app = job, tag, record_dir, image, app
         self.max_calls = max_calls               # the run's cap on its agent's model calls, when it has one
         self.exchanges, self.exchanges_max_mb = exchanges, exchanges_max_mb    # its calls kept whole, and the bound
         self.ledger = ledger                     # the file of the run's spending cap, when it has one
         self.serving = dict(serving or {})       # by model, the serving providers that may answer it
+        self.timeout = timeout
         self.servers = list(servers)             # licence servers, host:port each: a forwarder apiece
         self.doors = list(doors)                 # servers on this machine: (alias, port, socket), a door apiece
         self.side_models, self.key_header = tuple(side_models), key_header
@@ -1060,7 +1078,8 @@ class Unit:
             argv = relay_argv(self.image, name=self.names["relay"], job=self.job, app=self.app, record=self.dir,
                               key_file=self._key_file(), base=self.base, model=self.model, routes=self.routes,
                               prices=self.prices, side_models=self.side_models, key_header=self.key_header,
-                              hosts=self.hosts, ledger=self.ledger, serving=self.serving, max_calls=self.max_calls,
+                              hosts=self.hosts, ledger=self.ledger, serving=self.serving,
+                              timeout=self.timeout, max_calls=self.max_calls,
                               exchanges=self.exchanges, exchanges_max_mb=self.exchanges_max_mb)
             self.started.append(self.names["relay"])
             _docker(argv[1:])

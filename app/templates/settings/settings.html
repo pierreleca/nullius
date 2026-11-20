@@ -1,4 +1,6 @@
 {% extends "base.html" %}
+{% from '_tables.html' import blank %}
+{% from '_page.html' import page_head %}
 {% block title %}Settings — Nullius{% endblock %}
 {% block crumb %}/ settings{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='catalogue/catalogue.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='settings/settings.css') }}">{% endblock %}
@@ -42,20 +44,18 @@
 {% endmacro %}
 
 <div class="settings-page st-page">
-<header class="st-head">
-  <h1>Settings</h1>
-  <div class="st-ready" role="group" aria-label="What a run can use">
-    <span class="st-ready-t">Ready to run</span>
-    {% set ns = namespace(custom=false) %}
-    {% for c in provider_cards if not c.preset and c.ready %}{% set ns.custom = true %}{% endfor %}
-    {% for c in provider_cards if c.preset and c.run %}
-    <a href="#{{ c.fields[0][0].name }}" class="st-ready-i{{ ' on' if c.ready }}"><span aria-hidden="true">{{ '✓' if c.ready else '○' }}</span> {{ c.title }}<span class="sr">{{ ': set' if c.ready else ': not set' }}</span></a>
-    {% endfor %}
-    <a href="#providers" class="st-ready-i{{ ' on' if ns.custom }}"><span aria-hidden="true">{{ '✓' if ns.custom else '○' }}</span> Custom<span class="sr">{{ ': set' if ns.custom else ': not set' }}</span></a>
-    {% for jj, name in [(judges[0], 'Decision model'), (judges[1], 'LLM')] %}<a href="#judge" class="st-ready-i{{ ' on' if jj }}"><span aria-hidden="true">{{ '✓' if jj else '○' }}</span> {{ name }}<span class="sr">{{ ': set' if jj else ': not set' }}</span></a>{% endfor %}
-    {% for item in chosen %}<a href="#HOSTS" class="st-ready-i on"><span aria-hidden="true">✓</span> <span class="mono">{{ item.split('=', 1)[0] if '=' in item.split('@', 1)[0] else item.split(':/')[0].split(':~')[0] }}</span></a>{% else %}<a href="#HOSTS" class="st-ready-i"><span aria-hidden="true">○</span> no host</a>{% endfor %}
-  </div>
-</header>
+{{ page_head('Settings') }}
+<div class="st-ready" role="group" aria-label="What a run can use">
+  <span class="st-ready-t">Ready to run</span>
+  {% set ns = namespace(custom=false) %}
+  {% for c in provider_cards if not c.preset and c.ready %}{% set ns.custom = true %}{% endfor %}
+  {% for c in provider_cards if c.preset and c.run %}
+  <a href="#{{ c.fields[0][0].name }}" class="st-ready-i{{ ' on' if c.ready }}"><span aria-hidden="true">{{ '✓' if c.ready else '○' }}</span> {{ c.title }}<span class="sr">{{ ': set' if c.ready else ': not set' }}</span></a>
+  {% endfor %}
+  <a href="#providers" class="st-ready-i{{ ' on' if ns.custom }}"><span aria-hidden="true">{{ '✓' if ns.custom else '○' }}</span> Custom<span class="sr">{{ ': set' if ns.custom else ': not set' }}</span></a>
+  {% for jj, name in [(judges[0], 'Decision model'), (judges[1], 'LLM')] %}<a href="#judge" class="st-ready-i{{ ' on' if jj }}"><span aria-hidden="true">{{ '✓' if jj else '○' }}</span> {{ name }}<span class="sr">{{ ': set' if jj else ': not set' }}</span></a>{% endfor %}
+  {% for item in chosen %}<a href="#HOSTS" class="st-ready-i on"><span aria-hidden="true">✓</span> <span class="mono">{{ item.split('=', 1)[0] if '=' in item.split('@', 1)[0] else item.split(':/')[0].split(':~')[0] }}</span></a>{% else %}<a href="#HOSTS" class="st-ready-i"><span aria-hidden="true">○</span> no host</a>{% endfor %}
+</div>
 {% if not writable %}
 <div class="harbor-state harbor-state-network"><strong>Read-only from here.</strong> Settings are written from a browser on the application host only.</div>
 {% endif %}
@@ -301,7 +301,7 @@
     {% macro never(icon, why) %}<button type="button" class="host-act" disabled aria-label="{{ why }}" title="{{ why }}"><svg class="ic" aria-hidden="true"><use href="#i-{{ icon }}"/></svg></button>{% endmacro %}
     <article class="st-field st-hosts st-constraints" id="HOSTS" data-source="{{ hosts_row.source }}" data-secret="no" data-test="{{ url_for('settings_host_test') }}"{% if ro %} data-readonly{% endif %}>
       <table class="host-table">
-        <thead><tr><th scope="col"><span class="sr">Status</span></th><th scope="col">Host</th><th scope="col" class="host-engine">Engine</th><th scope="col" class="host-capacity">Capacity</th><th scope="col"><span class="sr">Actions</span></th></tr></thead>
+        <thead><tr>{{ blank('Status') }}<th scope="col">Host</th><th scope="col" class="host-engine">Engine</th><th scope="col" class="host-capacity">Capacity</th>{{ blank('Actions') }}</tr></thead>
       {% for m in machines %}{% set mi = loop.index %}{% set t = (m.found or {}).get('test') or {} %}
       {#- a machine: its row, then a row per panel, one open at a time (hosts.js) -#}
       <tbody class="host-row" data-machine="{{ m.entry }}"{% if m.host %} data-entry="{{ m.entry }}"{% endif %}>
@@ -395,7 +395,7 @@
   <section class="st-section" id="sandbox" aria-labelledby="sandbox-h" data-sandbox="{{ url_for('settings_sandbox') }}"{% if writable %} data-csrf="{{ csrf }}" data-boat="{{ url_for('settings_sandbox_boat') }}"{% endif %}>
     <div class="st-section-head"><h2 id="sandbox-h">Sandbox</h2><p>Where agents run, apart from this machine.</p></div>
     <div class="st-card">
-      <div class="st-row"><span class="st-row-label">Engine</span><span class="st-row-value" data-docker-state>Checking…</span></div>
+      <div class="st-row"><span class="st-row-label">Engine</span><span class="st-row-value" data-docker-state>Checking…</span></div><div class="st-row" data-docker-also hidden><span class="st-row-label"></span><span class="st-row-value faint"></span></div>
     </div>
     <div class="st-card" data-boat-card>
       <div class="st-provider-summary"><img class="st-logo on-light-bg" src="{{ url_for('static', filename='brand/boat.svg') }}" alt="" width="28" height="28"><img class="st-logo on-dark-bg" src="{{ url_for('static', filename='brand/boat-dark.svg') }}" alt="" width="28" height="28"><div><h3>Boat</h3><p class="st-about" data-boat-state>Checking…</p></div>{% if writable %}<button type="button" class="btn sm ghost" data-boat-edit>Edit</button><button type="button" class="btn sm ghost danger" data-boat-remove aria-expanded="false" aria-controls="boat-remove-ask" hidden>Remove</button>{% endif %}</div>

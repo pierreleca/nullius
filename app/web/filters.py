@@ -6,6 +6,8 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from flask import url_for
+
 from nullius import importers as harnesses, providers
 from nullius.judge import client as judge_client
 from nullius.runs import classify
@@ -18,6 +20,12 @@ from . import shared
 
 AGENT_MARKS = json.loads((Path(app.static_folder) / "catalogue/agents/marks.json").read_text())
 
+
+def agent_mark_url(key: str) -> str:
+    """An agent's mark (``key`` with or without its ``@version``): its static URL, with the sprite's symbol after
+    ``#`` when it is one; "" without a mark."""
+    path, _, symbol = (AGENT_MARKS.get(key.split("@")[0]) or "").partition("#")
+    return path and url_for("static", filename=path) + ("#" + symbol if symbol else "")
 
 
 @app.template_filter("pct")
@@ -228,6 +236,7 @@ def _inject():
     return {
         "LABELS": classify.LABELS,
         "agent_marks": AGENT_MARKS,
+        "agent_mark_url": agent_mark_url,
         "DESCRIPTIONS": classify.DESCRIPTIONS,
         "INFRA": classify.INFRA_OUTCOMES,
         "ORDER": classify.ORDER,

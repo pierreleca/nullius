@@ -137,7 +137,7 @@ class Routes(unittest.TestCase):
         self.stack.enter_context(patch.object(workspace, "load", side_effect=lambda home, name:
             {"active": self.active, "foreign": self.foreign}.get(name)))
         self.load_jobs = self.stack.enter_context(patch.object(workspace, "load_jobs",
-            side_effect=lambda ws, roots: [self.foreign_job if ws.name == "foreign" else self.active_job]))
+            side_effect=lambda ws, roots, runs=None: [self.foreign_job if ws.name == "foreign" else self.active_job]))
         for obj, name in [(web.shared, "open_workspace"), (web.shared, "_import_roots"),
                           (workspace, "save"), (workspace, "touch")]:
             self.stack.enter_context(patch.object(obj, name, side_effect=AssertionError(
@@ -183,8 +183,8 @@ class Routes(unittest.TestCase):
         self.assertIn("active-run", html)
         # the Columns menu lists every column of the table - it rendered empty
         # once, when the context key and the template's name disagreed
-        for col, label in web.shared.COLUMNS:
-            self.assertIn(f'data-col="{col}"> {label}</label>', html)
+        for c in web.shared.COLUMNS:
+            self.assertRegex(html, f'data-col="{c["key"]}"( data-off)?> {c["label"]}</label>')
         self.assertNotIn('id="landing-title"', html)
         web.shared.STATE["workspace"] = None
         html = self.get_ok("/runs").get_data(as_text=True)
@@ -220,7 +220,7 @@ class Routes(unittest.TestCase):
                     self.assertIn(key, ids)
         self.assertIn("Official", html)
         self.assertEqual('data-shelf="community"' in html, any(b.origin == "community" for b in cat.listed_benchmarks))   # a shelf only when something is on it
-        self.assertIn("<b>500</b><span>tasks</span>", html)
+        self.assertIn("<dt>Tasks</dt><dd>500</dd>", html)
         # Datasets belong on their benchmark's page.
         response = self.client.get("/datasets")
         self.addCleanup(response.close)

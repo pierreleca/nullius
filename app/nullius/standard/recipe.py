@@ -102,6 +102,13 @@ def _all() -> Dict[str, List[dict]]:
     return {k: definitions.load(k, every=True)[0] for k in ("benchmark", "agent", "capability")}
 
 
+def _shown(o: dict, v: str, values: dict) -> str:
+    """An option's value as Review shows it: its name, or for ``default`` under ``by`` the value it stands for."""
+    by = next(iter((o.get("by") or {}).items()), None)
+    v = by[1].get(values.get(by[0]), v) if v == "default" and by else v
+    return (o.get("names") or {}).get(v) or v
+
+
 def _bench_page(b: dict) -> dict:
     """A benchmark as a page shows it. ``controls``: the ones it declares,
     each with who wrote it and where it comes from - what the builder offers
@@ -110,7 +117,7 @@ def _bench_page(b: dict) -> dict:
     ``proofs``, the units and leak checks the same way (``prove.status``)."""
     kinds = sorted({p.split(".", 1)[1].split("/")[0] for p in b.get("needs") or []}) if b["family"] == "capability" else []
     status = prove.status(b)
-    controls = [{k: c[k] for k in ("key", "label", "source", "from", "expect")}
+    controls = [{**{k: c[k] for k in ("key", "label", "source", "from", "expect")}, "must": prove.must_score(c["expect"])}
                 for c in (definitions.control(b, w) for w in definitions.CONTROLS) if c]
     versioned = definitions.version_of(b) is not None
     task_sets = sets.rows(b["key"])
@@ -133,9 +140,10 @@ def _bench_page(b: dict) -> dict:
             # One Original procedure, with separate reference-participant and paper-model metadata.
             "setups": [{"key": k, "label": definitions.setup_label(b, k), "summary": x["summary"],
                         "reference_agent": x.get("reference_agent", ""), "turn_seconds": x.get("turn_seconds"),
-                        "comparable": k == "original" and b["setups"]["original"].get("comparable", True), "units": (b["setups"]["original"].get("units") or b.get("units") or {}),
-                        **({"models": x["models"], "default": x["default"], "providers": list(x["providers"]),
-                            "sent": {p: {m: pre + (x.get("served_as") or {}).get(m, m) for m in x["models"]} for p, pre in x["providers"].items()}}
+                        "comparable": k == "original" and b["setups"]["original"].get("comparable", True) is not False, "units": (b["setups"]["original"].get("units") or b.get("units") or {}),
+                        **({"models": definitions.paper_models(x), "default": x["default"], "providers": list(x["providers"]),
+                            "sent": {p: {m: pre + (x.get("served_as") or {}).get(m, m) for m in definitions.paper_models(x)}
+                                     for p, pre in x["providers"].items()}}
                            if "models" in x else {"any": True, "providers": list(x["providers"])})}
                        for k, x in (b.get("setups") or {}).items() if k == "original"],
             # its own options (a search, a mode): each value with its line and what it needs; and the host requirements
@@ -144,20 +152,20 @@ def _bench_page(b: dict) -> dict:
             "leaderboard": b.get("leaderboard") or None,
             "attempts": (b.get("limits") or {}).get("attempts", ""),
             # what a unit's time limits and a conversation's length are when the recipe forces none
-            "timeouts": {"setup": run.DRIVER_SECONDS, "setup_agent": (b.get("limits") or {}).get("setup_seconds") or run.DRIVER_SECONDS, "image": run.IMAGE_SECONDS, "score": run.DRIVER_SECONDS,
+            "timeouts": {"setup": run.DRIVER_SECONDS, "setup_agent": (b.get("limits") or {}).get("setup_seconds") or run.DRIVER_SECONDS, "image": run.IMAGE_SECONDS, "score": (b.get("limits") or {}).get("score_seconds") or run.DRIVER_SECONDS,
                          "agent": (b.get("limits") or {}).get("turn_seconds") or run.TURN_SECONDS,
                          "turns": (b.get("limits") or {}).get("turns") or run.MAX_TURNS,
-                         "catalogue": [k for k, f in (("agent", "turn_seconds"), ("turns", "turns")) if (b.get("limits") or {}).get(f)]},
+                         "catalogue": [k for k, f in (("agent", "turn_seconds"), ("turns", "turns"), ("score", "score_seconds")) if (b.get("limits") or {}).get(f)]},
             "options": {n: {"label": o.get("label") or n.replace("_", " ").capitalize(), "summary": o["summary"], "datasets": o.get("datasets") or [],
                             "setups": o.get("setups") or ["yours"],
-                            **({"values": o["values"]} if "values" in o else {"pattern": o["pattern"]}), "default": o.get("default"), "about": o.get("about") or {}, "needs": o.get("needs") or {}, "when": o.get("when") or {},
-                            "limit": bool(o.get("limit")), "by": o.get("by") or {}}
+                            **({"values": o["values"]} if "values" in o else {"pattern": o["pattern"], "example": o.get("example")}), "default": o.get("default"), "about": o.get("about") or {}, "names": o.get("names") or {}, "needs": o.get("needs") or {}, "when": o.get("when") or {},
+                            "limit": bool(o.get("limit")), "step": o.get("step") or "", "by": o.get("by") or {}}
                         for n, o in (b.get("options") or {}).items()},
-            "host": {n: {"summary": r["summary"], "check": r["check"], "install": hostreq.install_lines(b, [n]), "needed_by": r["needed_by"]}
+            "host": {n: {"label": r.get("label") or n, "summary": r["summary"], "check": r["check"], "install": hostreq.install_lines(b, [n]), "needed_by": r["needed_by"]}
                      for n, r in hostreq.all_of(b).items()},
             "datasets": [{"id": d["id"], "label": d.get("label") or d["id"], "summary": d.get("summary", ""), "units": d.get("units"),
                           "environment": d.get("environment") or "",
-                          "controls": [dict(c, proven=status[d["id"]][c["key"]]["proven"], failed=status[d["id"]][c["key"]]["failed"])
+                          "controls": [dict(c, **{k: status[d["id"]][c["key"]][k] for k in ("proven", "short", "failed")})
                                        for c in controls],
                           "proofs": {k: status[d["id"]][k]["proven"] for k in ("units", "leak")},
                           "failed": {k: status[d["id"]][k]["failed"] for k in ("units", "leak") if status[d["id"]][k]["failed"]},
@@ -199,7 +207,7 @@ def _other_page(o: dict) -> dict:
                            "older": definitions.older_kit(p, r), "label": ports.PORTS[p]["label"], "skills": skills_of(p, r)}
                        for p, r in (o.get("proven") or {}).items() if ports.known(p)},
             "options": {n: {"summary": x.get("summary", ""), "default": x.get("default"),
-                            **({"values": list(x["values"])} if "values" in x else {"pattern": x.get("pattern")})}
+                            **({"values": list(x["values"])} if "values" in x else {"pattern": x.get("pattern"), "example": x.get("example")})}
                         for n, x in (o.get("options") or {}).items()},
             **({"fidelity": {k: o["proven"]["fidelity"].get(k) for k in ("verdict", "on", "model")}}
                if isinstance((o.get("proven") or {}).get("fidelity"), dict) else {})}
@@ -445,6 +453,8 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
                 add("model", "Choose a model.")
                 continue
             method = "model" if recipe.get("model_choice", "any") != "paper" and "model" in (b.get("setups") or {}) else "original"
+            if method == "original":
+                picked = definitions.upstream_name(orig, picked, provider_)
             o, why_not = definitions.setup(b, method, picked, provider_)
             if o is None:
                 add("model" if orig else "agent", why_not[0].upper() + why_not[1:] + ".")
@@ -523,8 +533,8 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
     if model_choice == "paper" and needs_model and not orig.get("models") and not any(official.values()):
         add("model", "No paper models are listed for this benchmark; choose Any of your choice.")
     elif model_choice == "paper" and needs_model and orig.get("models"):
-        if recipe.get("model") not in orig["models"]:
-            add("model", "Choose one of the paper's listed models.")
+        if recipe.get("model") not in definitions.paper_models(orig):
+            add("model", "Choose one of the paper's listed models, or Any of your choice for another of the original's.")
         elif provider_ not in orig.get("providers", {}):
             add("model", "The paper's models are not listed for this provider.")
     provider = recipe.get("provider")
@@ -635,7 +645,8 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
     limit = recipe.get("limit")
     if limit not in ("", None) and _int(limit, 1) is None:
         add("limits", "The number of units is a whole number of at least 1, or empty for all of them.")
-    conc = _int(recipe.get("concurrency") or 1, 1, MAX_CONCURRENT)       # empty: one at a time
+    # empty: one at a time; on Boat, as many as the account runs at once (the run caps it to that, boat.slots)
+    conc = _int(recipe.get("concurrency") or (MAX_CONCURRENT if backend == "boat" else 1), 1, MAX_CONCURRENT)
     if conc is None:
         add("limits", f"Units at a time: a whole number from 1 to {MAX_CONCURRENT}.")
     targets, why_not = where_of(recipe.get("where", "local"))
@@ -647,7 +658,9 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
         why = docker_unusable()
         if why:
             add("where", f"The container backend cannot run on this machine: {why}. Choose local processes, or a host with Docker or Podman.")
-    elif backend == "boat" and boat_unusable is not None and (why := boat_unusable("local" in targets)):
+    elif backend == "boat" and targets != ["local"]:
+        add("where", "Hosts and Boat sandboxes do not mix: choose Hosts, or Sandboxes alone.")
+    elif backend == "boat" and boat_unusable is not None and (why := boat_unusable(True)):
         add("where", f"Boat cannot run: {why}.")
     elif backend == "boat" and boat_size_problem is not None and str(recipe.get("boat_size") or boat.SIZE) in boat.SIZES:
         why = boat_size_problem(str(recipe.get("boat_size") or boat.SIZE))
@@ -657,6 +670,22 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
     if backend == "boat" and boat_size not in boat.SIZES:
         add("where", f"Choose a Boat size: {', '.join(boat.SIZES)}.")
         boat_size = boat.SIZE
+    # a benchmark whose units boot a VM of their own (OSWorld's guest): the VM starts on the machine the
+    # driver runs on, which a container cannot do, and on Boat inside a VM big enough to hold it
+    if b and definitions.boots_vms(b) and backend == "container":
+        add("where", f"{b['label']} starts each unit's VM on the machine: choose local processes.")
+    guest = max([definitions.vm_memory_gb(b, v) for v in per_ds.values()] or [0])
+    if backend == "boat" and not boat.fits(boat_size, guest):
+        add("where", f"A {boat.SIZES[boat_size]['label']} VM is too small for {b['label']}, whose units boot a {guest:g} GB VM: choose a larger size.")
+    # on Boat each unit's agent or capability runs in its VM (run.Run refuses the rest): a setup or a check runs
+    # on a machine, and the computer port's socket is on this one, out of a VM's reach
+    # A benchmark booting VMs of its own runs each unit whole in a VM (boat_units), with a relay container in each VM
+    computer = run.computer_port(b)
+    whole = definitions.boots_vms(b)
+    elsewhere = [definitions.setup_label(b, "original") if p.get("setup") else p["o"]["label"] for p in picks
+                 if not whole and (p["control"] or p.get("setup") or (computer and side == "agent"))]
+    if backend == "boat" and elsewhere:
+        add("where", f"{', '.join(elsewhere)} cannot run in a Boat VM yet: choose Hosts.")
     # a job that calls no model (a control of a benchmark with no judge) spends nothing and takes no share
     spends = lambda p: not (p["control"] and not (b.get("score") or {}).get("judge") and not needs["embeddings"] and not needs["reranker"])
     paying = len(dss) * sum(1 for p in picks if spends(p)) * len(targets or [None])
@@ -781,7 +810,7 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
                  *(["--judge-model", judge_model] if judge_model else []),
                  "--name", job_of(d, p, index), *[w for k, v in given.items() for w in ("--option", f"{k}={v}")],
                  *(["--backend", backend] if backend != "local" else []),
-                 *(["--boat-size", boat_size] if backend == "boat" and not control and not p.get("setup") else []),
+                 *(["--boat-size", boat_size] if backend == "boat" and (whole or not control and not p.get("setup")) else []),
                  *(["--unsandboxed"] if side == "agent" and not control and not p.get("setup") and backend == "local" else []),
                  *(["--shard", f"{index}/{of}", "--launch", launch_of(d, p)] if of > 1 else []),
                  *limits.cli_words(limits.of(targets[index - 1])),
@@ -824,17 +853,17 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
     # Nothing in the run asks a model: no key is handed to it, and none need be set.
     out["keyless"] = only_controls and not (b.get("score") or {}).get("judge") and not needs["embeddings"] and not needs["reranker"]
     # what the machines must have for the chosen options (``host``): the Where step and its test show it, Run checks it
-    on_host = needs["host"]
+    on_host = [] if backend == "boat" and whole else needs["host"]     # each VM installs them (boat_units.prepare)
     if backend == "container" and any(p.get("setup") for p in picks):
         # a container setup's image installs what has an install; nothing else reaches its container
         imaged = hostreq.in_image(b, on_host)
-        cannot = [n for n in hostreq.requirements(b, on_host) if n not in imaged]
+        cannot = [r.get("label") or n for n, r in hostreq.requirements(b, on_host).items() if n not in imaged]
         if cannot:
             add("where", f"{', '.join(cannot)} cannot be provided in a container: choose local processes.")
         if all(p.get("setup") for p in picks):
             on_host = []                 # an agent's or a check's driver still runs on the machine
     reqs = hostreq.requirements(b, on_host)
-    out["host"] = {"benchmark": b["key"], "needs": [{"name": n, "summary": r["summary"], "check": r["check"],
+    out["host"] = {"benchmark": b["key"], "needs": [{"name": n, "label": r.get("label") or n, "summary": r["summary"], "check": r["check"],
                                                   **({"gpu_memory_mb": r["gpu_memory_mb"]} if "gpu_memory_mb" in r else {})}
                                                  for n, r in reqs.items()],
                    "check": [p for r in reqs.values() for p in r["check"]], "install": hostreq.install_lines(b, list(reqs))}
@@ -864,9 +893,9 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
                                 # begun on a part: what it plans in place of its count, and what begins
                                 + (f" · {planned_of.get(x['id']) or 'all its ' + nouns} planned, {start_of[x['id']]['units']} to begin "
                                    f"({start_of[x['id']]['label']})" if x["id"] in start_of else "") for x in dss)],
-                     *[[STEP["dataset"], (b.get("options") or {})[k].get("label") or k.replace("_", " ").capitalize(),
-                        f"{v}" + ("" if k in chosen_opts else " (its default)") + f" · {', '.join(x['id'] for x in dss if per_ds[x['id']].get(k) == v)}"]
-                       for k, v in {k: v for vals in per_ds.values() for k, v in vals.items()}.items()],
+                     *[[STEP["limits" if (b.get("options") or {})[k].get("limit") else "dataset" if (b.get("options") or {})[k].get("step") else "agent"], (b.get("options") or {})[k].get("label") or k.replace("_", " ").capitalize(),
+                        _shown((b.get("options") or {})[k], v, per_ds[next(x["id"] for x in dss if per_ds[x["id"]].get(k) == v)]) + ("" if k in chosen_opts else " (its default)") + f" · {', '.join(x['id'] for x in dss if per_ds[x['id']].get(k) == v)}"]
+                       for k, v in {k: v for vals in per_ds.values() for k, v in vals.items()}.items() if (b.get("options") or {})[k].get("step") != "where"],
                      *[row(p) for p in picks],
                      *[[STEP["agent"], "Options" + (f" of {p['o']['label']}" if several else ""),
                         ", ".join(f"{k} {v}" + ("" if k in p["given"] else " (its default)") for k, v in p["opts"].items())]
@@ -878,7 +907,9 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
                       + "".join(f" · {SERVED_LABEL[r_]} served by {', '.join(s)}" for r_, s in served.items())],
                      [STEP["limits"], "Scope", (f"{planned or 'all'} planned, {begin or 'all'} to begin" if set_of or start_of
                       else f"{'first ' + str(n) if isinstance(limit, int) else 'all ' + str(total or '')} {nouns}")
-                      + (" of each shard" if of > 1 and isinstance(limit, int) else "") + f" · {conc} at a time".replace("  ", " ")
+                      + (" of each shard" if of > 1 and isinstance(limit, int) else "")
+                      + (" · as many at a time as Boat allows" if backend == "boat" and not recipe.get("concurrency")
+                         else f" · {conc} at a time".replace("  ", " "))
                       + (" of each dataset" if many and isinstance(limit, int) and not (set_of or start_of) else "")
                       + (f" · {len(pairs)} jobs, one after the other" if len(pairs) > 1 else "")
                       + (f" · {repeat} attempts each (pass^1 to pass^{repeat})" if repeat > 1 else "")
@@ -893,9 +924,11 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
                      *([[STEP["limits"], f"Model calls per {noun}", str(calls)]] if calls else []),
                      *([[STEP["limits"], "Model exchanges", keep + (f" · at most {keep_mb} MB per {noun}" if keep != "off" else "")]]
                        if (keep, keep_mb) != (exchanges.DEFAULT, exchanges.MAX_MB) else []),
-                     [STEP["where"], "Where", (f"{of} shards, one per machine: " if of > 1 else "")
-                      + ", ".join(where_label(t) for t in targets) + f" · {backend} backend"
-                      + (f" · {boat_size} VMs" if backend == "boat" else "")]]
+                     [STEP["where"], "Where", (f"Boat sandboxes · one {boat.SIZES[boat_size]['label']} VM per {noun}" if backend == "boat"
+                      else (f"{of} shards, one per machine: " if of > 1 else "")
+                      + ", ".join(where_label(t) for t in targets) + f" · {backend} backend")
+                      + "".join(f" · {w.get('label') or k.replace('_', ' ').capitalize()} {(w.get('names') or {}).get(v) or v}" for k, v in {k: v for vals in per_ds.values() for k, v in vals.items()}.items()
+                                if (w := (b.get("options") or {})[k]).get("step") == "where")]]
     if agents_local:
         notes.append(f"{', '.join(agents_local)} {'run' if len(agents_local) > 1 else 'runs'} as you on {'each machine' if of > 1 else where_label(targets[0])}, with its permission requests granted: "
                      "the local backend is no sandbox.")

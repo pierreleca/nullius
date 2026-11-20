@@ -342,6 +342,19 @@ class RunTest(unittest.TestCase):
         self.assertEqual(p.returncode, 143)
         self.assertTrue(os.path.exists(done))
 
+    def test_local_agent_calls_a_separate_container_relay(self):
+        from tests import docker_tier
+        why = docker_tier.why_not()
+        if why:
+            self.skipTest(why)
+        directory = self.go("fakebench", "fake", relay_container=True)
+        got, _ = self.outcomes(directory)
+        self.assertEqual(got["good"].outcome, classify.RESOLVED)
+        self.assertEqual(got["model"].outcome, classify.FAILED_VERIFICATION)
+        self.assertTrue(self.relay_calls(directory))
+        self.assert_no_key(directory)
+        self.assert_unit_relays(directory)
+
     def test_an_agent_run_reads_back_with_its_outcomes(self):
         job_dir = self.go("fakebench", "fake")
         got, j = self.outcomes(job_dir)
@@ -965,6 +978,25 @@ class RunTest(unittest.TestCase):
         with open(os.path.join(job_dir, "progress.jsonl")) as f:
             pauses = [float(m[1]) for line in f if (m := re.search(r"no unit starts for ([0-9.]+) s", json.loads(line).get("detail") or ""))]
         self.assertTrue(pauses and pauses[0] >= 1.5, pauses)       # the provider's 2 s, not the 0.5 s pause
+
+    def test_a_unit_a_guard_asked_to_stop_is_not_run_again(self):
+        Echo.status = 429
+        b = dict(definitions.get("benchmark", "fakebench", ROOT), datasets=[{"id": "responding", "units": 3}])
+        r = run.Run(b, definitions.get("agent", "fake", ROOT), model="m-1", provider="custom", jobs_root=self.tmp,
+                    concurrency=1, env=self.env, say=lambda s: None, unsandboxed=True, dataset="responding", retries=1)
+        real = r.unit
+
+        def unit(*a):
+            res = real(*a)
+            if res and res["trial_name"].startswith("model__"):
+                with open(os.path.join(r.job_dir, res["trial_name"], ".work", "relay", relay.STOP), "w") as f:
+                    f.write("batch cap\n")
+            return res
+        r.unit = unit
+        job_dir = r.start()
+        self.assertFalse(os.path.exists(os.path.join(job_dir, "retried")))
+        got, _ = self.outcomes(job_dir)
+        self.assertEqual(got["model"].outcome, classify.RATE_LIMITED)
 
     def test_a_feature_run_drives_the_feature_through_its_port(self):
         job_dir = self.go("fakememo", "fakemem")

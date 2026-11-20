@@ -55,6 +55,7 @@ The job's config records both, and the backend.
 """
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -70,7 +71,7 @@ import tempfile
 from collections import Counter
 from concurrent.futures import FIRST_EXCEPTION, CancelledError, ThreadPoolExecutor, wait
 from contextlib import ExitStack, contextmanager
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 from nullius import constraints as limits, paths, prices as price_list, progress, providers, settings
 from nullius.redact import redact
@@ -115,6 +116,10 @@ TIMEOUT_PHASES = ("setup", "image", "agent", "verify", "score")
 MAX_TIMEOUT_SECONDS = 24 * 3600       # the longest any one phase may be given
 BACKENDS = definitions.names.BACKENDS
 _PROBED = threading.Lock()                # a run's first unit, claimed once (Run.first_probe)
+
+
+HELD: dict = {}
+LIVE: dict = {}
 
 
 class Refused(Exception):
@@ -682,7 +687,24 @@ class CutWatch:
         return got if isinstance(got, int) and not isinstance(got, bool) and got > 0 else 0
 
 
+def resolve_bench_options(bench: dict, dataset: str, given: Optional[dict] = None, setup: str = "yours",
+                  which=shutil.which) -> Tuple[dict, dict]:
+    """The benchmark's options for a run on ``dataset`` and what their values need; refused before anything starts."""
+    vals, bad = definitions.bench_options_of(bench, dataset, given, setup)
+    if bad:
+        raise Refused("; ".join(bad))
+    needs = definitions.option_needs(bench, vals)
+    lacking = hostreq.problems(bench, needs["host"], which)
+    if lacking:
+        raise Refused(f"{', '.join(f'{k}={v}' for k, v in vals.items())} needs on this machine "
+                      + "; ".join(f"{n} ({why})" for n, why in lacking.items())
+                      + (". Install with: " + " && ".join(lines) if (lines := hostreq.install_lines(bench, list(lacking)))
+                         else ". Run it on a machine that has it"))
+    return vals, needs
+
+
 class Run:
+    call_seconds: float = relay.TIMEOUT
     timeouts: Dict[str, float] = {}           # the run's own time limits by phase (__init__), none by default
     forced_turns: Optional[int] = None
     max_calls: Optional[int] = None           # the run's cap on a unit's agent's model calls (__init__), none by default
@@ -693,7 +715,7 @@ class Run:
                  limit: Optional[int] = None, concurrency: int = 4, jobs_root: str = "jobs", name: Optional[str] = None,
                  turn_seconds: Optional[int] = None, say: Callable[[str], None] = print, env=os.environ,
                  proving: bool = False, unsandboxed: bool = False, judge_model: Optional[str] = None,
-                 backend: str = "local", options: Optional[dict] = None, shard: Optional[tuple] = None,
+                 backend: str = "local", options: Optional[dict] = None, shard: Optional[tuple] = None, shard_by: str = "id",
                  launch: Optional[str] = None, repeat: int = 1, retries: int = RETRIES,
                  retry_if: Optional[Callable[[dict], bool]] = None, simulator_model: Optional[str] = None,
                  licences: Optional[Licences] = None, bench_options: Optional[dict] = None, which=shutil.which,
@@ -702,20 +724,24 @@ class Run:
                  units_file: Optional[dict] = None, task_set: Optional[dict] = None, start_with: Optional[dict] = None,
                  constraints: Optional[dict] = None, timeouts: Optional[dict] = None, max_turns: Optional[int] = None,
                  max_calls: Optional[int] = None, served_by: Optional[Dict[str, List[str]]] = None, boat_size: str = boat.SIZE,
-                 exchanges: str = exchange_store.DEFAULT, exchanges_max_mb: int = exchange_store.MAX_MB):
+                 relay_container: bool = False, exchanges: str = exchange_store.DEFAULT,
+                 exchanges_max_mb: int = exchange_store.MAX_MB):
         """``proving``: the run is a conformance kit's, the one run that may
         start before the port it checks is proven - the family must still match.
         ``unsandboxed``: consent to execute code as the user: required for
         local agents, and for setup checks that run code without Docker.
         ``backend``: ``local``, ``container`` (``docker``, its earlier name), which needs
         no such yes and is refused when docker is missing or not usable, or ``boat``;
+        ``relay_container``: keep local task processes on the host but run each
+        unit's relay in a separate container, as inside a whole-task Boat VM.
         ``boat_size``: its VMs' machine type (``boat.SIZES``), refused when the
         account cannot start it.
         ``options``: the
         agent's or capability's options set for this run, by name; the rest keep
         their defaults, and the job's config records every value.
         ``shard``: (I, N), only the units of shard I of N (``shard``), before
-        ``limit``; ``launch``: the id every shard of one launch records.
+        ``limit``, ``shard_by`` its units' id (by hash) or place (``shard.BY``); ``launch``: the id every
+        shard of one launch records.
         ``units_file``: the units a file lists (:func:`units_file`): only
         those of the dataset run, in the dataset's order, before ``limit``;
         an id the dataset does not hold refuses the run before any unit
@@ -792,7 +818,9 @@ class Run:
         if backend not in BACKENDS:
             raise Refused(f"backend {backend!r} is not one of {list(BACKENDS)}")
         if backend == "boat" and other.get("_kind") not in ("agent", "capability"):
-            backend = "local"                    # a check or a setup: nothing of an agent's runs, so nothing goes to a VM
+            # a setup or a check runs on the machine; on Boat it would run here unasked, beside the VMs
+            raise Refused(f"{other['label']} runs on a machine, not in a Boat VM: run it on this machine or a host "
+                          "(--backend local or container)")
         if backend == "boat" and other.get("_kind") == "agent" and computer_port(bench):
             raise BenchmarkRefused("the computer port uses a socket on this machine, which an agent in a Boat VM "
                                    "cannot reach: choose local processes or the container backend")
@@ -808,7 +836,10 @@ class Run:
             why = [w for w in why if "does not offer" not in w and "has not passed its kit" not in w]
         if why:
             raise Refused(f"{other['label']} cannot run {bench['label']}: " + "; ".join(why))
-        if backend == "container":
+        self.relay_container = bool(relay_container)
+        if relay_container and backend != "local":
+            raise Refused("a separate relay container requires the local process backend")
+        if backend == "container" or relay_container:
             why = container.unusable()
             if why:
                 raise Refused(f"the container backend cannot run here: {why}")
@@ -1005,9 +1036,14 @@ class Run:
             raise Refused(f"--exchanges-max-mb {exchanges_max_mb!r}: a whole number of MB, at least 1")
         self.exchanges, self.exchanges_max_mb = exchanges, exchanges_max_mb
         self.max_turns = max_turns or (bench.get("limits") or {}).get("turns") or MAX_TURNS
+        self.score_seconds = (bench.get("limits") or {}).get("score_seconds") or DRIVER_SECONDS
+        self.call_seconds = (bench.get("limits") or {}).get("call_seconds") or relay.TIMEOUT
         self.say = say
         stamp = time.strftime("%Y-%m-%d__%H-%M-%S")
         self.shard = tuple(shard) if shard and shard[1] > 1 else None
+        if shard_by not in shards.BY:
+            raise Refused(f"--shard-by {shard_by!r}: one of {', '.join(shards.BY)}")
+        self.shard_by = shard_by
         self.launch = launch or (shards.launch_id(definitions.job_word(bench), definitions.job_word(other), model)
                                  if self.shard else None)
         self.name = name or (f"{stamp}__{definitions.job_word(bench)}__{definitions.job_word(other)}"
@@ -1081,11 +1117,28 @@ class Run:
         return d
 
     def start(self) -> str:
+        lck, mine = os.path.join(self.job_dir, ".work", "job.lck"), object()
+        try:
+            return self._start(lck, mine)
+        finally:
+            if LIVE.get(lck) is mine:
+                del LIVE[lck]
+
+    def _start(self, lck, mine) -> str:
         t0 = time.time()
         os.makedirs(os.path.join(self.job_dir, ".work"), exist_ok=True)
+        held = HELD.get(lck) or open(lck, "a")
+        try:
+            if LIVE.setdefault(lck, mine) is not mine:
+                raise BlockingIOError
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Refused(f"another run under the job name {self.name} is running: "
+                          "start this one once it ends, or under another name") from None
+        HELD[lck] = held
         self.say(f"job {self.job_dir}")
         p, control = self.progress, self.other["_kind"] == "control"
-        p.emit("plan", stages=",".join((["image"] if self.backend == "container" or self.container_check else [])
+        p.emit("plan", stages=",".join((["image"] if self.backend == "container" or self.relay_container or self.container_check else [])
                                       + (["upstream"] if install.upstream_dir(self.bench) else [])
                                       + (["dataset"] if self.ds.get("url") else [])
                                       + (["driver"] if install.driver_dir(self.bench) else [])
@@ -1110,7 +1163,7 @@ class Run:
                 driver.close()
             if self.bench_relay is not None:
                 self.bench_relay.stop()
-            if self.backend == "container":
+            if self.backend == "container" or self.relay_container:
                 container.sweep(self.name)
             raise
         everything = [str(u) for u in units]
@@ -1120,6 +1173,23 @@ class Run:
             held = set(everything)
             unknown = [u for u in listed if u not in held]
             if unknown:
+                # what the run holds is let go as when its driver cannot list the units: on the container
+                # backend that includes the containers its driver or its doors started
+                for d in self.drivers:
+                    d.close()
+                if self.bench_relay is not None:
+                    self.bench_relay.stop()
+                if self.backend == "container" or self.relay_container:
+                    container.sweep(self.name)
+                # the record a refusal in ready() leaves, which the runs list reads (execution's refused):
+                # the job's folder with its progress.jsonl, the driver's working folders and logs taken out
+                work = os.path.join(self.job_dir, ".work")
+                for name in os.listdir(work):
+                    path = os.path.join(work, name)
+                    if name in ("driver", "driver-home"):
+                        shutil.rmtree(path, ignore_errors=True)
+                    elif name.startswith("driver-") and name.endswith(".log"):
+                        os.remove(path)
                 words = self.bench["units"]
                 if self.units_file:
                     why = (f"{self.units_file['name']} lists {len(unknown)} {words['noun'] if len(unknown) == 1 else words['nouns']} "
@@ -1131,7 +1201,7 @@ class Run:
                            f"{self.task_set['revision']} are not listed by {self.bench['label']}'s dataset {self.ds['id']} "
                            f"under the run's options ({given}): " + ", ".join(unknown[:5]) + (", ..." if len(unknown) > 5 else ""))
         # the list and the shard, then the limit; each unit keeps its place in the whole dataset (its trial's tag)
-        mine = shards.select(everything, *self.shard) if self.shard else list(enumerate(everything))
+        mine = shards.select(everything, *self.shard, by=self.shard_by) if self.shard else list(enumerate(everything))
         if listed is not None:
             wanted = set(listed)
             mine = [(i, u) for i, u in mine if u in wanted]
@@ -1176,7 +1246,7 @@ class Run:
                          image=self.setup_driver.image if self.setup_driver else self.image,
                          options=self.options, launch=self.launch or "", bench_options=self.bench_options,
                          # a shard of a list splits the listed units: they are its whole
-                         shard=shards.record(*self.shard, len(everything) if listed is None else len(listed), units, self.limit)
+                         shard=shards.record(*self.shard, len(everything) if listed is None else len(listed), units, self.limit, by=self.shard_by)
                          if self.shard else None, units_file=self.units_file, task_set=self.task_set,
                          start_with=self.part_record(part) if part is not None else None,
                          repeat=self.repeat, retries=self.retries, prices=self.prices_record(), constraints=self.constraints, served_by=self.serving,
@@ -1309,7 +1379,7 @@ class Run:
         try:
             self.ticker.start()
             # a model server on this machine's loopback, which the relays' containers cannot reach as written
-            if self.backend == "container" and self.base and container.on_loopback(self.base):
+            if (self.backend == "container" or self.relay_container) and self.base and container.on_loopback(self.base):
                 self.loopback = container.Loopback(self.base, image=self.image, job=self.name).start()
             for iur in work:
                 futures.append(pool.submit(work_unit, iur) if first is None else pool.submit(first, iur, work_unit))
@@ -1325,7 +1395,7 @@ class Run:
         except BaseException:
             self._stopped.set()
             self._halt.set()
-            if self.backend == "container":
+            if self.backend == "container" or self.relay_container:
                 container.sweep(self.name)
             raise
         finally:
@@ -1339,7 +1409,7 @@ class Run:
                 d.close()
             if self.bench_relay is not None:
                 self.bench_relay.stop()
-            if self.backend == "container":
+            if self.backend == "container" or self.relay_container:
                 container.sweep(self.name)          # whatever an interrupted unit left
             if getattr(self, "boat", None) is not None:
                 self.boat.close()
@@ -1422,7 +1492,8 @@ class Run:
             if self._stopped.is_set() or self._halt.is_set():
                 return
             # each attempt whose last try ended with a try to follow (``unit``: what it held stays held)
-            todo = [name for name, res in latest.items() if name in self._counted and self.retry_if(res)]
+            todo = [name for name, res in latest.items() if name in self._counted and self.retry_if(res)
+                    and relay.asked(os.path.join(self.job_dir, name, ".work", "relay")) is None]
             if not todo:
                 return
             self.progress.emit("units", "progress", detail=f"trying {len(todo)} again: retry {retry} of {self.retries}")
@@ -1508,7 +1579,7 @@ class Run:
         p = self.progress
         self.scope_limits = self.scope_ready(limits.scoped(self.constraints), refuse=self.backend == "local")
         owns = any(definitions.own_image(e) for e in (self.bench.get("environments") or {}).values())
-        if self.backend == "container" or self.container_check:
+        if self.backend == "container" or self.relay_container or self.container_check:
             try:
                 tag = container.base_tag()
                 there = container.present(tag)
@@ -1518,7 +1589,7 @@ class Run:
                 raise Refused(f"the Docker image: {e}")
         # every container the run starts takes the caps: its agents', relays' and installs' on the container
         # backend, its checks' and own images' on either
-        if self.backend == "container" or self.container_check or owns:
+        if self.backend == "container" or self.relay_container or self.container_check or owns:
             refusal = Refused if self.backend == "container" else BenchmarkRefused
             try:
                 # Docker can drop a limit with only a warning: a result would look limited when it was not
@@ -1563,7 +1634,7 @@ class Run:
                 with p.stage("driver", cached=install.ready(drv), start=f"installing {self.bench['key']}'s driver environment"):
                     install.driver_packages(self.bench)
         except (install.InstallFailed, container.Unavailable) as e:
-            if self.backend == "container":
+            if self.backend == "container" or self.relay_container:
                 container.sweep(self.name)
             raise BenchmarkRefused(f"could not install what the run needs: {e}")
         try:
@@ -1572,7 +1643,7 @@ class Run:
                 with p.stage("install", cached=install.ready(install.packages_dir(self.other, image=image)), agent=self.other.get("_ref") or self.other["key"]):
                     self.inst = install.packages(self.other, run_in=run_in, image=image)
         except (install.InstallFailed, container.Unavailable) as e:
-            if self.backend == "container":
+            if self.backend == "container" or self.relay_container:
                 container.sweep(self.name)
             raise Refused(f"could not install what the run needs: {e}")
         # An own image has none of what the agent runs on: it is mounted in, fetched once on this machine.
@@ -1588,7 +1659,7 @@ class Run:
         if (self.embed_model or self.rerank_model) and self.bench_relay is None:
             self.bench_relay = relay.Relay(self.base, self.key, os.path.join(self.job_dir, ".work", "relay-benchmark"),
                                            prices=self.prices, model=self.rerank_model or self.embed_model, ledger=self.ledger_file(),
-                                           unit_caps=False, serving=self.serving).start()                  # embeddings and rerank: a bearer key
+                                           unit_caps=False, serving=self.serving, timeout=self.call_seconds).start()      # embeddings and rerank: a bearer key
 
     def runtimes_needed(self) -> List[str]:
         """What the agent needs in an own image that the image may not have:
@@ -1696,6 +1767,11 @@ class Run:
         trial = os.path.join(self.job_dir, self.trial_name(i, unit, r))
         name = os.path.basename(trial)
         ws, home = os.path.join(trial, "workspace"), os.path.join(trial, ".home")
+        earlier = os.path.join(trial, ".work", f"earlier.{time.time_ns()}")
+        for part in (os.path.join(".work", "relay"), "result.json", "verifier", "agent"):
+            if os.path.lexists(os.path.join(trial, part)):
+                os.makedirs(earlier, exist_ok=True)
+                os.replace(os.path.join(trial, part), os.path.join(earlier, os.path.basename(part)))
         os.makedirs(ws, exist_ok=True)
         # The workspace is a repository of its own: agents look up to the git root
         # for instructions (AGENTS.md, CLAUDE.md, their config) and, with jobs kept
@@ -1788,17 +1864,17 @@ class Run:
                 raise _Ended(cut[0], cut[1], traj)
             step = setup.get("verify") if box is not None else None
             checking = (time.time(), None)
-            self.phase(name, unit, "verify", self.phase_limit("score", DRIVER_SECONDS) + (self.step_limit("verify", step) if step else 0))
+            self.phase(name, unit, "verify", self.phase_limit("score", self.score_seconds) + (self.step_limit("verify", step) if step else 0))
             verified = self.verify(setup["verify"], box, trial) if box is not None and setup.get("verify") else None
             if self.backend == "container":     # the agent could write here (an MCP server's log folder): no link it left is read
                 container.plain_only(os.path.join(trial, "verifier"))
             try:
                 judge = self.judge(rl, tag)
-                score = self.driver().request("score", unit=unit, dir=ws, transcript=transcript, answer=answer, timeout=self.phase_limit("score", DRIVER_SECONDS),
+                score = self.driver().request("score", unit=unit, dir=ws, transcript=transcript, answer=answer, timeout=self.phase_limit("score", self.score_seconds),
                                               **judge, **({"setup": self.other["key"]} if self.upstream else {}), **({"verified": verified} if verified is not None else {}))
                 checking = (checking[0], time.time())
             except jsonl.Failed as e:
-                raise _Ended("VerifierError", str(e), retryable=not isinstance(e, jsonl.NoReply))
+                raise _Ended(_kind(e, "VerifierError"), str(e), retryable=not isinstance(e, jsonl.NoReply))
             finished = True
         except _Ended as e:
             exc = (e.kind, e.said)
@@ -1824,7 +1900,8 @@ class Run:
             if getattr(self, "ticker", None) is not None:
                 self.ticker.drop(name)           # Its last counts are given one tick before its end.
         calls = rl.calls(tag) if rl is not None else []
-        failed = relay.failure(calls)
+        words = not self.bench.get("gated")
+        failed = relay.failure(calls, words, agent=True)
         if failed and clock.get("cut") and failed[0] not in (ledgers.ERROR, ledgers.UNIT_ERROR):
             # its agent's work was cut and the unit went on to its score (``cut_of``): the cap's refusal, or one
             # after the benchmark's own end, is not how it ended
@@ -1835,10 +1912,17 @@ class Run:
             # models refuse): the pass stands, the call stays in its record. A failed or score-only unit's is
             # the endpoint's, and a cap's refusal is the cap's
             failed = None
-        if not failed and rl is not None and exc is not None and exc[0] == "VerifierError":
+        if failed and failed[0] == relay.CONTEXT_ERROR and ((score or {}).get("stopped")
+                                                          or self.upstream and exc and ": VerifierError: " in exc[1]):
+            failed = None
+        if failed and failed[0] not in (ledgers.ERROR, ledgers.UNIT_ERROR) and (score or {}).get("stopped") not in (None, "", relay.OVERFLOW) \
+                and rl is not None and relay.asked(rl.dir) is not None \
+                and [(c.get("status"), c.get("error_code") == "insufficient_quota") for c in relay._begun(calls) if not c.get("side")][-1:] == [(429, False)]:
+            failed = None
+        if not failed and rl is not None and exc is not None and (exc[0] == "VerifierError" or not words):
             # the judge's or the simulated user's model failing (a 429, a refused request) is the
             # unit's infrastructure, as the agent's own would be - not a miss counted against it
-            failed = next(filter(None, (relay.failure(rl.calls(f"{tag}-{side}")) for side in ("judge", "simulator"))), None)
+            failed = next(filter(None, (relay.failure(rl.calls(f"{tag}-{side}"), words) for side in ("judge", "simulator"))), None)
         if failed and (exc is None or exc[0] not in ("EnvironmentSetupError",)):
             exc = failed                     # what the endpoint said outranks how the agent took it
             score, retry_ok = None, True     # a time run out under refused calls is the provider's: tried again
@@ -2128,15 +2212,26 @@ class Run:
         record = os.path.join(trial, ".work", "relay")
         side = tuple((self.other.get("model") or {}).get("side_models") or ())
         key_header = self.key_header
-        if self.backend in ("local", "boat"):     # boat: the agent reaches it through its VM's tunnel
+        if self.backend in ("local", "boat") and not getattr(self, "relay_container", False):     # boat: the agent reaches it through its VM's tunnel
             rl = relay.Relay(self.base, self.key, record, prices=getattr(self, "prices", None), model=self.model, side_models=side,
                              key_header=key_header, ledger=self.ledger_file(), serving=getattr(self, "serving", None),
-                             max_calls=self.max_calls, exchanges=self.exchanges, exchanges_max_mb=self.exchanges_max_mb).start()
+                             timeout=self.call_seconds, max_calls=self.max_calls, exchanges=self.exchanges,
+                             exchanges_max_mb=self.exchanges_max_mb).start()
             rl.unit_url = rl.url(tag)
             return rl
         routes = {tag + "-judge": self.judge_model} if self.judge_model else {}
         if self.simulator_model:
             routes[tag + "-simulator"] = self.simulator_model
+        if getattr(self, "relay_container", False):
+            door = getattr(self, "loopback", None)
+            rl = container.Unit(self.name, tag, record, image=self.image, app=APP,
+                                base=door.base if door else self.base, key=self.key, model=self.model,
+                                routes=routes, side_models=side, key_header=key_header,
+                                prices=price_list.given(self.models_called(), getattr(self, "prices", None)),
+                                hosts=door.hosts if door else None, ledger=self.ledger_file(),
+                                serving=self.serving, max_calls=self.max_calls, timeout=self.call_seconds).start()
+            rl.unit_url = rl.url(tag)  # driver and agent run on this host, outside the relay container
+            return rl
         doors, listeners = [], []
         if self.other["_kind"] == "agent" and mcp_machine.wanted(setup):
             # the benchmark's own servers run here, in the driver's environment; the agent reaches each
@@ -2161,7 +2256,9 @@ class Run:
                             prices=price_list.given(self.models_called(), getattr(self, "prices", None)),   # a sidecar's argv: its models' rows
                             servers=self.agent_servers(env_def), doors=doors, hosts=door.hosts if door else None,
                             ledger=self.ledger_file(), serving=getattr(self, "serving", None), max_calls=self.max_calls,
-                            exchanges=self.exchanges, exchanges_max_mb=self.exchanges_max_mb, network_probe=probe, probe_now=bool(probe) and self.first_probe())
+                            exchanges=self.exchanges, exchanges_max_mb=self.exchanges_max_mb,
+                            timeout=self.call_seconds if self.call_seconds != relay.TIMEOUT else None,
+                            network_probe=probe, probe_now=bool(probe) and self.first_probe())
         rl.mcp_listeners = listeners
         try:
             try:
@@ -2786,8 +2883,8 @@ class Run:
     def drive_upstream(self, unit, ws, tag, transcript, rl):
         """The setup's unit: the driver runs the upstream's own answerer on it
         (``answer``), asked as ``asked`` through the unit's relay, which sends
-        the run's model in its place. A reply with no text - a reasoning model
-        that spent the upstream's token budget thinking - is said as such."""
+        the run's model in its place. A last reply with no text or tool call - a reasoning model
+        that spent the upstream's token budget thinking - is said as such; a unit a guard stopped is cancelled."""
         o = self.other
         try:
             # the benchmark's other models reach the upstream's pipeline as they reach a turn or a score: their own routes
@@ -2796,7 +2893,18 @@ class Run:
                                         base_url=rl.url(tag), key=relay.PLACEHOLDER_KEY, timeout=self.agent_limit({}))
         except jsonl.Failed as e:
             calls = rl.calls(tag)
-            silent = [c for c in calls if c.get("status") == 200 and not ((c.get("reply") or {}).get("text") or "").strip()]
+            stop = relay.asked(rl.dir)
+            if stop and not _kind(e, None):
+                raise _Ended(CANCELLED, f"a guard asked the unit to stop ({stop[:200]}); {o['label']}: {e}",
+                             job.trajectory_from_exchanges([], calls, o, self.model, f"{self.name}/{unit}"))
+            own = [c for c in relay._begun(calls) if not c.get("side")][-1:]
+            failed = [((c["reply"].get("error") or {}).get("code") or "no code") for c in own if (c.get("reply") or {}).get("end") == "failed"]
+            kind = _kind(e, "ApiError" if failed else None)
+            if kind:
+                raise _Ended(kind, f"{o['label']}: {e}" + "".join(f"; {self.model}'s last reply failed ({c})" for c in failed),
+                             job.trajectory_from_exchanges([], calls, o, self.model, f"{self.name}/{unit}"))
+            silent = [c for c in own if c.get("status") == 200 and not ((c.get("reply") or {}).get("text") or "").strip()
+                      and not (c.get("reply") or {}).get("tool_calls")]
             if silent:
                 u = (silent[-1].get("reply") or {}).get("usage") or {}
                 thought = u.get("reasoning") or 0
@@ -2809,6 +2917,12 @@ class Run:
                          job.trajectory_from_exchanges([], calls, o, self.model, f"{self.name}/{unit}"), retryable=not isinstance(e, jsonl.NoReply))
         transcript.append({"role": "upstream", "setup": o["key"], "asked": self.asked, "sent": self.model})
         return out.get("answer"), job.trajectory_from_exchanges([], rl.calls(tag), o, self.model, f"{self.name}/{unit}")
+
+
+def _kind(e, otherwise):
+    """A driver's own EnvironmentSetupError, VerifierError, CancelledError or CauseUnknownError keeps its kind."""
+    m = re.match(r"\w+: (EnvironmentSetupError|VerifierError|CancelledError|CauseUnknownError): ", str(e))
+    return m.group(1) if m else otherwise
 
 
 class _Ended(Exception):
