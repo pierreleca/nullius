@@ -247,7 +247,7 @@ tick().then(() => process.stdout.write(JSON.stringify(destination)));
         html = self.page("/job/r1?view=results")
         self.assertEqual(text(html, r'<details id="reruns" open>.*?</details>'),
                          "Run later 1 2026-11-18 15:40Z the provider failed t-1 reward 0.0 → reward 1.0 try 1 "
-                         "1 task · $0.0012 spent of a $0.50 cap")
+                         "1 task · $0.0012 spent")
         self.assertIn('<th scope="col" class="num">Retries</th>', html)
         cells = re.findall(r'<td class="num run-retries">(.*?)</td>', html)
         self.assertEqual(cells, ['<span class="faint">0</span>', "1", '<span class="faint">0</span>'])
@@ -413,7 +413,45 @@ tick().then(() => process.stdout.write(JSON.stringify(destination)));
         html = self.page("/job/r1?view=results")
         self.assertEqual(text(html, r'<div class="kv" id="run-cap".*?</div>'), "Spending cap $0.50")
         self.assertEqual(text(html, r'<div class="sp cap-spent" id="cap-spent">.*?</div>'), "$0.1012 spent · Change")
-        self.assertIn("$0.0012 spent of a $2.00 cap", text(html, r'<details id="reruns" open>.*?</details>'))
+        later = text(html, r'<details id="reruns" open>.*?</details>')
+        self.assertIn("1 task · $0.0012 spent", later)
+        self.assertNotIn("$2.00", later)                                          # that part's own cap: the job has one now
+        self.assertTrue(later.endswith("Spending cap for the whole run $0.50 · $0.1012 spent"), later)
+
+    def test_run_later_and_the_stop_notice_name_the_job_s_cap_and_spend_as_its_cap_line_does(self):
+        d = self.run_of()
+        part = lambda k, spent, stopped: {"at": f"2026-11-20T20:3{k}:00+00:00", "trials": [trial_name(k)], "replaced": [],
+                                          "max_usd": 0.8, "left_usd": 0.2555, "spent_usd": spent, "stopped": stopped}
+        # the first run stopped at its cap; a later part, under the same cap, stopped at it too
+        self.capped(d, {"max_usd": 0.8, "spent_usd": 0.5445, "stopped": True, "cut_off": [], "not_run": [trial_name(2)],
+                        "spent_total_usd": 0.726, "closed": True}, reruns=[part(1, 0.1815, True)])
+        self.open(d.parent)
+        html = self.page("/job/r1?view=results")
+        line = text(html, r'<div class="kv" id="run-cap".*?</div>') + " · " + text(html, r'<div class="sp cap-spent" id="cap-spent">.*?</div>')
+        self.assertEqual(line, "Spending cap $0.80 · $0.726 spent · Change")
+        self.assertEqual(text(html, r'<div class="alert" id="cap-stopped">.*?</div>'),
+                         "Stopped at its spending cap of $0.80, with $0.726 spent.")         # the job's, not the first run's $0.5445
+        later = text(html, r'<details id="reruns" open>.*?</details>')
+        self.assertIn("1 task · $0.18 spent", later)
+        self.assertNotIn("of a $0.80 cap", later)
+        self.assertTrue(later.endswith("Spending cap for the whole run $0.80 · $0.726 spent"), later)
+        # the cap changed on the page: the job is no longer stopped at it, and every line names the new cap
+        self.assertEqual(self.cap("r1", {"max_usd": "2"}).status_code, 200)
+        html = self.page("/job/r1?view=results")
+        self.assertNotIn('id="cap-stopped"', html)
+        self.assertEqual(text(html, r'<div class="kv" id="run-cap".*?</div>'), "Spending cap $2.00")
+        self.assertTrue(text(html, r'<details id="reruns" open>.*?</details>').endswith("Spending cap for the whole run $2.00 · $0.726 spent"))
+
+    def test_a_first_run_stopped_at_its_cap_and_a_later_part_that_ended_within_it_show_no_stop(self):
+        d = self.run_of()
+        self.capped(d, {"max_usd": 2.0, "spent_usd": 0.5445, "stopped": True, "cut_off": [], "not_run": [],
+                        "spent_total_usd": 1.089, "closed": False,
+                        "changes": [{"at": "2026-11-20T20:40:00+00:00", "max_usd": 2.0, "was": 0.8}]},
+                    reruns=[{"at": "2026-11-20T20:41:00+00:00", "trials": [trial_name(1)], "replaced": [],
+                             "max_usd": 2.0, "left_usd": 1.274, "spent_usd": 0.363, "stopped": False}])
+        self.open(d.parent)
+        html = self.page("/job/r1?view=results")
+        self.assertNotIn('id="cap-stopped"', html)
 
     def test_a_job_with_no_cap_has_none_until_one_is_set(self):
         d = self.run_of()
