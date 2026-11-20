@@ -750,6 +750,18 @@ class RateLimitsRetried(unittest.TestCase):
                 self.assertNotEqual(workspace.signature(tmp), now)
         self.assertGreaterEqual(int(parse.SCHEMA), 24)
 
+    def test_a_job_cached_before_its_budget_was_one_cap_for_all_its_parts_is_parsed_again(self):
+        # a job's budget and each later part's cap are the job's one cap now: a cache of either shape before misses
+        from nullius import workspace
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "result.json"), "w") as f:
+                f.write("{}")
+            now = workspace.signature(tmp)
+            for before in ("23", "24"):
+                with self.subTest(schema=before), mock.patch.object(parse, "SCHEMA", before):
+                    self.assertNotEqual(workspace.signature(tmp), now)
+        self.assertGreaterEqual(int(parse.SCHEMA), 25)
+
 class UnverifiedJobHasNoRate(unittest.TestCase):
     """A job nothing scored has no solve rate, not a rate of zero.
 
