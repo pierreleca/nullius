@@ -374,9 +374,12 @@
     <div class="sp"><details class="pop"><summary aria-label="Token split: input, cached, output"><span class="tw"></span>in · cached · out</summary>
       <div class="popm" role="group" aria-label="Token split"><span>input</span><b>{{ '{:,}'.format(job.total_input_tokens) }}</b><span>cached (part of input)</span><b>{{ '{:,}'.format(job.total_cache_tokens) }}</b><span>output</span><b>{{ '{:,}'.format(job.total_output_tokens) }}</b></div></details></div>
     <div class="kv" data-tip="{{ 'A control never calls a model, so this is a real zero' if job.is_control else 'Only recorded by agents that report it' }}"><span class="k">Cost</span><span class="v">{{ job.total_cost_usd|usd(job.kind) }}</span></div>
-    {% if job.budget and job.budget.max_usd %}<div class="kv" id="run-cap" data-tip="Its relay refuses a call that does not fit under it{% if job.budget.unsettled_usd %}. {{ job.budget.unsettled_usd|usd }} stays booked for calls whose cost was never reported{% endif %}"><span class="k">Spending cap</span><span class="v">{{ job.budget.max_usd|cap }}</span></div>
+    {% if job_cap or (job.budget and job.budget.max_usd) %}<div class="kv" id="run-cap" data-tip="One cap for the whole run: each later part has what the parts before it left{% if job.budget.unsettled_usd %}. {{ job.budget.unsettled_usd|usd }} stays booked for calls whose cost was never reported{% endif %}"><span class="k">Spending cap</span><span class="v">{{ (job_cap or job.budget).max_usd|cap }}</span></div>
+    {% if job_cap %}<div class="sp cap-spent" id="cap-spent">{{ job_cap.spent_usd|cap }} spent{% if again and again.where %} · <button class="plain" id="cap-change" type="button" aria-haspopup="dialog">Change</button>{% elif rerunning %} · <span class="faint">changed once this part ends</span>{% endif %}</div>{% endif %}
     {% if job.budget.not_run %}<div class="sp"><details class="pop"><summary aria-label="The units not run"><span class="tw"></span>{{ job.budget.not_run|length }} not run</summary>
-      <div class="popm cap-units" role="group" aria-label="The units not run">{% for u in job.budget.not_run %}<span>{{ u }}</span>{% endfor %}</div></details></div>{% endif %}{% endif %}
+      <div class="popm cap-units" role="group" aria-label="The units not run">{% for u in job.budget.not_run %}<span>{{ u }}</span>{% endfor %}</div></details></div>{% endif %}
+    {% elif again and again.where and job.standard %}<div class="kv" id="run-cap"><span class="k">Spending cap</span><span class="v faint">none</span></div>
+    <div class="sp cap-spent" id="cap-spent"><button class="plain" id="cap-change" type="button" aria-haspopup="dialog">Set</button></div>{% endif %}
     {% if job.budget and job.budget.unit_max_usd %}<div class="kv" id="unit-cap" data-tip="For each {{ job.runner_items[0] if job.runner_items else 'trial' }}, its judge's calls apart: one that reaches it is cut off there and counts against the agent, and the run goes on"><span class="k">Cap per {{ job.runner_items[0] if job.runner_items else 'trial' }}</span><span class="v">{{ job.budget.unit_max_usd|cap }}</span></div>
     {% if job.budget.over_unit %}<div class="sp"><details class="pop"><summary aria-label="The units that reached it"><span class="tw"></span>{{ job.budget.over_unit|length }} reached it</summary>
       <div class="popm cap-units" role="group" aria-label="The units that reached it">{% for u in job.budget.over_unit %}<span>{{ u }}</span>{% endfor %}</div></details></div>{% endif %}{% endif %}
@@ -554,9 +557,21 @@
     <p class="small muted"{% if waiting %} data-first="On {{ again.where }}, in this job: a task with no result gets its first; any other result is replaced, its earlier tries kept."{% endif %}>On {{ again.where }}, in this job: each result replaces the task's, and the earlier tries stay.</p>
     <ul class="rerun-names" data-names></ul>
     <label>Reason <span class="faint">(optional)</span><input type="text" name="reason" maxlength="200" autocomplete="off"></label>
-    <label>Spending cap, USD <span class="faint">(optional)</span><input type="number" name="max_usd" min="0" step="any" inputmode="decimal"{% if job.budget and job.budget.max_usd %} value="{{ job.budget.max_usd }}"{% endif %}></label>
+    {%- if job_cap %}
+    <p class="small" id="rerun-budget">{% if job_cap.closed %}Budget for the whole run: {{ job_cap.max_usd|cap }}, spent. Change it to run more.{% else %}Budget for the whole run: {{ job_cap.max_usd|cap }}, {{ job_cap.left_usd|cap }} left.{% endif %}</p>
+    {%- endif %}
     <p class="small bad" data-error hidden></p>
-    <div class="rerun-acts"><button type="submit" value="cancel" class="btn ghost" formnovalidate>Cancel</button><button type="submit" value="run" class="btn" data-go>Run 0 tasks again</button></div>
+    <div class="rerun-acts"><button type="submit" value="cancel" class="btn ghost" formnovalidate>Cancel</button><button type="submit" value="run" class="btn" data-go{% if job_cap and job_cap.closed %} data-spent{% endif %}>Run 0 tasks again</button></div>
+  </form>
+</dialog>
+{#- the job's one spending cap, changed for its next part #}
+<dialog class="rerun-ask" id="cap-ask" aria-labelledby="cap-ask-h" data-post="{{ url_for('job_cap_change', job_id=job.job_id) }}" data-csrf="{{ csrf }}">
+  <form method="dialog">
+    <h2 id="cap-ask-h">Spending cap for the whole run</h2>
+    <p class="small muted">{% if job_cap %}{{ job_cap.spent_usd|cap }} spent so far. {% endif %}The new cap applies from the next part.</p>
+    <label>Cap, USD<input type="number" name="max_usd" min="0" step="any" inputmode="decimal" required{% if job_cap %} value="{{ job_cap.max_usd }}"{% endif %}></label>
+    <p class="small bad" data-error hidden></p>
+    <div class="rerun-acts"><button type="submit" value="cancel" class="btn ghost" formnovalidate>Cancel</button><button type="submit" value="save" class="btn">Save</button></div>
   </form>
 </dialog>
 {% endif %}
