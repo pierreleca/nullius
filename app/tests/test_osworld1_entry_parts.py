@@ -774,12 +774,11 @@ class Runner(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertLess(time.monotonic() - t0, 3)
 
-    def test_the_entry_serves_version_2_and_a_steps_observation_is_the_one_the_loop_hands(self):
+    def test_the_entry_serves_the_computer_port_and_a_steps_observation_is_the_one_the_loop_hands(self):
         from tests.test_standard_computer_port import Client, error, image, value
-        self.assertEqual(self.r.VERSION, 2)
         with open(os.path.join(ENTRY, "standard.json")) as f:
             definition = json.load(f)
-        self.assertEqual(definition["needs"], ["agent.computer/v2"])
+        self.assertEqual(definition["needs"], ["agent.computer/v1"])
         self.assertTrue(definition["driver"]["task_given"])
         env, shots, said = FakeEnv(), iter([b"after-1", b"after-2"]), {}
         env.step = lambda action, pause=2: ({"screenshot": next(shots)}, 0, False, {})

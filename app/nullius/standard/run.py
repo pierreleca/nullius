@@ -126,7 +126,7 @@ class BenchmarkRefused(Refused):
 
 
 def computer_port(bench: dict) -> bool:
-    """Whether the benchmark needs a version of the computer port."""
+    """Whether the benchmark needs the computer port."""
     return any(str(p).startswith("agent.computer/") for p in bench.get("needs") or [])
 
 
