@@ -595,7 +595,7 @@ def job(job_id):
                            control=feasibility.summary_of(j), ended=shared.ended_for(job_id), own=own, deletable=_deletable(job_id, ex),
                            trial_rows=attempts.grouped(j), pass_k=attempts.for_job(j), names=_identity_names(j.identity),
                            again=execute.again_offer(j, ex), running_again=running_again, rerunning=again is not None,
-                           waiting=waiting, plan_sets=plan_sets(j, waiting))
+                           waiting=waiting, plan_sets=plan_sets(j, waiting), job_cap=execute.job_cap(j, ex))
 
 
 def waiting_of(j, running=()) -> list:

@@ -174,6 +174,59 @@ new Function('$', '$$', 'rows', 'document', 'nulliusFetch', 'URL', 'location',
             self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
             self.assertEqual(self.asked[-1][1]["trials"], body["trials"])
 
+    def test_tasks_never_run_get_one_short_question_and_a_reason_is_asked_only_beside_a_result(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node is required for the question")
+        d = self.run_of()
+        self.begun_on_a_part(d)
+        top = json.loads((d / "result.json").read_text())
+        top["budget"] = {"max_usd": 4.0, "spent_usd": 0.31, "stopped": False, "cut_off": [], "not_run": []}
+        (d / "result.json").write_text(json.dumps(top))
+        self.open(d.parent)
+        html = self.page("/job/r1?view=results")
+        self.assertIn('data-where="this machine"', html)
+        self.assertEqual(text(html, r'<p class="small" id="rerun-budget">.*?</p>'), "Budget for the whole run: $4.00, $3.69 left.")
+        self.assertNotIn('name="max_usd" min="0" step="any" inputmode="decimal">', html.split('id="cap-ask"')[0])   # no cap asked
+        ticks = [dict(value=v, first=f) for v, f in re.findall(r'<input class="pick-row" type="checkbox" value="([^"]+)"( data-first)?', html)]
+        board = Path(__file__).resolve().parents[1] / "static/runs/board.js"
+        program = r"""
+const [file, values, picks] = process.argv.slice(1).map(JSON.parse), elements = new Map();
+function element(id) {
+  if (!elements.has(id)) elements.set(id, {dataset: {}, listeners: {}, textContent: '', hidden: false,
+    addEventListener(k, fn) { this.listeners[k] = fn; }, click() { this.listeners.click(); },
+    replaceChildren(...xs) { this.children = xs; }, showModal() {}, closest() { return null; }});
+  return elements.get(id);
+}
+element('#rerun-ask').dataset.where = 'this machine';
+const ticks = values.map(x => Object.assign(element(x.value), {value: x.value,
+  dataset: x.first ? {first: ''} : {}, getAttribute() { return 'Choose ' + x.value; }}));
+element('form').elements = {reason: {value: 'typed before'}};
+const source = require('node:fs').readFileSync(file, 'utf8');
+new Function('$', '$$', 'rows', 'document', 'nulliusFetch', 'URL', 'location',
+  source.slice(source.indexOf('  const ticks ='), source.lastIndexOf('  apply();')))(
+  element, s => s === '#trial-rows .pick-row' ? ticks : [], [], {createElement: () => ({})},
+  async () => ({ok: true, json: async () => ({ok: true})}), URL, {href: 'http://localhost/job/r1', assign() {}});
+const out = [];
+for (const pick of picks) {
+  ticks.forEach(x => { x.checked = pick.includes(x.value); });
+  element('#rerun-open').click();
+  out.push({head: element('#rerun-ask-h').textContent, go: element('[data-go]').textContent, reason: !element('[data-reason]').hidden,
+            names: (element('[data-names]').children || []).length, where: !element('p.muted').hidden,
+            typed: element('form').elements.reason.value});
+}
+process.stdout.write(JSON.stringify(out));
+"""
+        rest = [t["value"] for t in ticks if t["first"]]
+        picks = [rest, rest[:1], [trial_name(0), rest[0]], [trial_name(0)]]
+        got = json.loads(subprocess.run([node, "-e", program, json.dumps(str(board)), json.dumps(ticks), json.dumps(picks)],
+                                        capture_output=True, text=True, check=True, timeout=10).stdout)
+        short = dict(go="Run", reason=False, names=0, where=False, typed="")
+        self.assertEqual(got[0], dict(short, head="Run the 3 tasks not yet run, on this machine?"))
+        self.assertEqual(got[1], dict(short, head="Run the 1 task not yet run, on this machine?"))
+        self.assertEqual(got[2], dict(head="Run 2 tasks, 1 again", go="Run 2 tasks, 1 again", reason=True, names=2, where=True, typed=""))
+        self.assertEqual(got[3], dict(head="Run 1 task again", go="Run 1 task again", reason=True, names=1, where=True, typed=""))
+
     def test_while_a_part_runs_the_board_queues_its_tasks_and_says_not_run_for_the_rest(self):
         node = shutil.which("node")
         if not node:
@@ -208,6 +261,48 @@ new Function('$', '$$', 'rows', 'document', 'nulliusFetch', 'URL', 'location',
             self.assertEqual(json.loads(initial)["part"], part)                  # the page's first draw counts as its polls do
         writer.emit("job.end")                                                   # ended: the board's own count, no part
         self.assertNotIn("part", json.loads(self.page("/job/r1/live")))
+
+    def test_while_a_later_part_runs_each_of_its_tasks_not_begun_has_a_row_marked_queued(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node is required for the board")
+        d = self.tmp / "loose" / "r1"
+        rerun_page.standard_job(d, "r1")
+        self.begun_on_a_part(d)
+        board = Path(__file__).resolve().parents[1] / "static/runs/live-board.js"
+        program = ("const L=require(" + json.dumps(str(board)) + ");const s=JSON.parse(process.argv[1]);"
+                   "process.stdout.write(JSON.stringify(L.render(s,{})));")
+        name = lambda k: f"t-{k}__u{k:04d}"
+        events = [("job.start", None, dict(n_total=6, tasks=PLAN))] + [("trial.queued", name(k), dict(position=k)) for k in range(6)]
+        events += [("trial.end", name(k), dict(outcome="resolved", reward=1.0)) for k in range(3)]
+        events += [("job.end", None, {}), ("job.start", None, dict(n_total=6, tasks=["t-3", "t-4"])),
+                   ("trial.queued", name(3), dict(position=0)), ("trial.phase", name(3), dict(task="t-3", phase="agent_run"))]
+        (d / "events.jsonl").unlink()
+        writer = feed.Writer(str(d / "events.jsonl"), "r1")
+        for event, trial, data in events:
+            writer.emit(event, trial, **data)
+        self.open(d.parent)
+        snap = json.loads(self.page("/job/r1/live"))
+        out = json.loads(subprocess.run([node, "-e", program, json.dumps(snap)], capture_output=True, text=True,
+                                        check=True, timeout=10).stdout)
+        rows = {re.search(r'data-trial="([^"]+)"', row)[1]: text(row, r".*")
+                for row in re.findall(r'<tr class="lb-row.*?</tr>', out["flight"], re.S)}
+        self.assertEqual(sorted(rows), [name(k) for k in range(5)])               # t-5 is outside the part: no row
+        self.assertEqual(rows[name(4)], "t-4 Queued —")                          # its name, less the runner's tag
+        self.assertIn('class="lb-row lb-queued"', out["flight"])
+        self.assertTrue(rows[name(3)].startswith("t-3 agent run"), rows[name(3)])
+        self.assertEqual(text(out["stats"], r".*").split(" Rate")[0], "Done 3 /6 Running 1 Queued 1 Not run 1")
+        # a part that runs a task again beside one never run: the one never run is counted queued, as its row says
+        events[-4:] = [("job.end", None, {}), ("job.start", None, dict(n_total=6, tasks=["t-2", "t-4"])),
+                       ("trial.phase", name(2), dict(task="t-2", phase="agent_run"))]
+        (d / "events.jsonl").unlink()
+        writer = feed.Writer(str(d / "events.jsonl"), "r1")
+        for event, trial, data in events:
+            writer.emit(event, trial, **data)
+        out = json.loads(subprocess.run([node, "-e", program, self.page("/job/r1/live")], capture_output=True, text=True,
+                                        check=True, timeout=10).stdout)
+        self.assertEqual(text(out["stats"], r".*").split(" Rate")[0], "Done 3 /6 Running 1 Queued 1 Not run 2")
+        self.assertEqual(re.findall(r'<tr class="lb-row lb-queued" data-trial="([^"]+)"', out["flight"]), [name(4)])
 
     def test_a_task_first_run_in_a_later_part_names_that_try_by_what_it_was(self):
         d = self.run_of()

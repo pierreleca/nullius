@@ -111,11 +111,11 @@ class RerunPage(unittest.TestCase):
         self.assertRegex(html, r'<tr data-outcome="failed_verification"[^>]*data-trial="t-1__u0001"[^>]*>\s*<td><input class="pick-row"')
         ask = text(html, r'<dialog class="rerun-ask".*?</dialog>')
         self.assertEqual(ask, "Run 0 tasks again On this machine, in this job: each result replaces the task's, and the earlier tries stay. "
-                              "Reason (optional) Spending cap, USD (optional) Cancel Run 0 tasks again")
+                              "Reason (optional) Cancel Run 0 tasks again")
         self.assertIn('data-post="/job/r1/rerun"', html)
         self.assertNotIn('id="rerun-why"', html)
 
-    def test_run_selected_again_starts_it_where_the_job_ran_with_its_reason_and_cap(self):
+    def test_run_selected_again_starts_it_where_the_job_ran_with_its_reason(self):
         d = self.run_of()
         self.open(d.parent)
         r = self.post("r1", {"trials": [trial_name(1), trial_name(1), trial_name(2)], "reason": "  the provider\nfailed ", "max_usd": "0.5"})
@@ -123,8 +123,8 @@ class RerunPage(unittest.TestCase):
         ((ex, part),) = self.asked
         self.assertEqual((ex.plan.name, part["id"], part["again"], part["trials"]), ("r1", "again-1", "r1", [trial_name(1), trial_name(2)]))
         self.assertIn(f"rerun \"${{NULLIUS_JOBS:-jobs_standard}}\"/r1 --unit {trial_name(1)} --unit {trial_name(2)} "
-                      "--reason 'the provider failed' --max-usd 0.5 --from-run", part["script"])
-        r = self.post("r1", {"trials": [trial_name(0)], "reason": "", "max_usd": ""})
+                      "--reason 'the provider failed' --from-run", part["script"])     # one cap for the job: none is posted
+        r = self.post("r1", {"trials": [trial_name(0)], "reason": ""})
         self.assertEqual(r.status_code, 200)
         self.assertNotIn("--max-usd", self.asked[-1][1]["script"]); self.assertNotIn("--reason", self.asked[-1][1]["script"])
 
@@ -133,8 +133,6 @@ class RerunPage(unittest.TestCase):
         self.open(d.parent)
         for body, code, said in [({"trials": []}, 400, "Tick the tasks to run again."),
                                  ({"trials": ["nope"]}, 400, "r1 holds no trial nope"),
-                                 ({"trials": [trial_name(0)], "max_usd": "-1"}, 400, "The spending cap is an amount in USD above zero, or empty for none."),
-                                 ({"trials": [trial_name(0)], "max_usd": "lots"}, 400, "The spending cap is an amount in USD above zero, or empty for none."),
                                  ({"trials": [trial_name(0)], "reason": "x" * 201}, 400, "The reason is one line of at most 200 characters.")]:
             r = self.post("r1", body)
             self.assertEqual((r.status_code, r.json["error"]), (code, said), body)
@@ -288,6 +286,8 @@ tick().then(() => process.stdout.write(JSON.stringify(destination)));
         self.assertEqual(rows, {"t-2__u0002": "t-2 No result begun, ended with none", "t-3__u0003": "t-3 No result never run",
                                 "t-4__u0004": "t-4 No result never run"})
         self.assertIn('data-first="On this machine, in this job: a task with no result gets its first;', html)
+        for n in waiting:                                                        # the question says "with no result"
+            self.assertIn(f'value="{n}" data-first="none"', html)
         r = self.post("r1", {"trials": ["t-3__u0003", trial_name(1)]})
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
         self.assertIn("--unit t-3__u0003 --unit t-1__u0001 --from-run", self.asked[-1][1]["script"])
@@ -318,6 +318,114 @@ tick().then(() => process.stdout.write(JSON.stringify(destination)));
         self.assertEqual(text(html, r'<details id="reruns" open>.*?</details>'),
                          "Run later 1 2026-11-18 15:40Z t-1 no result → reward 1.0 try 1 t-3 first run → reward 0.0 "
                          "2 tasks · $0.0012 spent")
+
+    def capped(self, d, budget, reruns=None):
+        top = json.loads((d / "result.json").read_text())
+        top["budget"] = budget
+        if reruns is not None:
+            top["reruns"] = reruns
+        (d / "result.json").write_text(json.dumps(top))
+
+    def cap(self, name, body):
+        r = self.client.post(f"/job/{name}/cap", json=body, headers={"X-CSRF-Token": self.csrf, "Origin": "http://localhost"})
+        self.addCleanup(r.close)
+        return r
+
+    def test_the_page_shows_the_job_s_one_cap_and_a_change_holds_from_the_next_part(self):
+        d = self.run_of()
+        self.capped(d, {"max_usd": 4.0, "spent_usd": 0.31, "stopped": False, "cut_off": [], "not_run": []})
+        self.open(d.parent)
+        html = self.page("/job/r1?view=results")
+        self.assertEqual(text(html, r'<div class="kv" id="run-cap".*?</div>'), "Spending cap $4.00")
+        self.assertEqual(text(html, r'<div class="sp cap-spent" id="cap-spent">.*?</div>'), "$0.31 spent · Change")
+        self.assertEqual(text(html, r'<p class="small" id="rerun-budget">.*?</p>'), "Budget for the whole run: $4.00, $3.69 left.")
+        self.assertEqual(text(html, r'<dialog class="rerun-ask" id="cap-ask".*?</dialog>'),
+                         "Spending cap for the whole run $0.31 spent so far. The new cap applies from the next part. Cap, USD Cancel Save")
+        r = self.cap("r1", {"max_usd": "6"})
+        self.assertEqual((r.status_code, r.json["left_usd"]), (200, 5.69), r.get_data(as_text=True))
+        record = json.loads((self.tmp / "runs" / "r1" / "run.json").read_text())
+        self.assertEqual(record["plan"]["caps"], {"r1": 6.0})                     # kept with the run, for its next part
+        html = self.page("/job/r1?view=results")
+        self.assertEqual(text(html, r'<div class="kv" id="run-cap".*?</div>'), "Spending cap $6.00")
+        self.assertEqual(text(html, r'<p class="small" id="rerun-budget">.*?</p>'), "Budget for the whole run: $6.00, $5.69 left.")
+        self.assertEqual(self.post("r1", {"trials": [trial_name(0)]}).status_code, 200)
+        self.assertIn(f"--unit {trial_name(0)} --max-usd 6 --from-run", self.asked[-1][1]["script"])
+        # the part recorded it: the job's own cap now, and the page's is dropped
+        self.capped(d, {"max_usd": 6.0, "spent_usd": 0.31, "spent_total_usd": 0.4, "closed": False,
+                        "changes": [{"at": "2026-11-20T20:00:00+00:00", "max_usd": 6.0, "was": 4.0}]})
+        self.assertEqual(self.post("r1", {"trials": [trial_name(1)]}).status_code, 200)
+        self.assertIn(f"--unit {trial_name(1)} --from-run", self.asked[-1][1]["script"])
+        self.assertEqual(json.loads((self.tmp / "runs" / "r1" / "run.json").read_text())["plan"]["caps"], {})
+        self.assertEqual(text(self.page("/job/r1?view=results"), r'<div class="sp cap-spent" id="cap-spent">.*?</div>'), "$0.40 spent · Change")
+
+    def test_a_change_is_refused_at_or_under_what_was_spent_and_while_a_part_runs(self):
+        d = self.run_of()
+        self.capped(d, {"max_usd": 4.0, "spent_usd": 0.31, "stopped": False, "cut_off": [], "not_run": []})
+        self.open(d.parent)
+        for body, said in [({"max_usd": "0.31"}, "The cap must be above what this run has spent, 0.31 USD."),
+                           ({"max_usd": "0"}, "The spending cap is an amount in USD above zero."),
+                           ({"max_usd": "lots"}, "The spending cap is an amount in USD above zero."),
+                           ({}, "The spending cap is an amount in USD above zero.")]:
+            r = self.cap("r1", body)
+            self.assertEqual((r.status_code, r.json["error"]), (400, said), body)
+        ex = execution.EXECUTIONS["r1-1"]
+        ex.plan.parts.append({"id": "again-1", "label": "1 task of r1 again", "again": "r1", "trials": [trial_name(1)], "script": "true"})
+        ex.part, ex.state, ex.launched = 1, "running", "again-1"
+        r = self.cap("r1", {"max_usd": "6"})
+        self.assertEqual((r.status_code, r.json["error"]), (409, "Still running: more tasks can be started once it has ended."))
+        self.assertEqual(text(self.page("/job/r1?view=results"), r'<div class="sp cap-spent" id="cap-spent">.*?</div>'),
+                         "$0.31 spent · change it when this part ends")
+        self.assertEqual(ex.plan.caps, {})
+
+    def test_a_job_whose_cap_is_spent_is_refused_and_the_question_says_so(self):
+        d = self.run_of()
+        self.capped(d, {"max_usd": 0.5, "spent_usd": 0.5, "stopped": True, "cut_off": [], "not_run": []})
+        self.open(d.parent)
+        html = self.page("/job/r1?view=results")
+        self.assertEqual(text(html, r'<p class="small" id="rerun-budget">.*?</p>'), "Budget for the whole run: $0.50, all spent. Change it to run more.")
+        self.assertIn("data-go data-spent>", html)
+        r = self.post("r1", {"trials": [trial_name(0)]})
+        self.assertEqual((r.status_code, r.json["error"]),
+                         (409, "The job's spending cap of 0.50 USD is spent (0.50 spent): change it to run more."))
+        self.assertEqual(self.asked, [])
+        self.assertEqual(self.cap("r1", {"max_usd": "1"}).status_code, 200)
+        self.assertEqual(self.post("r1", {"trials": [trial_name(0)]}).status_code, 200)
+        self.assertIn("--max-usd 1 --from-run", self.asked[-1][1]["script"])
+
+    def test_a_job_whose_last_part_stopped_at_its_cap_is_refused_until_it_changes(self):
+        d = self.run_of()
+        self.capped(d, {"max_usd": 0.8, "spent_usd": 0.5445, "stopped": False, "cut_off": [], "not_run": [],
+                        "spent_total_usd": 0.726, "closed": True})
+        self.open(d.parent)
+        self.assertEqual(text(self.page("/job/r1?view=results"), r'<p class="small" id="rerun-budget">.*?</p>'),
+                         "Budget for the whole run: $0.80, $0.726 spent; the last part stopped at it. Change it to run more.")
+        r = self.post("r1", {"trials": [trial_name(0)]})
+        self.assertEqual((r.status_code, r.json["error"]), (409, "The job's spending cap of 0.80 USD is spent (0.726 spent, and a "
+                                                                 "call did not fit what was left): change it to run more."))
+        self.assertEqual(self.asked, [])
+
+    def test_an_older_job_with_caps_of_its_own_parts_shows_what_every_part_spent(self):
+        d = self.run_of()
+        self.capped(d, {"max_usd": 0.5, "spent_usd": 0.1, "stopped": False, "cut_off": [], "not_run": []},
+                    reruns=[{"at": "2026-11-18T15:40:12+00:00", "trials": [trial_name(1)], "replaced": [],
+                             "max_usd": 2.0, "spent_usd": 0.0012}])
+        self.open(d.parent)
+        html = self.page("/job/r1?view=results")
+        self.assertEqual(text(html, r'<div class="kv" id="run-cap".*?</div>'), "Spending cap $0.50")
+        self.assertEqual(text(html, r'<div class="sp cap-spent" id="cap-spent">.*?</div>'), "$0.1012 spent · Change")
+        self.assertIn("$0.0012 spent of a $2.00 cap", text(html, r'<details id="reruns" open>.*?</details>'))
+
+    def test_a_job_with_no_cap_has_none_until_one_is_set(self):
+        d = self.run_of()
+        self.open(d.parent)
+        html = self.page("/job/r1?view=results")
+        self.assertEqual(text(html, r'<div class="kv" id="run-cap".*?</div>'), "Spending cap none")
+        self.assertEqual(text(html, r'<div class="sp cap-spent" id="cap-spent">.*?</div>'), "Set")
+        self.assertNotIn('id="rerun-budget"', html)
+        self.assertEqual(self.post("r1", {"trials": [trial_name(0)]}).status_code, 200)
+        self.assertNotIn("--max-usd", self.asked[-1][1]["script"])
+        self.assertEqual(self.cap("r1", {"max_usd": "2"}).status_code, 200)
+        self.assertIn("Budget for the whole run: $2.00, $2.00 left.", self.page("/job/r1?view=results"))
 
     def test_a_job_never_run_again_shows_none_of_it(self):
         d = self.run_of()

@@ -8,7 +8,7 @@ import time
 from flask import abort, jsonify, request, url_for
 from nullius import execution, hosts, prerequisites, prices, providers, settings
 from nullius.harbor import source as harbor_source
-from nullius.standard import boat, recipe as standard_recipe
+from nullius.standard import boat, ledger, recipe as standard_recipe, rerun
 
 from .core import app
 from . import shared
@@ -264,16 +264,10 @@ def job_rerun(job_id):
     reason = " ".join(str(body.get("reason") or "").split())
     if len(reason) > REASON_MAX:
         return jsonify(ok=False, error=f"The reason is one line of at most {REASON_MAX} characters."), 400
-    cap = body.get("max_usd")
-    if cap in (None, ""):
-        cap = None
-    else:
-        try:
-            cap = float(cap)
-        except (TypeError, ValueError):
-            cap = -1.0
-        if not cap > 0 or cap != cap or cap == float("inf"):
-            return jsonify(ok=False, error="The spending cap is an amount in USD above zero, or empty for none."), 400
+    budget = job_cap(j, ex, settle=True)        # one cap for the job: the part has what the parts before it left
+    if budget and budget["closed"]:
+        said = rerun.spent_out(budget, "change it to run more.")
+        return jsonify(ok=False, error=said[0].upper() + said[1:]), 409
     recipe = ex.plan.recipe or {}
     missing = "" if ex.plan.keyless else provider_problem(recipe.get("provider") or "openai", recipe.get("endpoint"))
     if missing:
@@ -283,10 +277,59 @@ def job_rerun(job_id):
         return jsonify(ok=False, error=gone), 409
     n = 1 + sum(1 for p in ex.plan.parts if p.get("again"))
     try:
-        ex.again(standard_recipe.again(job_id, picked, reason=reason, max_usd=cap, n=n))
+        ex.again(standard_recipe.again(job_id, picked, reason=reason, max_usd=budget["max_usd"] if budget and budget["changed"] else None, n=n))
     except ValueError as e:
         return jsonify(ok=False, error=str(e)), 409
     return jsonify(ok=True, **ex.summary())
+
+
+def job_cap(job, ex, settle: bool = False) -> dict | None:
+    """The job's one spending cap as its page shows it and its next part runs under it (``rerun.budget``): the cap
+    set on the page (``Plan.caps``) where it differs from the job's own, else the job's. ``settle``: a cap set on the
+    page that the job's record now holds is dropped from the run's record. None for a job with no cap."""
+    if not job.standard:
+        return None
+    set_here = (ex.plan.caps or {}).get(job.job_id) if ex is not None else None
+    try:
+        got = rerun.budget(job.dir, cap=set_here)
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+    if settle and set_here is not None and got is not None and not got["changed"]:
+        with ex._turn:
+            ex.plan.caps = {k: v for k, v in ex.plan.caps.items() if k != job.job_id}
+            ex._save()
+    return got
+
+
+@app.route("/job/<job_id>/cap", methods=["POST"])
+def job_cap_change(job_id):
+    """A new spending cap for the whole job, from its next part on: kept in its run's record (``Plan.caps``) and
+    handed to that part as ``rerun --max-usd``. Refused where the page offers no next part (``again_offer``: a part
+    running among them), and for a cap at or under what the job has spent."""
+    shared._require_csrf()
+    if not settings_web._local_client():
+        abort(403, description="Runs are started from a browser on the application host only.")
+    j = shared._find_job(shared._jobs_for_request(), job_id)
+    if j is None:
+        abort(404)
+    ex = execution.for_job(job_id)
+    offer = again_offer(j, ex)
+    if offer is None or offer.get("why"):
+        return jsonify(ok=False, error=(offer or {}).get("why") or "Only a job of the Nullius standard has a cap to change."), 409
+    try:
+        cap = float((request.get_json(silent=True) or {}).get("max_usd"))
+    except (TypeError, ValueError):
+        cap = -1.0
+    if not 0 < cap < float("inf"):
+        return jsonify(ok=False, error="The spending cap is an amount in USD above zero."), 400
+    now = rerun.budget(j.dir, cap=cap)
+    if now["left_usd"] <= 0:
+        return jsonify(ok=False, error=f"The cap must be above what this run has spent, {ledger.usd(now['spent_usd'])} USD."), 400
+    with ex._turn:
+        caps = {k: v for k, v in (ex.plan.caps or {}).items() if k != job_id}
+        ex.plan.caps = caps if not now["changed"] else dict(caps, **{job_id: cap})
+        ex._save()
+    return jsonify(ok=True, max_usd=cap, left_usd=now["left_usd"])
 
 
 @app.route("/run/<run_id>")

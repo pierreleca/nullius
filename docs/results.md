@@ -43,7 +43,8 @@ the same question. The runs list counts its solves over the trials run and says 
 
 | Step | Detail |
 | --- | --- |
-| Ask | A reason (optional), a spending cap (optional), the number of tasks |
+| Ask | Tasks with no result alone: "Run the N tasks not yet run, on HOST?" and the budget left. With a result among them: their names, a reason (optional), the budget left |
+| Spending cap | One for the whole job: each part has what the parts before it left. **Change** sets it for the next part, not while a part runs; a job with none gets one by **Set**. Nothing left: Run waits for a higher cap |
 | Where | Where the job ran: this machine, or the host it was sent to, in the job's own folder |
 | While it runs | Each task shows its earlier result, marked **running again**, until the new one lands |
 | After | The new result is the task's; the earlier tries stay as its tabs, the one asked for marked **run again by hand** with its reason, a task's first run in a later part **first run, in a later part**; **Run later** lists each later run, the tasks run for the first time and the tries that had no result |

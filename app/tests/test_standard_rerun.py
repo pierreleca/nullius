@@ -17,13 +17,14 @@ from unittest import mock
 
 from nullius.harbor import feed
 from nullius.runs import classify, live, parse
-from nullius.standard import acp, definitions, install, merge, pace as pacing, rerun, run
+from nullius.standard import acp, definitions, install, job, ledger, merge, pace as pacing, rerun, run
 from tests import test_standard_run as base
 
 ROOT = base.ROOT
 UNITS = {"name": "units.txt", "sha256": "0" * 64, "units": ["good", "wrong", "model"]}
 PRICES = {"m-1": {"input": 1.0, "output": 10.0, "max_output": 10}}     # a call: 11 in, 3 out, 0.000041 USD
 CALL = 0.000041
+usd = rerun.ledgers.usd
 
 
 def digest(root) -> dict:
@@ -397,16 +398,243 @@ class RerunTest(unittest.TestCase):
     def test_a_rerun_stops_at_its_cap_and_records_its_spend(self):
         job_dir = self.job(concurrency=1)
         before, _ = self.trials(job_dir)
-        got = self.again(job_dir, ["model", "good"], max_usd=0.00001, concurrency=1)
+        self.assertIsNone(rerun.budget(job_dir))                             # no cap, none given: none
+        got = self.again(job_dir, ["model", "good"], max_usd=CALL + 0.00001, concurrency=1)
         after, _ = self.trials(job_dir)
-        self.assertEqual(after["model"].outcome, classify.SPENDING_CAP)          # cut off at the re-run's cap
+        self.assertEqual(after["model"].outcome, classify.SPENDING_CAP)          # cut off at what the cap had left
         self.assertEqual(after["good"].n_retries, 0)                         # never begun: it stands as it was
-        self.assertEqual(got["max_usd"], 0.00001)
+        self.assertEqual(got["max_usd"], CALL + 0.00001)
+        self.assertAlmostEqual(got["left_usd"], 0.00001)                     # the first run's call counted against it
         self.assertEqual(got["spent_usd"], 0.0)
         self.assertTrue(got["stopped"])
         self.assertEqual([x["trial"] for x in got["replaced"]], [before["model"].trial_name])
-        self.assertIsNone(self.read(job_dir, "result.json").get("budget"))   # the first run had none: the re-run's is its own
-        self.assertTrue(os.path.isfile(os.path.join(job_dir, ".work", "rerun-1", "ledger", "ledger.json")))
+        b = self.read(job_dir, "result.json")["budget"]                      # the job had none: it has this one from now on
+        self.assertEqual((b["max_usd"], b["spent_total_usd"], b["closed"]), (CALL + 0.00001, CALL, True))
+        self.assertEqual([(c["max_usd"], c["was"]) for c in b["changes"]], [(CALL + 0.00001, None)])
+        self.assertEqual(self.read(job_dir, ".work", "rerun-1", "ledger", "ledger.json")["max_usd"], CALL + 0.00001 - CALL)
+
+
+class OneBudget(unittest.TestCase):
+    """A job has one spending cap: each later part has what the parts before it left, a new cap holds from then on,
+    and a part is refused when nothing is left."""
+    setUpClass, tearDownClass = RerunTest.__dict__["setUpClass"], RerunTest.__dict__["tearDownClass"]
+    setUp, job, again, read, trials = RerunTest.setUp, RerunTest.job, RerunTest.again, RerunTest.read, RerunTest.trials
+
+    def ledger(self, job_dir, n):
+        return self.read(job_dir, ".work", f"rerun-{n}", "ledger", "ledger.json")
+
+    def test_a_later_part_has_what_the_parts_before_it_left(self):
+        job_dir = self.job(concurrency=1, max_usd=0.0001)
+        self.assertEqual(self.read(job_dir, "result.json")["budget"]["spent_usd"], CALL)
+        self.assertEqual(rerun.budget(job_dir), {"max_usd": 0.0001, "spent_usd": CALL, "left_usd": 0.0001 - CALL,
+                                                 "closed": False, "changed": False, "was": 0.0001})
+        lines = []
+        got = rerun.rerun(job_dir, ["model"], env=self.env, say=lines.append, root=ROOT)    # no cap given: the job's
+        self.assertEqual(self.ledger(job_dir, 1)["max_usd"], 0.0001 - CALL)
+        self.assertEqual((got["max_usd"], got["left_usd"], got["spent_usd"]), (0.0001, 0.0001 - CALL, CALL))
+        b = self.read(job_dir, "result.json")["budget"]
+        self.assertEqual((b["max_usd"], b["spent_usd"], b["spent_total_usd"], b["closed"]), (0.0001, CALL, 2 * CALL, False))
+        self.assertNotIn("changes", b)
+        self.assertIn(f"the job's spending cap: 0.0001 USD, {usd(CALL)} spent, {usd(0.0001 - CALL)} left for this part", lines)
+        self.assertIn(f"spent {usd(CALL)} USD; the job has spent {usd(2 * CALL)} of its 0.0001 USD cap", lines)
+        # the third call does not fit what is left: that part stops at the cap, and the next is refused until it changes
+        got = self.again(job_dir, ["model"])
+        self.assertEqual(self.ledger(job_dir, 2)["seen"], self.ledger(job_dir, 1)["seen"])
+        self.assertTrue(got["stopped"])
+        self.assertTrue(self.read(job_dir, "result.json")["budget"]["closed"])
+        whole = digest(job_dir)
+        with self.assertRaises(run.Refused) as e:
+            self.again(job_dir, ["good"])
+        self.assertEqual(str(e.exception), f"the job's spending cap of 0.0001 USD is spent ({usd(2 * CALL)} spent, and a call did not "
+                                           "fit what was left): raise it with --max-usd USD")
+        self.assertEqual(digest(job_dir), whole)
+        got = self.again(job_dir, ["model"], max_usd=0.001)                  # a new cap holds from then on
+        self.assertEqual(self.ledger(job_dir, 3)["max_usd"], 0.001 - 2 * CALL)
+        b = self.read(job_dir, "result.json")["budget"]
+        self.assertEqual((b["max_usd"], b["spent_total_usd"], b["closed"]), (0.001, 3 * CALL, False))
+        self.assertEqual([(c["max_usd"], c["was"]) for c in b["changes"]], [(0.001, 0.0001)])
+        self.again(job_dir, ["model"])
+        self.assertEqual(self.ledger(job_dir, 4)["max_usd"], 0.001 - 3 * CALL)
+        self.assertEqual(len(self.read(job_dir, "result.json")["budget"]["changes"]), 1)     # the same cap is no change
+
+    def test_a_part_is_refused_when_the_cap_is_at_or_under_what_was_spent(self):
+        job_dir = self.job(concurrency=1, max_usd=0.0001)
+        whole = digest(job_dir)
+        for cap in (CALL, CALL / 2):
+            with self.subTest(cap=cap), self.assertRaises(run.Refused) as e:
+                self.again(job_dir, ["model"], max_usd=cap)
+            self.assertEqual(str(e.exception), f"the job's spending cap of {usd(cap)} USD is spent ({usd(CALL)} spent): "
+                                               "raise it with --max-usd USD")
+            self.assertEqual(digest(job_dir), whole)
+        for bad in (0, -1.0, float("inf")):
+            with self.subTest(bad=bad), self.assertRaises(run.Refused):
+                self.again(job_dir, ["model"], max_usd=bad)
+
+    def test_a_job_with_no_cap_has_none_unless_one_is_given(self):
+        job_dir = self.job(concurrency=1)
+        self.again(job_dir, ["model"])
+        res = self.read(job_dir, "result.json")
+        self.assertNotIn("budget", res)
+        self.assertFalse(os.path.exists(os.path.join(job_dir, ".work", "rerun-1", "ledger")))
+        self.assertIsNone(res["reruns"][0]["max_usd"])
+        # given one: what its uncapped parts' trials cost, every try, counts against it
+        self.assertEqual(rerun.budget(job_dir, cap=0.001)["spent_usd"], 2 * CALL)
+
+    def test_a_job_recorded_before_one_budget_counts_each_part_s_spend(self):
+        job_dir = self.job(concurrency=1, max_usd=0.0001)
+        res = self.read(job_dir, "result.json")
+        res["reruns"] = [{"at": "2026-11-18T10:00:00+00:00", "trials": [], "replaced": [], "max_usd": 5.0, "spent_usd": 0.00002},
+                         {"at": "2026-11-18T11:00:00+00:00", "trials": [], "replaced": [], "max_usd": None, "spent_usd": None}]
+        Path(job_dir, "result.json").write_text(json.dumps(res))
+        self.assertEqual(rerun.budget(job_dir), {"max_usd": 0.0001, "spent_usd": CALL + 0.00002,
+                                                 "left_usd": 0.0001 - (CALL + 0.00002), "closed": False,
+                                                 "changed": False, "was": 0.0001})
+        j = parse.parse_job(job_dir)                                         # and it reads as it did
+        self.assertEqual((j.budget["max_usd"], [r["max_usd"] for r in j.reruns]), (0.0001, [5.0, None]))
+
+
+class BudgetAccounting(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.bench = definitions.get("benchmark", "fakebench", ROOT)
+        self.agent = definitions.get("agent", "fake", ROOT)
+        for method in ("ready", "known_models", "let_go"):
+            self.enterContext(mock.patch.object(run.Run, method))
+        self.enterContext(mock.patch.object(run.Run, "benchmark_calls", return_value=[]))
+
+    def job(self, cap, cost, output):
+        path = self.tmp / "job"
+        path.mkdir()
+        job.write_config(str(path), job="job", bench=self.bench, other=self.agent, model="m-1", provider="custom",
+                         dataset="all", units=["model"], concurrency=1, granted=True,
+                         prices={"models": {"m-1": {"input": 0.0, "output": cost * 1e6 / output}}})
+        trial = self.trial(path / "model__u0000", cost, output)
+        first = ledger.Ledger.create(str(path / ".work/ledger/ledger.json"), cap)
+        booking, _ = first.reserve(cost)
+        first.settle(booking, cost, model="m-1", output=output)
+        runner = mock.Mock(ledger=first, max_usd=cap, unit_max_usd=None, _cut=[])
+        job.write_result(str(path), "job", 1, 2, [trial], 1, budget=run.Run.budget(runner, []))
+        writer = feed.Writer(str(path / "events.jsonl"), "job")
+        writer.emit("job.start", n_total=1, tasks=["model"])
+        writer.emit("trial.queued", trial["trial_name"], position=0)
+        writer.emit("trial.end", trial["trial_name"], outcome="resolved", reward=1)
+        writer.emit("job.end")
+        return path
+
+    def trial(self, path, cost, output, retry=0, refused=False):
+        return job.write_trial(str(path), job="job", bench=self.bench, other=self.agent, model="m-1", unit="model",
+                               t0=1, t1=2, produce=(1, 2), score=None if refused else {"reward": 1},
+                               exception=(ledger.ERROR, "call does not fit") if refused else None,
+                               calls=[] if refused else [{"status": 200, "reply": {"usage": {"output": output}}, "cost_usd": cost}],
+                               trajectory=None, retries=retry)
+
+    def part(self, path, cost, output, amount=None):
+        admitted = []
+
+        def simulate(r, index, task, attempt, retry=0):
+            booking, state = r.ledger.reserve(cost if amount is None else amount, model="m-1")
+            admitted.append((bool(booking), state["amount"]))
+            if booking:
+                r.ledger.settle(booking, cost, model="m-1", output=output)
+            return self.trial(Path(r.job_dir) / r.trial_name(index, task, attempt), cost, output,
+                              retry, refused=booking is None)
+
+        with mock.patch.object(run.Run, "unit", simulate):
+            record = rerun.rerun(str(path), ["model"], root=ROOT, say=lambda s: None,
+                                 env={"MODEL_API_URL": "http://127.0.0.1:1/v1", "MODEL_API_KEY": "fake"})
+        return record, admitted
+
+    def test_small_parts_keep_unrounded_spending_under_one_cap(self):
+        cost, cap = 0.0000004, 0.000001
+        path = self.job(cap, cost, 1)
+        calls = 1
+        for _ in range(5):
+            try:
+                _, admitted = self.part(path, cost, 1)
+            except run.Refused:
+                break
+            calls += sum(sent for sent, _ in admitted)
+        self.assertLessEqual(calls * cost, cap + cost)
+        self.assertEqual(calls, 2)
+        result = json.loads((path / "result.json").read_text())
+        self.assertEqual(result["budget"]["spent_total_usd"], calls * cost)
+        self.assertEqual(rerun.budget(str(path))["left_usd"], cap - calls * cost)
+        self.assertTrue(rerun.budget(str(path))["closed"])
+        parsed = parse.parse_job(str(path))
+        self.assertEqual(parsed.budget["spent_usd"], 0)
+        self.assertTrue(all(r["spent_usd"] == 0 for r in parsed.reruns))
+
+    def test_next_part_inherits_cumulative_replies_once(self):
+        path = self.job(1.61, 1, 100)
+        row = {"input": 0.0, "output": 10000.0}
+        self.part(path, 0.01, 1, amount=lambda usual: ledger.bound({"max_tokens": 1}, b"{}", row, seen=usual))
+        result = json.loads((path / "result.json").read_text())
+        result["reruns"][0].pop("cumulative_replies", None)
+        (path / "result.json").write_text(json.dumps(result))
+        record, admitted = self.part(path, 0.01, 1, amount=lambda usual: ledger.bound({}, b"{}", row, seen=usual))
+        self.assertEqual(admitted, [(True, 0.51)])
+        self.assertFalse(record.get("stopped", False))
+        state = json.loads((path / ".work/rerun-2/ledger/ledger.json").read_text())
+        self.assertEqual(state["seen"]["m-1"], [3, 102])
+
+    def test_older_per_part_replies_are_combined_before_inheritance(self):
+        path = self.job(1.61, 1, 100)
+        self.part(path, 0.01, 1)
+        result = json.loads((path / "result.json").read_text())
+        result["budget"].pop("spent_total_usd")
+        result["reruns"][0].pop("cumulative_replies", None)
+        result["reruns"][0].pop("left_usd")
+        (path / "result.json").write_text(json.dumps(result))
+        older = path / ".work/rerun-1/ledger/ledger.json"
+        state = json.loads(older.read_text())
+        state["seen"]["m-1"] = [1, 1]
+        older.write_text(json.dumps(state))
+        before = older.read_bytes()
+        row = {"input": 0.0, "output": 10000.0}
+        for part, amount, seen in ((2, 0.51, [3, 102]), (3, 0.34, [4, 103])):
+            _, admitted = self.part(path, 0.01, 1, amount=lambda usual: ledger.bound({}, b"{}", row, seen=usual))
+            self.assertEqual(admitted, [(True, amount)])
+            state = json.loads((path / f".work/rerun-{part}/ledger/ledger.json").read_text())
+            self.assertEqual(state["seen"]["m-1"], seen)
+        self.assertEqual(older.read_bytes(), before)
+
+
+class NoVersion(unittest.TestCase):
+    """A job that records no version of a benchmark that has versions now is older than them: it ran the pin the
+    definition held then, the one version that runs the shared commit."""
+
+    def test_the_version_that_runs_the_shared_pin_is_the_earlier_one(self):
+        up = {"repository": "https://example.org/b", "tested": "a" * 40}
+        for versions, want in [({"v2": {"upstream": {"tag": "v2", "tested": "b" * 40}}, "old": {"upstream": {"branch": "main"}}}, "old"),
+                               ({"v2": {"upstream": {"tag": "v2", "tested": "b" * 40}}, "v1": {"upstream": {"tag": "v1"}}}, None),
+                               ({"a": {"upstream": {"branch": "main"}}, "b": {"upstream": {"branch": "dev"}}}, None),
+                               ({"fork": {"upstream": {"branch": "main", "repository": "https://example.org/fork"}}}, None),
+                               ({}, None)]:
+            with self.subTest(versions=list(versions)):
+                self.assertEqual(rerun.earlier_version({"upstream": up, "default": "v2", "versions": versions}), want)
+        self.assertIsNone(rerun.earlier_version({"upstream": {}, "versions": {"old": {"upstream": {"branch": "main"}}}}))
+
+    def test_a_job_of_osworld1_from_before_its_versions_is_taken_as_the_earlier_one(self):
+        bench = definitions.get("benchmark", "osworld1")
+        self.assertEqual(bench["_version"], "desktop-env-v1.0.3")                # what a bare key resolves to now
+        lines = []
+        std = {"benchmark": "osworld1", "plugged": "nop", "kind": "control"}     # recorded before versions: none
+        got, other = rerun.resolve({"job_name": "old-job", "standard": std}, [], say=lines.append)
+        self.assertEqual((got["_ref"], other["key"]), ("osworld1@044bc33", "nop"))
+        self.assertEqual(lines, ["old-job records no version of osworld1: taken as osworld1@044bc33, main (044bc33), "
+                                 "the one osworld1 had before it had versions"])
+        lines.clear()
+        std = dict(std, **rerun.job._version(definitions.get("benchmark", "osworld1@044bc33")))
+        self.assertEqual(rerun.resolve({"standard": std}, [], say=lines.append)[0]["_ref"], "osworld1@044bc33")
+        self.assertEqual(lines, [])                                              # a recorded version is the one run
+
+    def test_without_one_earlier_version_the_job_is_refused_with_what_to_do(self):
+        bench = dict(definitions.get("benchmark", "osworld1"))
+        with mock.patch.object(rerun, "_ran_before_versions", lambda b, root: None), \
+                mock.patch.object(rerun.definitions, "get", lambda kind, ref, root=None: bench), self.assertRaises(run.Refused) as e:
+            rerun.resolve({"standard": {"benchmark": "osworld1", "plugged": "nop", "kind": "control"}}, [])
+        self.assertEqual(str(e.exception), "the job records no version of osworld1, and its definition does not say which of "
+                                           "its versions (desktop-env-v1.0.3, 044bc33) the job ran: start a new run to compare")
 
 
 class OwnAgent(unittest.TestCase):
@@ -473,15 +701,25 @@ class FinishTest(unittest.TestCase):
         self.assertEqual(rerun.unfinished(job_dir), {n: {"unit": n[:2], "folder": False} for n in names[3:]})
         j0 = parse.parse_job(job_dir)
         self.assertEqual((j0.n_planned, len(j0.trials), j0.n_resolved), (5, 3, 2))
+        whole = digest(job_dir)
+        with self.assertRaises(run.Refused) as e:                                            # one cap for the job: spent
+            rerun.rerun(job_dir, [], every_unfinished=True, env=self.env, say=lambda s: None, root=root)
+        self.assertEqual(str(e.exception), "the job's spending cap of 0.00008 USD is spent (0.00006 spent, and a call did not "
+                                           "fit what was left): raise it with --max-usd USD")
+        self.assertEqual(digest(job_dir), whole)
         said_lines = []
-        got = rerun.rerun(job_dir, [], every_unfinished=True, env=self.env, say=said_lines.append, root=root, reason="finish")
+        got = rerun.rerun(job_dir, [], every_unfinished=True, env=self.env, say=said_lines.append, root=root, reason="finish",
+                          max_usd=0.001)
         j1 = parse.parse_job(job_dir)
         self.assertEqual((j1.n_planned, len(j1.trials), j1.n_resolved), (5, 5, 5))
         self.assertEqual({t.trial_name: t.outcome for t in j1.trials}, {n: classify.RESOLVED for n in names})
         res = self.read(job_dir, "result.json")
         self.assertEqual((res["n_total_trials"], res["stats"]["n_completed_trials"], res["stats"]["n_cancelled_trials"]), (5, 5, 0))
         self.assertEqual(res["standard"]["passed"], 5)                                       # the rate, over the five
-        self.assertEqual((res["started_at"], res["finished_at"], res["budget"]), (first["started_at"], first["finished_at"], first["budget"]))
+        self.assertEqual((res["started_at"], res["finished_at"]), (first["started_at"], first["finished_at"]))
+        changes = res["budget"].pop("changes")
+        self.assertEqual([(c["max_usd"], c["was"]) for c in changes], [(0.001, 0.00008)])
+        self.assertEqual(res["budget"], dict(first["budget"], max_usd=0.001, spent_total_usd=2 * 0.00003 + 3 * 0.00003, closed=False))
         self.assertEqual(Path(job_dir, "config.json").read_bytes(), config)
         (entry,) = res["reruns"]
         self.assertEqual(entry["trials"], names[2:])
@@ -489,7 +727,7 @@ class FinishTest(unittest.TestCase):
                                               "now": {"reward": 1.0}}])
         self.assertEqual(entry["begun"], [{"trial": n, "unit": n[:2], "now": {"reward": 1.0}} for n in names[3:]])
         self.assertNotIn("no_result", entry)
-        self.assertIsNone(entry["max_usd"])                                                  # the first run's cap is not reopened
+        self.assertEqual((entry["max_usd"], entry["left_usd"]), (0.001, 0.00094))           # the job's new cap, less what was spent
         self.assertAlmostEqual(entry["spent_usd"], 3 * 0.00003)
         self.assertEqual(got["begun"], entry["begun"])
         self.assertEqual((parse.parse_job(job_dir).reruns[0]["begun"], j0.reruns), (entry["begun"], []))
@@ -512,7 +750,7 @@ class FinishTest(unittest.TestCase):
 
     def test_a_task_never_begun_is_named_by_its_unit(self):
         job_dir, root = self.capped()
-        got = rerun.rerun(job_dir, ["t4"], env=self.env, say=lambda s: None, root=root)
+        got = rerun.rerun(job_dir, ["t4"], env=self.env, say=lambda s: None, root=root, max_usd=0.001)
         self.assertEqual(([x["trial"] for x in got["begun"]], got["replaced"]), (["t4__u0004"], []))
         self.assertEqual(sorted(rerun.unfinished(job_dir)), ["t3__u0003"])
 
@@ -565,7 +803,7 @@ class FinishTest(unittest.TestCase):
         res = self.read(job_dir, name, "result.json")
         res["exception_info"], res["verifier_result"] = {"exception_type": run.CANCELLED, "exception_message": "stopped"}, None
         Path(job_dir, name, "result.json").write_text(json.dumps(res))
-        got = rerun.rerun(job_dir, [], every_unfinished=True, env=self.env, say=lambda s: None, root=root)
+        got = rerun.rerun(job_dir, [], every_unfinished=True, env=self.env, say=lambda s: None, root=root, max_usd=0.001)
         self.assertEqual(got["trials"], ["t1__u0001", "t2__u0002", "t3__u0003", "t4__u0004"])
         self.assertEqual([(x["trial"], x["was"]) for x in got["replaced"]],
                          [(name, {"error": run.CANCELLED}), ("t2__u0002", {"error": "SpendingCapError"})])
@@ -578,12 +816,13 @@ class FinishTest(unittest.TestCase):
             os.makedirs(os.path.join(r.job_dir, r.trial_name(i, u, rr), "workspace"))
             raise SystemExit(143)
         with mock.patch.object(run.Run, "unit", unit), self.assertRaises(SystemExit):
-            rerun.rerun(job_dir, ["t3"], env=self.env, say=lambda s: None, root=root)
+            rerun.rerun(job_dir, ["t3"], env=self.env, say=lambda s: None, root=root, max_usd=0.001)
         self.assertEqual(sorted(rerun.unfinished(job_dir)), ["t3__u0003", "t4__u0004"])
         self.assertFalse(any(n.startswith("t3__") for n in os.listdir(job_dir)))
         entry = self.read(job_dir, "result.json")["reruns"][-1]
         self.assertEqual((entry["begun"], entry["stopped"]), ([], True))
-        self.assertEqual({k for k, v in digest(job_dir).items() if whole.get(k) != v}, {"result.json", "events.jsonl", "progress.jsonl", ".work/rerun.lock"})
+        self.assertEqual({k for k, v in digest(job_dir).items() if whole.get(k) != v}, {"result.json", "events.jsonl", "progress.jsonl", ".work/rerun.lock",
+                                                                                         ".work/rerun-1/ledger/ledger.json"})
 
     def test_each_refusal_moves_nothing(self):
         job_dir, root = self.capped()

@@ -9,7 +9,8 @@
  *
  * One board, top to bottom: a header line, one stats strip, the outcome bar
  * with its filter chips (and, for more than one agent, the lanes and a winner
- * per task), every trial as a tile, one table with a row per trial in flight and, below them, each that ended,
+ * per task), every trial as a tile, one table with a row per trial in flight, then, while a part of a job's plan
+ * runs, each of its trials not yet begun (Queued) and, below them, each that ended,
  * and a drawer for one trial, where its phases are drawn on its own clock.
  *
  * Rules the fold already enforces are respected here rather than re-derived:
@@ -118,7 +119,9 @@
   function renderStats(s, state, oc) {
     const C = s.counts || {};
     const later = (s.trials || []).filter(t => outside(s, t)).length;
-    const queued = C.total != null ? Math.max(0, C.total - C.completed - C.running - later) : null;
+    // while a part runs, its trials not begun, as its table lists them: a task run again counts as done and as running
+    const queued = Array.isArray(s.part) ? (s.trials || []).filter(t => t.state === 'queued' && s.part.includes(t.trial)).length
+      : C.total != null ? Math.max(0, C.total - C.completed - C.running - later) : null;
     const rate = s.elapsed_sec > 60 && C.completed ? C.completed / (s.elapsed_sec / 60) : null;
     const ran = C.completed - (oc.infra_error || 0) - (oc.budget || 0);
     const when = state === 'finished' ? 'on the feed' : 'so far';   // the feed's outcomes, not the classifier's: Results has those
@@ -204,11 +207,14 @@
     }
     const ended = (t) => ((s.timeline || {})[t.trial] || {}).ended || '';
     const done = trials.filter(t => t.state === 'done').sort((a, b) => ended(a).localeCompare(ended(b)));
-    if (!running.length && !done.length) return '<p class="lb-quiet">Nothing is running at this poll.</p>';
-    const busy = running.length > FLIGHT_SHOWN, many = done.length > FLIGHT_SHOWN;
+    // the tasks of the part now running that have not begun: a row each, under the running ones
+    const queued = Array.isArray(s.part) ? trials.filter(t => t.state === 'queued' && s.part.includes(t.trial)) : [];
+    if (!running.length && !done.length && !queued.length) return '<p class="lb-quiet">Nothing is running at this poll.</p>';
+    const busy = running.length > FLIGHT_SHOWN, many = done.length > FLIGHT_SHOWN, waits = queued.length > FLIGHT_SHOWN;
     const order = busy ? running.slice().sort((a, b) => pressure(b) - pressure(a)) : running;
     const rows = opts.showAll ? order : order.slice(0, FLIGHT_SHOWN);
     const doneRows = opts.showAll ? done : done.slice(-FLIGHT_SHOWN);
+    const queuedRows = opts.showAll ? queued : queued.slice(0, FLIGHT_SHOWN);
     // a column appears once some trial reported it; a single missing cell is "—"
     const has = {steps: trials.some(t => t.step != null), calls: trials.some(t => t.calls != null), tokens: trials.some(t => tokensOf(t) != null), line: trials.some(t => t.activity || t.last_line)};
     const body = rows.map(t => {
@@ -221,6 +227,13 @@
         ${has.steps ? stepsCell(t, true) : ''}${has.calls ? callsCell(t) : ''}
         ${has.tokens ? `<td class="num${tok == null ? ' na' : ''}">${count(tok)}</td>` : ''}
         ${has.line ? `<td><span class="lb-line${line ? '' : ' na'}" title="${esc(line || '')}">${line ? redacted(line) : '—'}</span></td>` : ''}<td class="lb-go"></td></tr>`;
+    }).join('') + queuedRows.map(t => {
+      // a trial never begun may have no task named yet: its name less the runner's tag (__u0042, __u0042r2)
+      const dim = opts.filter ? ' dim' : '', none = '<td class="num na">—</td>', named = t.task ? t : {trial: String(t.trial).replace(/__u\d{4,}(?:r\d+)?$/, '')};
+      return `<tr class="lb-row lb-queued${dim}" data-trial="${esc(t.trial)}" tabindex="0" aria-current="${opts.selected === t.trial}">
+        <td><span class="task" title="${esc(t.task || t.trial)}">${esc(shortTask(named))}</span>${agents.length > 1 ? `<small>${esc(t.agent || '')}</small>` : ''}</td>
+        <td><span class="lb-phase">Queued</span></td><td class="na">—</td>
+        ${has.steps ? none : ''}${has.calls ? none : ''}${has.tokens ? none : ''}${has.line ? '<td class="na">—</td>' : ''}<td class="lb-go"></td></tr>`;
     }).join('') + doneRows.map(t => {
       // an ended trial stays, below the running ones: its outcome, its time in all, its tokens, and its page
       const tok = tokensOf(t), line = t.activity || t.last_line, href = trialHref(t, opts);
@@ -234,8 +247,9 @@
         ${has.line ? `<td><span class="lb-line${line ? '' : ' na'}" title="${esc(line || '')}">${line ? redacted(line) : '—'}</span></td>` : ''}<td class="lb-go">${href ? `<a class="lb-open-row" href="${esc(href)}">Open →</a>` : ''}</td></tr>`;
     }).join('');
     const said = [busy ? (opts.showAll ? `All ${running.length} in flight` : `${rows.length} of ${running.length} in flight`) + ', nearest their limit first' : '',
+      waits ? (opts.showAll ? `all ${queued.length} queued` : `the first ${queuedRows.length} of ${queued.length} queued`) : '',
       many ? (opts.showAll ? `all ${done.length} ended` : `the last ${doneRows.length} of ${done.length} ended`) : ''].filter(Boolean).join(' · ');
-    const more = busy || many ? `<div class="lb-more"><span>${said}</span><button type="button" class="btn sm ghost" data-show-all>${opts.showAll ? 'Show fewer' : 'Show all'}</button></div>` : '';
+    const more = busy || many || waits ?`<div class="lb-more"><span>${said}</span><button type="button" class="btn sm ghost" data-show-all>${opts.showAll ? 'Show fewer' : 'Show all'}</button></div>` : '';
     return `<div class="lb-scroll"><table class="lb-table"><thead><tr><th>${busy ? 'Trial, the running nearest their limit first' : 'Trial'}</th><th>Phase, or how it ended</th><th>Time in phase, of its limit</th>${has.steps ? '<th class="num">Steps</th>' : ''}${has.calls ? '<th class="num">Model calls</th>' : ''}${has.tokens ? '<th class="num">Tokens</th>' : ''}${has.line ? '<th>Last line, redacted</th>' : ''}<th class="lb-go" aria-label="Trial page"></th></tr></thead><tbody>${body}</tbody></table></div>${more}`;
   }
   // One trial: its phases on its own clock, from the feed's own phase events

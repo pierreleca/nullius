@@ -142,6 +142,7 @@ Each unit's relay keeps every call of its agent whole, its side calls included: 
 | Cached input | Estimated as if not cached, so a unit can be cut off short of its cap |
 | The result | `result.json` carries `budget`, and the job page shows it |
 | From the builder | *Limits*: one cap shared in equal parts by the run's jobs, and one per unit |
+| Later parts | The job's one cap: each part has what the parts before it left ([Run tasks again](rerun.md#one-spending-cap-for-a-job)) |
 | Shards | A shard's cap is its own: [Shard and merge](shard-and-merge.md) |
 
 ## Retries

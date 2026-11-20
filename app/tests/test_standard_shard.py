@@ -17,7 +17,7 @@ from unittest.mock import patch
 
 from nullius import workspace
 from nullius.runs import launches, parse
-from nullius.standard import job, merge, prove, shard
+from nullius.standard import job, merge, prove, rerun, shard
 
 BENCH = {"key": "fakebench", "_ref": "fakebench", "family": "agent", "needs": ["agent.workspace/v1"],
          "units": {"noun": "task", "nouns": "tasks"}, "score": {"kind": "pass", "says": "the tests pass"}}
@@ -183,6 +183,24 @@ class Merge(unittest.TestCase):
         part = merge.merge(dirs, os.path.join(self.tmp, "partly", "run"))
         self.assertNotIn("budget", read(os.path.join(part["out"], "result.json")))
         self.assertEqual(parse.parse_job(part["out"]).budget, {})
+
+    def test_the_merged_budget_keeps_later_parts_and_accepts_older_shards(self):
+        # Each shard spent 1 initially and 7 in a later part.
+        for totals, spent in (((8, 8), 16), ((8, None), 9.25), ((None, None), 2.5)):
+            with self.subTest(totals=totals), tempfile.TemporaryDirectory(dir=self.tmp) as root:
+                dirs = []
+                for i, total in enumerate(totals):
+                    budget = {"max_usd": 10, "spent_usd": 1}
+                    if total is None:
+                        budget["unsettled_usd"] = 0.25
+                    else:
+                        budget["spent_total_usd"] = total
+                    dirs.append(write_shard(root, f"shard-{i}", [f"t-{i}"], i + 1, 2, total=2, budget=budget))
+                before = [read(os.path.join(d, "result.json")) for d in dirs]
+                out = merge.merge(dirs, os.path.join(root, "merged"))["out"]
+                got = rerun.budget(out)
+                self.assertEqual((got["max_usd"], got["spent_usd"], got["left_usd"]), (20, spent, 20 - spent))
+                self.assertEqual([read(os.path.join(d, "result.json")) for d in dirs], before)
 
     def test_a_recorded_cap_is_read_leniently_and_an_amount_missing_is_not_zero(self):
         self.assertEqual(parse._budget(None), {})

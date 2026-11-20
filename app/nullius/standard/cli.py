@@ -1621,7 +1621,8 @@ def main(argv=None):
     rr.add_argument("-j", "--concurrency", type=int, help="units at once (default: the job's)")
     rr.add_argument("--retries", type=_retries, default=RETRIES, metavar="N",
                     help=f"run a failed try again, up to N times, as a run's --retries; 0 to {MAX_RETRIES}, default {RETRIES}")
-    rr.add_argument("--max-usd", type=float, metavar="USD", help="the re-run's own spending cap, as a run's --max-usd")
+    rr.add_argument("--max-usd", type=float, metavar="USD",
+                    help="the job's spending cap from now on, for this part and every later one: each part has what the parts before it left")
     rr.add_argument("--from-run", action="store_true",
                     help="started by Nullius: the key is OPENAI_API_KEY (and OPENAI_BASE_URL), saved settings are not read")
     tr = sub.add_parser("traces", help="give past standard trials a trace, from the files they kept")
