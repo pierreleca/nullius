@@ -214,7 +214,7 @@
         <div class="bench-section-head"><h2 id="task-sets-title">Task sets{% if task_sets %} <span class="bench-n">{{ task_sets|length }}</span>{% endif %}</h2>
           {#- a new set is made on the page of the tasks it is cut from: one dataset's at once, else a choice of them #}
           {% if local %}{% if std.datasets|length == 1 %}<a class="btn sm" href="{{ url_for('benchmark_tasks', key=b.key, dataset=std.datasets[0].id) }}">New task set</a>
-          {% else %}<details class="bench-newset"><summary class="btn sm" aria-haspopup="true">New task set</summary>
+          {% else %}<details class="bench-newset pop"><summary class="btn sm" aria-haspopup="true">New task set</summary>
             <div class="bench-newset-menu" role="group" aria-label="The dataset it is cut from">{% for d in std.datasets %}<a href="{{ url_for('benchmark_tasks', key=b.key, dataset=d.id) }}">{{ d.label }}{% if d.units %}<small>{{ d.units }} {{ std.units.nouns }}</small>{% endif %}</a>{% endfor %}</div>
           </details>{% endif %}{% endif %}
         </div>

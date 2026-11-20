@@ -507,6 +507,7 @@ class TheBenchmarksSection(Case):
         osw = _GET("benchmark", "osworld1")
         head = re.search(r'<div class="bench-section-head">(.*?)</div>\s*</details>', self.section("osworld1"), re.S).group(1)
         self.assertIn('<summary class="btn sm" aria-haspopup="true">New task set</summary>', head)
+        self.assertIn('<details class="bench-newset pop">', head)          # a menu: not a disclosure, no chevron
         for d in osw["datasets"]:                     # several datasets: a choice of them, each its tasks' page
             self.assertIn(f'<a href="/benchmarks/osworld1/tasks/{d["id"]}">{d.get("label") or d["id"]}<small>', head)
         [only] = _GET("benchmark", "humaneval")["datasets"]
