@@ -72,10 +72,13 @@ class StandardWhere(CompilerCase):
             with self.subTest(key):
                 hosts = self.draw(None)[key + " local"]
                 self.assertNotIn("data-std-backend", hosts)
-                self.assertIn('<span>Each task in its own VM</span><small>VM provider: Docker</small>', hosts)
+                label = "OSWorld1" if key == "osworld1" else "OSWorld2"
+                # how the run's processes run, apart from the VM the benchmark itself starts with its provider
+                self.assertIn("<span>As you, on the machine</span><small>A container that Nullius starts cannot start the tasks' VMs</small>", hosts)
+                self.assertIn(f'<span>Each task in its own VM</span><small>VM provider: Docker, used by {label} itself</small>', hosts)
                 self.assertEqual(hosts.count("VM provider"), 1)
                 boxes = self.draw(None, backends=("boat",))[key + " boat"]
-                label = "OSWorld1" if key == "osworld1" else "OSWorld2"
+                self.assertNotIn("As you, on the machine", boxes)
                 self.assertIn(f'data-std-boat-size="small" aria-pressed="false" disabled aria-disabled="true" title="Too small for {label}&#39;s 4 GB VM"', boxes)
                 self.assertIn('data-std-boat-size="default" aria-pressed="true"', boxes)     # the smallest that fits, chosen for it
                 self.assertIn("<span>Each task in its own VM</span><small>Docker, inside the task's Boat VM</small>", boxes)
@@ -89,6 +92,12 @@ class StandardWhere(CompilerCase):
         self.assertIn("data-std-unsandboxed", agent)
         # a saved container recipe is brought back to the machine: a container cannot start the VMs
         self.assertNotIn("data-std-backend", self.draw(None)["osworld2 docker"])
+
+    def test_osworld1s_docker_is_named_for_the_tasks_vms_and_the_yes_to_run_as_you_stays_asked(self):
+        html = self.draw(None, "r.others=[C.standardOthers(r).find(o=>!o.setup&&!o.control&&!o.why.length).key];")["osworld1 local"]
+        self.assertIn("<h3>Docker for the tasks&#39; VMs</h3>", html)
+        self.assertIn("OSWorld starts each task&#39;s VM in it", html)
+        self.assertIn('<input type="checkbox" data-std-unsandboxed > Run it as me, not sandboxed', html)     # never ticked for the person
 
     def test_every_standard_benchmark_draws_its_where_step_and_says_why_docker_is_not_offered_once(self):
         missing, here = self.draw("docker is not installed"), self.draw(None)

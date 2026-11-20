@@ -493,11 +493,14 @@
         + (list.some(w => w !== 'local') ? button('Test connection', 'id="nb-test-host"') + ' <span id="nb-hosttest" class="nb-note"></span>' : ''))
       + '<div class="nb-sectionhead std-wherehead"><h3>Isolation</h3></div>'
       + (sandboxes || vms
-        ? `<div class="nb-fixed std-isolation"><span>${vms ? `Each ${esc(noun)} in its own VM` : `The agent alone in each ${esc(noun)}'s VM`}</span>`
-          + `<small>${vms ? (provider ? (sandboxes ? `${esc((provider.names || {})[provider.values[0]] || words(provider.values[0]))}, inside the ${esc(noun)}'s Boat VM` : `${esc(provider.label)}: ${esc((provider.names || {})[provider.values[0]] || words(provider.values[0]))}`) : '') : 'Answers and keys stay on this machine'}</small></div>`
-        : `<div class="nb-pick-grid std-backends">${how('local', 'Local processes', 'Its commands run as you, not sandboxed.', '')}`
-          + how('container', 'Container', web ? 'Sandboxed: each unit in a container whose only ways out are its relay and a public web proxy.'
-            : 'Sandboxed: each unit in a container whose only way out is its relay.', containerWhy) + '</div>')
+        // on a machine, two things apart: how the run's own processes run (as you: a container cannot start the VMs),
+        // and the VM each unit gets from the benchmark itself, with its provider
+        ? (vms && !sandboxes ? `<div class="nb-fixed std-isolation"><span>As you, on the machine</span><small>A container that Nullius starts cannot start the ${esc(noun)}s' VMs</small></div>` : '')
+          + `<div class="nb-fixed std-isolation"><span>${vms ? `Each ${esc(noun)} in its own VM` : `The agent alone in each ${esc(noun)}'s VM`}</span>`
+          + `<small>${vms ? (provider ? (sandboxes ? `${esc((provider.names || {})[provider.values[0]] || words(provider.values[0]))}, inside the ${esc(noun)}'s Boat VM` : `${esc(provider.label)}: ${esc((provider.names || {})[provider.values[0]] || words(provider.values[0]))}, used by ${esc(b.label)} itself`) : '') : 'Answers and keys stay on this machine'}</small></div>`
+        : `<div class="nb-pick-grid std-backends">${how('local', 'Local processes', 'Its commands run as you, on the machine, not sandboxed.', '')}`
+          + how('container', 'Container', web ? 'Sandboxed: Nullius starts a container for each unit, whose only ways out are its relay and a public web proxy.'
+            : 'Sandboxed: Nullius starts a container for each unit, whose only way out is its relay.', containerWhy) + '</div>')
       + (b ? benchOptions(rec, b, 'where') : '')
       + (agentRun && backend === 'local' ? consentBox(rec) : '')
       + (dockerOnly.length && backend !== 'container' && agentRun ? `<p class="nb-note nb-error">${esc(dockerOnly.join(', '))}: ${dockerOnly.length > 1 ? 'these environments need' : 'this environment needs'} a container - ${sandboxes ? 'in a Boat VM' : 'on local processes'} their units are recorded as not run.</p>` : '')
