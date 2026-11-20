@@ -29,3 +29,15 @@ class LimitsStep(CompilerCase):
         self.assertIn('Retries after an error<input aria-label="Retries after an error" data-field="retries"', html)
         self.assertIn("<small>A try that ends in an error, such as a rate limit or a crash, is run again. A failed task never is.</small>", html)
         self.assertNotIn("Retries per attempt", html)
+
+    def test_a_bound_of_the_benchmarks_shows_the_default_each_run_gets_and_its_label_names_it(self):
+        steps = lambda html: re.search(r'<label class="nb-field" title="[^"]*">Steps per task[^<]*<input[^>]*data-bench-opt-select="max_steps"[^>]*>', html).group(0)
+        agent = "r.others=[C.standardOthers(r).find(o=>!o.setup&&!o.control&&!o.why.length).key];"
+        for edit, label, shown in ((agent, "Steps per task (default 100)", "100"),          # through the computer port
+                                   ("r.others=['osworld1:m3'];", "Steps per task (default 100)", "100"),
+                                   ("r.others=['osworld1:prompt'];", "Steps per task (default 15)", "15"),
+                                   (agent + "r.others.push('osworld1:prompt');", "Steps per task<input", "default")):   # each its own
+            with self.subTest(edit=edit):
+                field = steps(self.draw("osworld1", edit))
+                self.assertIn(label, field)
+                self.assertIn(f'placeholder="{shown}"', field)

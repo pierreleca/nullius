@@ -103,9 +103,11 @@ def _all() -> Dict[str, List[dict]]:
 
 
 def _shown(o: dict, v: str, values: dict) -> str:
-    """An option's value as Review shows it: its name, or for ``default`` under ``by`` the value it stands for."""
+    """An option's value as Review shows it: its name, or for ``default`` under ``by`` the value it stands for (an
+    agent's or a capability's run, which takes no value of that other option, gets ``yours``)."""
     by = next(iter((o.get("by") or {}).items()), None)
-    v = by[1].get(values.get(by[0]), v) if v == "default" and by else v
+    if v == "default" and by:
+        v = by[1].get(values.get(by[0]), v) if by[0] in values else o.get("yours") or v
     return (o.get("names") or {}).get(v) or v
 
 
@@ -184,7 +186,7 @@ def _bench_page(b: dict) -> dict:
             "options": {n: {"label": o.get("label") or n.replace("_", " ").capitalize(), "summary": o["summary"], "datasets": o.get("datasets") or [],
                             "setups": o.get("setups") or ["yours"],
                             **({"values": o["values"]} if "values" in o else {"pattern": o["pattern"], "example": o.get("example")}), "default": o.get("default"), "about": o.get("about") or {}, "names": o.get("names") or {}, "needs": o.get("needs") or {}, "when": o.get("when") or {},
-                            "limit": bool(o.get("limit")), "step": o.get("step") or "", "by": o.get("by") or {}}
+                            "limit": bool(o.get("limit")), "step": o.get("step") or "", "by": o.get("by") or {}, "yours": o.get("yours") or ""}
                         for n, o in (b.get("options") or {}).items()},
             "host": {n: {"label": r.get("label") or n, "summary": r["summary"], "check": r["check"], "install": hostreq.install_lines(b, [n]), "needed_by": r["needed_by"]}
                      for n, r in hostreq.all_of(b).items()},

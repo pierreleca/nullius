@@ -363,6 +363,27 @@ class UpstreamBounds(unittest.TestCase):
         b["options"]["max_steps"]["values"] = ["default"]
         self.assertTrue(any("max_steps.limit" in p for p in definitions.problems(b, "benchmark")))
 
+    def test_an_agents_run_names_the_value_it_gets_for_a_default_by_another_option(self):
+        b = definitions.get("benchmark", "osworld1")
+        self.assertEqual(b["options"]["max_steps"]["yours"], "100")
+        for bad in ("default", "0", "many"):            # its default, or a value the pattern refuses
+            with self.subTest(bad=bad):
+                c = copy.deepcopy(b)
+                c["options"]["max_steps"]["yours"] = bad
+                self.assertTrue(any("max_steps.yours" in p for p in definitions.problems(c, "benchmark")))
+        c = copy.deepcopy(b)
+        del c["options"]["max_steps"]["by"]
+        self.assertTrue(any("max_steps.yours" in p for p in definitions.problems(c, "benchmark")))
+        # the value said is the one OSWorld1's driver gives its loop for a default
+        with open(os.path.join(b["_here"], "driver.py")) as f:
+            self.assertIn('"--steps", "100" if steps == "default" else steps', f.read())
+        # Review says it for an agent's run, and each own agent's under by
+        o = b["options"]["max_steps"]
+        self.assertEqual(recipe._shown(o, "default", {}), "100")
+        self.assertEqual(recipe._shown(o, "default", {"agent": "prompt"}), "15")
+        self.assertEqual(recipe._shown(o, "default", {"agent": None}), "default")    # several own agents: each one's
+        self.assertEqual(recipe._shown(o, "30", {}), "30")
+
     def test_each_osworld_agents_own_steps_are_its_default_and_a_run_forces_another(self):
         b, mod = self.osworld_driver()
         own = b["options"]["max_steps"]["by"]["agent"]
