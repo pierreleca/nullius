@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from '_page.html' import page_head %}
 {% block title %}{{ entry.name if entry else ds.label or ds.id }} · {{ title }} — Nullius{% endblock %}
 {% block crumb %}/ <a href="{{ url_for('benchmarks_page') }}">benchmarks</a> / <a href="{{ url_for('benchmark_page', key=bench.key) }}#task-sets">{{ bench.key }}</a> / {{ ds.id }}{% if entry %} / {{ entry.name }}{% endif %}{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='catalogue/catalogue.css') }}">{% endblock %}
@@ -13,17 +14,13 @@
   data-save="{{ url_for('benchmark_tasks_save', key=bench.key, dataset=ds.id) }}"
   data-csrf="{{ csrf }}" data-writable="{{ 'true' if writable and not read_only else 'false' }}" data-local="{{ 'true' if writable else 'false' }}"
   data-nouns="{{ nouns }}" data-set="{{ entry.name if entry else '' }}">
-  <header class="bench-head">
-    <div class="bench-head-copy">
-      <div class="bench-tags"><span class="cat-tag">{{ 'Task set' if entry else 'Tasks' }}</span><span class="origin-tag">{{ title }} · {{ ds.label or ds.id }}</span></div>
-      <h1><svg class="bench-mark" aria-hidden="true"><use href="{{ url_for('static', filename='catalogue/marks.svg') }}#bm-{{ bench.key }}"/></svg>{{ entry.name if entry else ds.label or ds.id }}</h1>
-      {% if entry and entry.description %}<p class="bench-domain">{{ entry.description }}</p>{% endif %}
-    </div>
-    <div class="bench-actions">
-      {% if not read_only %}<a class="btn ghost" href="{{ url_for('new_run', standard=bench.key, dataset=ds.id, set=(entry.name ~ '@' ~ rev.revision) if entry else none) }}">Build a run <span aria-hidden="true">→</span></a>{% endif %}
+  {% set mark %}<svg class="bench-mark" aria-hidden="true"><use href="{{ url_for('static', filename='catalogue/marks.svg') }}#bm-{{ bench.key }}"/></svg>{% endset %}
+  {% set tags %}<span class="cat-tag">{{ 'Task set' if entry else 'Tasks' }}</span><span class="origin-tag">{{ title }} · {{ ds.label or ds.id }}</span>{% endset %}
+  {% set actions %}
+      {% if not read_only %}<a class="btn sm" href="{{ url_for('new_run', standard=bench.key, dataset=ds.id, set=(entry.name ~ '@' ~ rev.revision) if entry else none) }}">Build a run <span aria-hidden="true">→</span></a>{% endif %}
       {#- renaming and deleting ask first, in place; one question open at a time #}
       {% if writable and entry %}<details class="bench-delete tasks-rename" name="tasks-set-action">
-        <summary class="btn ghost">Rename</summary>
+        <summary class="btn ghost sm">Rename</summary>
         <form method="post" action="{{ url_for('benchmark_tasks_rename', key=bench.key, dataset=ds.id) }}" class="bench-delete-ask">
           <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="set" value="{{ entry.name }}">{% if read_only %}<input type="hidden" name="rev" value="{{ rev.revision }}">{% endif %}
           <label class="tasks-field">New name<input name="name" value="{{ entry.name }}" maxlength="64" required autocomplete="off" spellcheck="false"></label>
@@ -32,7 +29,7 @@
         </form>
       </details>{% endif %}
       {% if writable and (entry or broken) %}{% set n = (entry.revisions|sort(attribute='revision')|last).units|length if entry else 0 %}<details class="bench-delete" name="tasks-set-action">
-        <summary class="btn ghost danger">Delete</summary>
+        <summary class="btn ghost sm danger">Delete</summary>
         <form method="post" action="{{ url_for('benchmark_tasks_delete', key=bench.key, dataset=ds.id) }}" class="bench-delete-ask">
           <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="set" value="{{ entry.name if entry else broken }}">
           <span>Delete the task set <b>{{ entry.name if entry else broken }}</b>{% if entry %}: {{ n }} {{ noun if n == 1 else nouns }}, {{ entry.revisions|length }} {{ 'revision' if entry.revisions|length == 1 else 'revisions' }}{% endif %}? Runs made from it stay.</span>
@@ -40,8 +37,9 @@
           <button type="button" class="btn ghost" onclick="this.closest('details').open = false">Keep it</button>
         </form>
       </details>{% endif %}
-    </div>
-  </header>
+  {% endset %}
+  {{ page_head(entry.name if entry else ds.label or ds.id, sub=tags, actions=actions, mark=mark) }}
+  {% if entry and entry.description %}<p class="bench-domain">{{ entry.description }}</p>{% endif %}
   {% if problem %}<p class="bench-blocked" role="note">{{ problem }}</p>{% endif %}
 
   {% if entry %}

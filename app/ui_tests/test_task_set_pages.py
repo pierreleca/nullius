@@ -336,6 +336,17 @@ class RenameAndDelete(Case):
                 self.assertIn('name="name" value="dev"', rename.group(1))
         self.assertNotIn("tasks-set-action", self.get("/benchmarks/described/tasks/all").get_data(as_text=True))
 
+    def test_the_sets_page_has_the_shared_page_head_with_its_actions_in_it(self):
+        html = self.get("/benchmarks/described/tasks/all?set=dev").get_data(as_text=True)
+        head = re.search(r'<header class="page-head">(.*?)</header>', html, re.S)
+        self.assertIsNotNone(head, "no shared page head")
+        self.assertIn("<h1>", head.group(1))
+        self.assertIn(">dev</h1>", head.group(1))
+        actions = re.search(r'<div class="page-head-actions">(.*)', head.group(1), re.S).group(1)
+        self.assertIn("Build a run", actions)
+        self.assertIn('class="bench-delete tasks-rename"', actions)
+        self.assertNotIn('class="bench-head"', html)
+
     def test_a_rename_keeps_the_id_and_the_revisions_and_opens_the_new_name(self):
         before = sets.load("described", "dev")
         r, said = self.form("rename", {"set": "dev", "name": "misses"})
