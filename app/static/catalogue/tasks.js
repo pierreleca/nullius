@@ -39,8 +39,8 @@
   }
   function facets(cats) {
     $('tasks-cats').innerHTML = Object.entries(cats || {}).map(([field, values]) =>
-      `<div class="bench-cats" role="group" aria-label="${esc(label(field))}"><span class="tasks-catname">${esc(label(field))}</span>`
-      + values.map(v => `<button type="button" class="bench-cat${(st.cats[field] || []).includes(v.value) ? ' on' : ''}" data-field="${esc(field)}" data-value="${esc(v.value)}" aria-pressed="${(st.cats[field] || []).includes(v.value)}">${esc(v.value)} <span class="tasks-n">${v.count}</span></button>`).join('')
+      `<div class="filter-pills" role="group" aria-label="${esc(label(field))}"><span class="tasks-catname">${esc(label(field))}</span>`
+      + values.map(v => `<button type="button" class="filter-pill" data-field="${esc(field)}" data-value="${esc(v.value)}" aria-pressed="${(st.cats[field] || []).includes(v.value)}">${esc(v.value)} <span class="tasks-n">${v.count}</span></button>`).join('')
       + '</div>').join('');
   }
   function pager() {

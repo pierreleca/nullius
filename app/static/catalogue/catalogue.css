@@ -420,16 +420,17 @@ a.std-need { font-size: .78rem; color: var(--text-dim); text-decoration: underli
 .tasks-page .tasks-warn { border-color: color-mix(in srgb, var(--patch_failed_tests) 45%, var(--border)); }
 .tasks-note { font-weight: 400; overflow-wrap: anywhere; }
 .tasks-revs { margin: 0; }
-.tasks-revs a.bench-cat { display: inline-flex; align-items: center; text-decoration: none; }
+.tasks-revs a.filter-pill { display: inline-flex; align-items: center; text-decoration: none; }
+.tasks-revs .filter-pill[aria-current="page"] { background: var(--accent); border-color: var(--accent); color: var(--btn-fg); font-weight: 500; }
 .tasks-browse { padding: 22px; border: 1px solid var(--border-soft); border-radius: 12px; background: var(--surface); min-width: 0; }
 .tasks-bar { display: flex; flex-direction: column; gap: 14px; }
 .tasks-find { flex: none; max-width: 520px; }
 .tasks-cats { display: flex; flex-direction: column; gap: 10px; }
-.tasks-cats .bench-cats { align-items: center; }
+.tasks-cats .filter-pills { align-items: center; }
 .tasks-catname { font-size: 12px; color: var(--text-faint); min-width: 64px; }
-.tasks-cats .bench-cat { min-height: 34px; padding: 6px 12px; }
+.tasks-cats .filter-pill { min-height: 34px; padding: 6px 12px; }
 .tasks-n { color: var(--text-faint); font-variant-numeric: tabular-nums; }
-.bench-cat.on .tasks-n { color: inherit; opacity: .8; }
+.filter-pill[aria-pressed="true"] .tasks-n { color: inherit; opacity: .8; }
 .tasks-sel { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border-soft); }
 .tasks-sel b { margin-right: 6px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .tasks-paste { position: relative; }

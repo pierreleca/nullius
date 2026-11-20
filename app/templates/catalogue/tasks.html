@@ -50,7 +50,7 @@
     <div><span>Date</span><b>{{ rev.date[:10] }}</b></div>
     {% if rev.note %}<div><span>Note</span><b class="tasks-note">{{ rev.note }}</b></div>{% endif %}
   </div>
-  {% if entry.revisions|length > 1 %}<nav class="bench-cats tasks-revs" aria-label="Revisions">{% for r in entry.revisions|sort(attribute='revision') %}<a class="bench-cat{{ ' on' if r.revision == rev.revision }}" href="{{ url_for('benchmark_tasks', key=bench.key, dataset=ds.id, set=entry.name, rev=r.revision) }}"{% if r.revision == rev.revision %} aria-current="page"{% endif %}>Revision {{ r.revision }} · {{ r.units|length }}</a>{% endfor %}</nav>{% endif %}
+  {% if entry.revisions|length > 1 %}<nav class="filter-pills tasks-revs" aria-label="Revisions">{% for r in entry.revisions|sort(attribute='revision') %}<a class="filter-pill" href="{{ url_for('benchmark_tasks', key=bench.key, dataset=ds.id, set=entry.name, rev=r.revision) }}"{% if r.revision == rev.revision %} aria-current="page"{% endif %}>Revision {{ r.revision }} · {{ r.units|length }}</a>{% endfor %}</nav>{% endif %}
   {% if read_only %}<p class="bench-blocked" role="note">Revision {{ rev.revision }} is read only. <a href="{{ url_for('benchmark_tasks', key=bench.key, dataset=ds.id, set=entry.name) }}">Open revision {{ latest }}</a> to change the set.</p>{% endif %}
   {% endif %}
 

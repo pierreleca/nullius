@@ -346,7 +346,9 @@ class RenameAndDelete(Case):
         self.assertIn("Build a run", actions)
         self.assertIn('class="bench-delete tasks-rename"', actions)
         self.assertNotIn('class="bench-head"', html)
-        # its search is the shared search box of the table toolkit's controls
+        # its search is the shared search box of the table toolkit's controls, its revisions the shared pills
+        self.assertRegex(html, r'<nav class="filter-pills tasks-revs" aria-label="Revisions"><a class="filter-pill" href="[^"]*rev=1"')
+        self.assertIn('aria-current="page">Revision 2', html)
         self.assertRegex(html, r'<label class="st-search tasks-find"><svg class="ic"[^>]*><use href="#i-search"/></svg><input type="search" id="tasks-q"')
 
     def test_a_rename_keeps_the_id_and_the_revisions_and_opens_the_new_name(self):
