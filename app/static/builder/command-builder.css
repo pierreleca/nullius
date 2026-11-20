@@ -13,6 +13,7 @@
 #nullius-builder .nb-saved { width: min(640px, calc(100vw - 32px)); max-height: min(70vh, 640px); }
 #nullius-builder .nb-dialog.nb-tasks-dialog { width: min(920px, calc(100vw - 32px)); max-height: calc(100vh - 48px); }
 #nullius-builder .nb-tasks-dialog .tasks-browse { padding: 0; border: 0; background: none; }
+#nullius-builder .nb-tasks-dialog details.tasks-paste { border-top: 0; margin-top: 0; padding-top: 0; }
 #nullius-builder .std-yoursets { margin-top: 10px; }
 #nullius-builder .nb-dialoghead { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 #nullius-builder .nb-dialoghead h2 { margin: 0; }
