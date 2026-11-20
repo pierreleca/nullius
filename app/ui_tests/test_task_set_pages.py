@@ -858,6 +858,21 @@ class TheJobPage(Case):
         self.assertEqual(r.status_code, 302)
         self.assertEqual(sets.revision(sets.load("fakebench", "every-2"))["units"], ["good"])        # the same words: another set
 
+    def test_the_job_page_takes_a_set_s_name_by_the_tasks_page_s_rule(self):
+        name_field = lambda html, form: re.search(r'<input name="name"[^>]*>', re.search(form, html, re.S).group(0)).group(0)
+        here = name_field(self.page("of-a-set"), r'<form class="run-saveset-form".*?</form>')
+        there = name_field(self.get("/benchmarks/fakebench/tasks/all").get_data(as_text=True), r'<form class="tasks-form" id="tasks-create">.*?</form>')
+        most = lambda field: re.search(r'maxlength="(\d+)"', field).group(1)
+        self.assertEqual((most(here), most(there)), ("80", "80"))
+        self.assertNotIn("spellcheck", here)                                    # words, not an id
+        label = "The good & the slow ones, kept from the run of " + "x" * 30          # 77 characters, spaces and signs
+        r = self.client.post("/job/of-a-set/task-set", data={"csrf": self.csrf, "name": label},
+                             headers={"Origin": "http://localhost"}); self.addCleanup(r.close)
+        self.assertEqual(r.status_code, 302)
+        saved = [e for e in sets.entries("fakebench")[0] if e.get("label") == label]
+        self.assertEqual(len(saved), 1)
+        self.assertTrue(saved[0]["name"].startswith("the-good-the-slow-ones-kept-from-the-run-of-"))
+
 
 if __name__ == "__main__":
     unittest.main()
