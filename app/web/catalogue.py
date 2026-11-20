@@ -139,11 +139,19 @@ def _std_dataset(key: str, dataset: str, version: str = ""):
     return bench, ds
 
 
+# a plan's options are a few names with short values; a longer text is refused before it is parsed
+_OPTIONS_MAX = 4096
+
+
 def _listing_options() -> dict:
-    """The benchmark options of the plan the picker lists."""
+    """The benchmark options of the plan the picker lists: a JSON object of strings, refused when it is not one,
+    when it is longer than ``_OPTIONS_MAX`` characters or nested past what the parser follows."""
+    given = request.args.get("options", "{}")
+    if len(given) > _OPTIONS_MAX:
+        abort(400)
     try:
-        options = json.loads(request.args.get("options", "{}"))
-    except ValueError:
+        options = json.loads(given)
+    except (ValueError, RecursionError):
         abort(400)
     if not isinstance(options, dict) or not all(isinstance(v, str) for v in options.values()):
         abort(400)

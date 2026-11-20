@@ -15,6 +15,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.parse
 from contextlib import ExitStack
 from html import unescape
 from pathlib import Path
@@ -267,6 +268,22 @@ class TheTasksPagesData(Case):
         self.assertEqual(self.get(path + "&q=t019&ids=1").get_json()["ids"], [])
         got = self.post('/benchmarks/described/tasks/all/rows?options={"mode":"short"}', {"units": ["t007", "t024"]})
         self.assertEqual(([t["id"] for t in got["tasks"]], got["unknown"]), (["t007"], ["t024"]))
+
+    def test_options_too_deep_or_too_long_are_refused_as_a_wrong_value_is(self):
+        self.b["options"] = MODE
+        units.listing(self.b, "all", {"mode": "short"})
+        before = self.starts()
+        path = "/benchmarks/described/tasks/all/"
+        for name, value in (("a list", "[1]"), ("a list nested 3,000 deep", "[" * 3000),
+                            ("10,000 brackets", "[" * 10000),
+                            ("an object of many options", "{" + ",".join(f'"k{i}": "v"' for i in range(500)) + "}")):
+            with self.subTest(name=name):
+                query = "options=" + urllib.parse.quote(value)
+                self.get(path + "listing?" + query, status=400)
+                self.post(path + "rows?" + query, {"units": ["t007"]}, status=400)
+                self.post(path + "prepare?" + query, {}, status=400)
+        self.assertTrue(self.get(path + 'listing?options={"mode":"short"}').get_json()["ready"])
+        self.assertEqual(self.starts(), before)
 
     def test_each_search_category_and_page_gives_what_the_listings_function_gives(self):
         units.listing(self.b, "all")                         # in the cache: the page reads it
