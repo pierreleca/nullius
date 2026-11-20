@@ -92,6 +92,15 @@ def _cost(res: dict) -> Optional[float]:
     return c if _number(c) else None
 
 
+def _ledger_spent(path: str, fallback: float) -> float:
+    """The unrounded cost and bookings of a part, or its recorded total when its ledger is unavailable."""
+    try:
+        state = ledgers.Ledger(path).state()
+    except ledgers.Unavailable:
+        return fallback
+    return state["spent_usd"] + state["unsettled_usd"] + state["held_usd"]
+
+
 def _spent(job_dir: str, res: dict) -> float:
     """What the job has spent, every part counted, with what stayed booked for calls whose cost was never known: the
     total its budget keeps; for a job recorded before it kept one, its first run's and each later part's added; for
@@ -100,8 +109,11 @@ def _spent(job_dir: str, res: dict) -> float:
     if _number(b.get("spent_total_usd")):
         return float(b["spent_total_usd"])
     if _number(b.get("spent_usd")):
-        later = [r.get("spent_usd") for r in res.get("reruns") or [] if isinstance(r, dict)]
-        return b["spent_usd"] + (b.get("unsettled_usd") if _number(b.get("unsettled_usd")) else 0) + sum(c for c in later if _number(c))
+        first = b["spent_usd"] + (b.get("unsettled_usd") if _number(b.get("unsettled_usd")) else 0)
+        later = [_ledger_spent(os.path.join(job_dir, ".work", f"rerun-{k}", "ledger", "ledger.json"),
+                               r["spent_usd"] if _number(r.get("spent_usd")) else 0)
+                 for k, r in enumerate(res.get("reruns") or [], 1) if isinstance(r, dict)]
+        return _ledger_spent(os.path.join(job_dir, ".work", "ledger", "ledger.json"), first) + sum(later)
     tries = [os.path.join(job_dir, n) for n in merge._trials(job_dir)]
     tries += [os.path.join(job_dir, "retried", k) for n in merge._trials(job_dir) for k in merge._tries(job_dir, n)]
     return sum(c for c in (_cost(merge._read(os.path.join(t, "result.json"))) for t in tries) if c is not None)
@@ -117,10 +129,10 @@ def budget(job_dir: str, res: Optional[dict] = None, cap: Optional[float] = None
     if cap is None and was is None:
         return None
     use = float(cap) if cap is not None else was
-    spent = round(_spent(job_dir, res), 6)
+    spent = _spent(job_dir, res)
     changed = use != was
     stopped = b.get("closed") is True if "closed" in b else (b.get("stopped") is True and not res.get("reruns"))
-    left = round(use - spent, 6)
+    left = use - spent
     return {"max_usd": use, "spent_usd": spent, "left_usd": max(0.0, left), "closed": left <= 0 or (stopped and not changed),
             "changed": changed, "was": was}
 
@@ -562,7 +574,9 @@ def _again(r: "run.Run", job_dir: str, old: dict, cfg: dict, trials: Dict[str, d
         if capped:
             # the job's one cap: what every part spent, each change of the cap, and whether this part stopped at it
             used = (budget["spent_usd"] or 0) + (budget.get("unsettled_usd") or 0) if budget else (spent or 0)
-            whole = dict(old.get("budget") or {}, max_usd=capped["max_usd"], spent_total_usd=round(capped["spent_usd"] + used, 6),
+            if r.ledger is not None:
+                used = _ledger_spent(r.ledger.path, used)
+            whole = dict(old.get("budget") or {}, max_usd=capped["max_usd"], spent_total_usd=capped["spent_usd"] + used,
                          closed=bool((budget or {}).get("stopped")))
             if capped["changed"]:
                 whole["changes"] = list(whole.get("changes") or []) + [{"at": job.iso(t0), "max_usd": capped["max_usd"], "was": capped["was"]}]

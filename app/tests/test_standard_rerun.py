@@ -17,7 +17,7 @@ from unittest import mock
 
 from nullius.harbor import feed
 from nullius.runs import classify, live, parse
-from nullius.standard import acp, definitions, install, merge, pace as pacing, rerun, run
+from nullius.standard import acp, definitions, install, job, ledger, merge, pace as pacing, rerun, run
 from tests import test_standard_run as base
 
 ROOT = base.ROOT
@@ -426,12 +426,12 @@ class OneBudget(unittest.TestCase):
     def test_a_later_part_has_what_the_parts_before_it_left(self):
         job_dir = self.job(concurrency=1, max_usd=0.0001)
         self.assertEqual(self.read(job_dir, "result.json")["budget"]["spent_usd"], CALL)
-        self.assertEqual(rerun.budget(job_dir), {"max_usd": 0.0001, "spent_usd": CALL, "left_usd": round(0.0001 - CALL, 6),
+        self.assertEqual(rerun.budget(job_dir), {"max_usd": 0.0001, "spent_usd": CALL, "left_usd": 0.0001 - CALL,
                                                  "closed": False, "changed": False, "was": 0.0001})
         lines = []
         got = rerun.rerun(job_dir, ["model"], env=self.env, say=lines.append, root=ROOT)    # no cap given: the job's
-        self.assertEqual(self.ledger(job_dir, 1)["max_usd"], round(0.0001 - CALL, 6))
-        self.assertEqual((got["max_usd"], got["left_usd"], got["spent_usd"]), (0.0001, round(0.0001 - CALL, 6), CALL))
+        self.assertEqual(self.ledger(job_dir, 1)["max_usd"], 0.0001 - CALL)
+        self.assertEqual((got["max_usd"], got["left_usd"], got["spent_usd"]), (0.0001, 0.0001 - CALL, CALL))
         b = self.read(job_dir, "result.json")["budget"]
         self.assertEqual((b["max_usd"], b["spent_usd"], b["spent_total_usd"], b["closed"]), (0.0001, CALL, 2 * CALL, False))
         self.assertNotIn("changes", b)
@@ -451,12 +451,12 @@ class OneBudget(unittest.TestCase):
                                            "fit what was left): raise it with --max-usd USD")
         self.assertEqual(digest(job_dir), whole)
         got = self.again(job_dir, ["model"], max_usd=0.001)                  # a new cap holds from then on
-        self.assertEqual(self.ledger(job_dir, 3)["max_usd"], round(0.001 - 2 * CALL, 6))
+        self.assertEqual(self.ledger(job_dir, 3)["max_usd"], 0.001 - 2 * CALL)
         b = self.read(job_dir, "result.json")["budget"]
         self.assertEqual((b["max_usd"], b["spent_total_usd"], b["closed"]), (0.001, 3 * CALL, False))
         self.assertEqual([(c["max_usd"], c["was"]) for c in b["changes"]], [(0.001, 0.0001)])
         self.again(job_dir, ["model"])
-        self.assertEqual(self.ledger(job_dir, 4)["max_usd"], round(0.001 - 3 * CALL, 6))
+        self.assertEqual(self.ledger(job_dir, 4)["max_usd"], 0.001 - 3 * CALL)
         self.assertEqual(len(self.read(job_dir, "result.json")["budget"]["changes"]), 1)     # the same cap is no change
 
     def test_a_part_is_refused_when_the_cap_is_at_or_under_what_was_spent(self):
@@ -488,11 +488,83 @@ class OneBudget(unittest.TestCase):
         res["reruns"] = [{"at": "2026-11-18T10:00:00+00:00", "trials": [], "replaced": [], "max_usd": 5.0, "spent_usd": 0.00002},
                          {"at": "2026-11-18T11:00:00+00:00", "trials": [], "replaced": [], "max_usd": None, "spent_usd": None}]
         Path(job_dir, "result.json").write_text(json.dumps(res))
-        self.assertEqual(rerun.budget(job_dir), {"max_usd": 0.0001, "spent_usd": round(CALL + 0.00002, 6),
-                                                 "left_usd": round(0.0001 - CALL - 0.00002, 6), "closed": False,
+        self.assertEqual(rerun.budget(job_dir), {"max_usd": 0.0001, "spent_usd": CALL + 0.00002,
+                                                 "left_usd": 0.0001 - (CALL + 0.00002), "closed": False,
                                                  "changed": False, "was": 0.0001})
         j = parse.parse_job(job_dir)                                         # and it reads as it did
         self.assertEqual((j.budget["max_usd"], [r["max_usd"] for r in j.reruns]), (0.0001, [5.0, None]))
+
+
+class BudgetAccounting(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.bench = definitions.get("benchmark", "fakebench", ROOT)
+        self.agent = definitions.get("agent", "fake", ROOT)
+        for method in ("ready", "known_models", "let_go"):
+            self.enterContext(mock.patch.object(run.Run, method))
+        self.enterContext(mock.patch.object(run.Run, "benchmark_calls", return_value=[]))
+
+    def job(self, cap, cost, output):
+        path = self.tmp / "job"
+        path.mkdir()
+        job.write_config(str(path), job="job", bench=self.bench, other=self.agent, model="m-1", provider="custom",
+                         dataset="all", units=["model"], concurrency=1, granted=True,
+                         prices={"models": {"m-1": {"input": 0.0, "output": cost * 1e6 / output}}})
+        trial = self.trial(path / "model__u0000", cost, output)
+        first = ledger.Ledger.create(str(path / ".work/ledger/ledger.json"), cap)
+        booking, _ = first.reserve(cost)
+        first.settle(booking, cost, model="m-1", output=output)
+        runner = mock.Mock(ledger=first, max_usd=cap, unit_max_usd=None, _cut=[])
+        job.write_result(str(path), "job", 1, 2, [trial], 1, budget=run.Run.budget(runner, []))
+        writer = feed.Writer(str(path / "events.jsonl"), "job")
+        writer.emit("job.start", n_total=1, tasks=["model"])
+        writer.emit("trial.queued", trial["trial_name"], position=0)
+        writer.emit("trial.end", trial["trial_name"], outcome="resolved", reward=1)
+        writer.emit("job.end")
+        return path
+
+    def trial(self, path, cost, output, retry=0, refused=False):
+        return job.write_trial(str(path), job="job", bench=self.bench, other=self.agent, model="m-1", unit="model",
+                               t0=1, t1=2, produce=(1, 2), score=None if refused else {"reward": 1},
+                               exception=(ledger.ERROR, "call does not fit") if refused else None,
+                               calls=[] if refused else [{"status": 200, "reply": {"usage": {"output": output}}, "cost_usd": cost}],
+                               trajectory=None, retries=retry)
+
+    def part(self, path, cost, output, amount=None):
+        admitted = []
+
+        def simulate(r, index, task, attempt, retry=0):
+            booking, state = r.ledger.reserve(cost if amount is None else amount, model="m-1")
+            admitted.append((bool(booking), state["amount"]))
+            if booking:
+                r.ledger.settle(booking, cost, model="m-1", output=output)
+            return self.trial(Path(r.job_dir) / r.trial_name(index, task, attempt), cost, output,
+                              retry, refused=booking is None)
+
+        with mock.patch.object(run.Run, "unit", simulate):
+            record = rerun.rerun(str(path), ["model"], root=ROOT, say=lambda s: None,
+                                 env={"MODEL_API_URL": "http://127.0.0.1:1/v1", "MODEL_API_KEY": "fake"})
+        return record, admitted
+
+    def test_small_parts_keep_unrounded_spending_under_one_cap(self):
+        cost, cap = 0.0000004, 0.000001
+        path = self.job(cap, cost, 1)
+        calls = 1
+        for _ in range(5):
+            try:
+                _, admitted = self.part(path, cost, 1)
+            except run.Refused:
+                break
+            calls += sum(sent for sent, _ in admitted)
+        self.assertLessEqual(calls * cost, cap + cost)
+        self.assertEqual(calls, 2)
+        result = json.loads((path / "result.json").read_text())
+        self.assertEqual(result["budget"]["spent_total_usd"], calls * cost)
+        self.assertEqual(rerun.budget(str(path))["left_usd"], cap - calls * cost)
+        self.assertTrue(rerun.budget(str(path))["closed"])
+        parsed = parse.parse_job(str(path))
+        self.assertEqual(parsed.budget["spent_usd"], 0)
+        self.assertTrue(all(r["spent_usd"] == 0 for r in parsed.reruns))
 
 
 class NoVersion(unittest.TestCase):
@@ -615,7 +687,7 @@ class FinishTest(unittest.TestCase):
         self.assertEqual((res["started_at"], res["finished_at"]), (first["started_at"], first["finished_at"]))
         changes = res["budget"].pop("changes")
         self.assertEqual([(c["max_usd"], c["was"]) for c in changes], [(0.001, 0.00008)])
-        self.assertEqual(res["budget"], dict(first["budget"], max_usd=0.001, spent_total_usd=0.00015, closed=False))
+        self.assertEqual(res["budget"], dict(first["budget"], max_usd=0.001, spent_total_usd=2 * 0.00003 + 3 * 0.00003, closed=False))
         self.assertEqual(Path(job_dir, "config.json").read_bytes(), config)
         (entry,) = res["reruns"]
         self.assertEqual(entry["trials"], names[2:])
