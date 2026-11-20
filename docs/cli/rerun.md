@@ -47,6 +47,7 @@ A run begun with [`--start-with`](run.md#plan-the-whole-begin-with-a-part) has t
 | Rule | Detail |
 | --- | --- |
 | Refused, nothing moved | A set of another dataset; a set naming a task the job did not plan; `--next` above the tasks left |
+| The live board | While a part runs, a row for each of its tasks not yet begun, marked Queued; the plan's other tasks count as Not run |
 | Run whole | Once every planned task has run, the job's trials and results are those of the plan run at once; its record adds `start_with` and `reruns` |
 
 <div class="grid cards" markdown>
