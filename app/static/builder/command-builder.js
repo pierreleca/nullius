@@ -720,7 +720,9 @@
           ...sets.map(s => tile({attr: 'std-taskset', key: ref(s), data: ` data-of="${esc(x.id)}"`, on: s === picked, title: s.name, tip: s.description || '',
             meta: `${s.units} ${s.units === 1 ? u.noun : u.nouns} · revision ${s.revision}`})),
           ...(on && !picked ? [tile({attr: 'std-taskset', key: on, data: ` data-of="${esc(x.id)}"`, on: true, title: on})] : [])].join('') + '</div>';
-    return `<div class="nb-sectionhead std-sethead"><h3>${esc(x.label)}: which tasks?</h3><a class="nb-inlinebutton" href="${page}${picked ? '?set=' + encodeURIComponent(picked.name) : ''}">${picked ? 'Open ' + esc(picked.name) : 'Choose its tasks'} <span aria-hidden="true">→</span></a></div>` + choice;
+    // the dataset's name only where several are chosen: one chosen is the one above
+    const head = C.datasetsOf(rec).length > 1 ? esc(x.label) + ': which tasks?' : 'Which tasks?';
+    return `<div class="nb-sectionhead std-sethead"><h3>${head}</h3><a class="nb-inlinebutton" href="${page}${picked ? '?set=' + encodeURIComponent(picked.name) : ''}">${picked ? 'Open ' + esc(picked.name) : 'Choose its tasks'} <span aria-hidden="true">→</span></a></div>` + choice;
   }
   // A chosen dataset's plan begun on a part: all of it, a number of its tasks, or a task set of it (not the one it runs),
   // small cards, a select past five; the rest stay planned, run later from the job's page
@@ -739,7 +741,7 @@
           ...sets.map(s => tile({attr: 'std-start', key: 'set:' + ref(s), data, on: s === picked, title: s.name, tip: s.description || '',
             meta: `${many(s.units)} · revision ${s.revision}`})),
           ...(on && !count && !picked ? [tile({attr: 'std-start', key: on, data, on: true, title: on.slice(4)})] : [])].join('') + '</div>';
-    return `<div class="nb-sectionhead std-sethead"><h3>${esc(x.label)}: start with</h3></div>` + choice
+    return `<div class="nb-sectionhead std-sethead"><h3>${C.datasetsOf(rec).length > 1 ? esc(x.label) + ': start with' : 'Start with'}</h3></div>` + choice
       + (count ? `<div class="nb-two"><label class="nb-field">Number of ${esc(u.nouns)} to begin<input aria-label="Number of ${esc(u.nouns)} to begin" data-std-start-count="${esc(x.id)}" type="number" min="1" step="1" value="${esc(on)}" autocomplete="off"><small>The first ones, in its order; the rest are run later from the job's page.</small></label></div>` : '');
   }
   function standardForm(rec) {

@@ -555,6 +555,32 @@ class TheBuilder(BuilderCase):
         self.assertTrue(out["confirm"].startswith("Run all 2 tasks of Fake bench"))
 
 
+class TheDatasetStep(BuilderCase):
+    """Which tasks? and Start with, under the chosen datasets: the dataset's name in their titles only when several
+    are chosen."""
+
+    def test_the_titles_name_the_dataset_only_when_several_are_chosen(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node is required for the dataset step")
+        html = self.get("/new-run").get_data(as_text=True)
+        schema = json.loads(re.search(r'<script id="nb-schema" type="application/json">(.*?)</script>', html, re.S).group(1))
+        folder = Path(__file__).resolve().parents[1] / "static/builder"
+        page = (folder / "command-builder.js").read_text(encoding="utf-8")
+        cut = lambda start, end: page[page.index(start):page.index(end, page.index(start))]
+        line = lambda name: re.search(r"^  const %s = .*$" % name, page, re.M).group(0) + "\n"
+        program = (f"const schema={json.dumps(schema)};const C=require({json.dumps(str(folder / 'command-builder-core.js'))})(schema);\n"
+                   + line("esc") + cut("  const tile = t =>", "  // The grids drawn by the server") + cut("  function taskSetChoice(", "  function standardForm(")
+                   + "const r=C.createStandard('fakebench'),b=C.standardBench(r),x=b.datasets[0],u={noun:'task',nouns:'tasks'};"
+                   + "r.datasets=[x.id];const one=taskSetChoice(r,b,x,u)+startChoice(r,b,x,u);"
+                   + "r.datasets=[x.id,'more'];const two=taskSetChoice(r,b,x,u)+startChoice(r,b,x,u);"
+                   + "process.stdout.write(JSON.stringify({one,two,label:x.label}));")
+        got = json.loads(subprocess.run([node, "-"], input=program, check=True, capture_output=True, text=True, timeout=10).stdout)
+        heads = lambda h: re.findall(r"<h3>(.*?)</h3>", h)
+        self.assertEqual(heads(got["one"]), ["Which tasks?", "Start with"])
+        self.assertEqual(heads(got["two"]), [f"{got['label']}: which tasks?", f"{got['label']}: start with"])
+
+
 class TheBuilderAfterAChange(BuilderCase):
     """A deleted set is no longer offered and a saved recipe that names it is refused plainly; a renamed one is offered
     under its new name."""
