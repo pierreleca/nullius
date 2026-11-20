@@ -6,6 +6,8 @@ from __future__ import annotations
 import base64
 import json
 import re
+import shutil
+import subprocess
 import tempfile
 import unittest
 from contextlib import ExitStack
@@ -135,6 +137,41 @@ class TrialCalls(unittest.TestCase):
         self.assertNotIn("artifact-pictures", plain)
         script = (Path(__file__).resolve().parents[1] / "static/traces/conversation.js").read_text(encoding="utf-8")
         self.assertIn("event.target.closest('a[data-open-tab]')", script)       # the link opens the tab in place
+
+    def test_a_picture_opens_over_the_page_and_closes_by_close_or_a_click_outside(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node is required for the picture viewer")
+        script = (Path(__file__).resolve().parents[1] / "static/traces/conversation.js").read_text(encoding="utf-8")
+        cut = (script[script.index("  const el = "):script.index("  const number = ")]
+               + script[script.index("  // A picture of the conversation over the page"):script.index("  const readJSON")])
+        program = r"""
+const assert = require('node:assert/strict');
+function node(tag) {
+  return {tagName: tag.toUpperCase(), children: [], listeners: {}, attrs: {}, className: '', open: false,
+    append(...c) { this.children.push(...c); }, setAttribute(k, v) { this.attrs[k] = v; },
+    addEventListener(e, f) { (this.listeners[e] = this.listeners[e] || []).push(f); },
+    querySelector(tag) { const walk = n => n.tagName === tag.toUpperCase() ? n : n.children.map(walk).find(Boolean); return this.children.map(walk).find(Boolean) || null; },
+    showModal() { this.open = true; }, close() { this.open = false; }};
+}
+const body = node('body'), document = {createElement: node, body};
+const click = (on, target) => (on.listeners.click || []).forEach(f => f({target}));
+""" + cut + r"""
+viewPicture('/p/1', 'Picture abc');
+const dialog = body.children[0], box = dialog.children[0], close = box.children[0];
+assert.equal(dialog.tagName, 'DIALOG'); assert.ok(dialog.open); assert.equal(dialog.attrs['aria-label'], 'Picture');
+assert.deepEqual([dialog.querySelector('img').src, dialog.querySelector('img').alt], ['/p/1', 'Picture abc']);
+assert.equal(close.textContent, 'Close');
+click(close, close); assert.ok(!dialog.open);
+viewPicture('/p/2', 'b'); assert.equal(body.children.length, 1); assert.equal(dialog.querySelector('img').src, '/p/2');
+click(dialog, box); assert.ok(dialog.open);            // on the picture: it stays
+click(dialog, dialog); assert.ok(!dialog.open);        // outside it, on the backdrop
+"""
+        got = subprocess.run([node, "-"], input=program, capture_output=True, text=True, timeout=10)
+        self.assertEqual(got.returncode, 0, got.stderr)
+        # a plain click on a picture opens it there; one with a key held keeps the link's new tab
+        self.assertIn("if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;\n"
+                      "        event.preventDefault(); viewPicture(p.url, img.alt);", script)
 
     def test_the_flat_list_of_steps_is_kept_as_a_filter(self):
         data = self.get("/trial/calls-run/kept__u0001/conversation", query_string={"kind": "all"}).get_json()

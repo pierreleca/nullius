@@ -14,6 +14,21 @@
     return node;
   };
   const number = value => Number(value).toLocaleString();
+  // A picture of the conversation over the page: one dialog, made at the first, closed by Close, Esc or a click
+  // outside the picture (on the backdrop, which is the dialog itself)
+  let viewer = null;
+  const viewPicture = (url, alt) => {
+    if (!viewer) {
+      viewer = el('dialog', 'picture-view'); viewer.setAttribute('aria-label', 'Picture');
+      const box = el('div', 'picture-view-box');
+      box.append(button('Close', () => viewer.close(), false, 'btn sm picture-view-close'), el('img', 'picture-view-img'));
+      viewer.append(box);
+      viewer.addEventListener('click', event => { if (event.target === viewer) viewer.close(); });
+      document.body.append(viewer);
+    }
+    const img = viewer.querySelector('img'); img.src = url; img.alt = alt;
+    viewer.showModal();
+  };
   const readJSON = async (url, signal) => {
     const response = await nulliusFetch(url, {signal, headers: {'Accept': 'application/json'}, cache: 'no-store'});
     if (!response.ok) throw new Error(response.status === 404 ? 'This evidence is no longer in the current workspace or trace view.' : 'Could not load this evidence. Try again.');
@@ -113,6 +128,11 @@
       const link = el('a', 'call-picture-link'); link.href = p.url; link.target = '_blank'; link.rel = 'noopener';
       const img = el('img', 'call-picture'); img.src = p.url; img.alt = `Picture ${p.sha256.slice(0, 12)}, ${p.type}`;
       img.loading = 'lazy'; img.decoding = 'async'; link.title = `sha256 ${p.sha256}`;
+      // a click opens it over the page; a click with a key held still opens it in a tab of its own
+      link.addEventListener('click', event => {
+        if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault(); viewPicture(p.url, img.alt);
+      });
       link.append(img); return link;
     };
     const item = (entry, selected) => {
