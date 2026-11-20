@@ -124,6 +124,18 @@ class TrialCalls(unittest.TestCase):
         self.assertNotIn("view", steps)                   # no call is inferred: the steps, as today
         self.assertEqual(steps["total"], 3)
 
+    def test_the_artifacts_tab_counts_the_pictures_sent_and_links_the_conversation(self):
+        _, html = self.tab("kept__u0001")
+        tab = re.search(r'<section class="trial-tab" id="trial-artifacts".*?</section>', html, re.S).group(0)
+        row = re.search(r'<tr class="artifact-pictures">(.*?)</tr>', tab, re.S).group(1)
+        self.assertIn("Pictures sent to the model <span class=\"muted\">· 3</span>", row)
+        self.assertIn(f"{3 * len(P1) / 1024:.2f} KB", row)
+        self.assertIn('href="/trial/calls-run/kept__u0001?tab=conversation" data-open-tab="conversation">Conversation</a>', row)
+        _, plain = self.tab("record__u0002")                     # a call record with no store keeps no picture
+        self.assertNotIn("artifact-pictures", plain)
+        script = (Path(__file__).resolve().parents[1] / "static/traces/conversation.js").read_text(encoding="utf-8")
+        self.assertIn("event.target.closest('a[data-open-tab]')", script)       # the link opens the tab in place
+
     def test_the_flat_list_of_steps_is_kept_as_a_filter(self):
         data = self.get("/trial/calls-run/kept__u0001/conversation", query_string={"kind": "all"}).get_json()
         self.assertEqual((data["kind"], data["total"]), ("all", 3))

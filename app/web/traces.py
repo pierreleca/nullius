@@ -349,6 +349,7 @@ def trial(job_id, trial_name):
                                 key=record["key"], workspace=request.args.get("workspace"))
         record["download"] = url_for("artifact_download", job_id=job_id, trial_name=trial_name,
                                      key=record["key"], workspace=request.args.get("workspace"))
+    pictures = calls.pictures_kept(t.dir)        # the pictures sent to the model, a row of their own
     n_calls = calls.recorded(t.dir)
     if not n_calls and os.path.isdir(calls.store_folder(t.dir)):
         notice = _calls_view(t, traj).get("notice")
@@ -358,7 +359,7 @@ def trial(job_id, trial_name):
         "traces/trial.html", job=j, trial=t, traj=traj, loc=loc, bench_parts=bench_parts, steps_of=steps_of,
         trace=tr, charts=ch, viewing=viewing, imported_from=_imported_from(j),
         chart_filter=cfilt, default_save_name=SAVED_TRACE_DEFAULT,
-        artifacts=records, attempt=attempt, attempts=task_attempts.of(j, attempt), tries=_tries(attempt),
+        artifacts=records, pictures=pictures, attempt=attempt, attempts=task_attempts.of(j, attempt), tries=_tries(attempt),
         n_calls=n_calls,
         # an earlier try is evidence only: the job counts its last, and only that is judged
         judgement=_judgement_panel(j, t) if attempt is t else None,

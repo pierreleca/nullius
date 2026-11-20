@@ -97,6 +97,23 @@ def store_folder(trial_dir: str) -> str:
     return os.path.join(trial_dir, RELAY, exchanges.FOLDER)
 
 
+def pictures_kept(trial_dir: str) -> Optional[dict]:
+    """The pictures the trial's store keeps, each sent to the model and kept once (``blobs/``): ``{count, bytes}``,
+    or None when it keeps none. A folder or a file reached through a link is not read."""
+    folder = os.path.join(store_folder(os.path.realpath(trial_dir)), exchanges.BLOBS)
+    if os.path.realpath(folder) != folder or not os.path.isdir(folder):
+        return None
+    kinds, count, size = {"." + e for e in exchanges.EXT.values()}, 0, 0
+    try:
+        with os.scandir(folder) as found:
+            for e in found:
+                if os.path.splitext(e.name)[1] in kinds and e.is_file(follow_symlinks=False):
+                    count, size = count + 1, size + e.stat(follow_symlinks=False).st_size
+    except OSError:
+        return None
+    return {"count": count, "bytes": size} if count else None
+
+
 def route_tag(trial_dir: str, routes: List[str]) -> str:
     """The unit's route: the end of its trial's name (an earlier try's ``.try-N`` left off), else the store's one route."""
     tag = _TRY.sub("", os.path.basename(os.path.normpath(trial_dir))).rsplit("__", 1)[-1]

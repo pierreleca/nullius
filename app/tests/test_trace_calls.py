@@ -545,6 +545,24 @@ class TheCommand(Base):
         self.assertEqual(usage.exception.code, 2)
 
 
+class PicturesKept(Base):
+    """The pictures a trial's store keeps, for the row the Artifacts tab gives them: each counted once, with its bytes."""
+
+    def test_each_picture_sent_is_counted_once_with_its_bytes_and_nothing_else(self):
+        folder = self.trial(history())
+        self.assertEqual(calls.pictures_kept(folder), {"count": 3, "bytes": len(P1) + len(P2) + len(P3)})
+        with open(os.path.join(calls.store_folder(folder), exchanges.BLOBS, "a" * 64 + ".bin"), "wb") as f:
+            f.write(b"not a picture")
+        self.assertEqual(calls.pictures_kept(folder)["count"], 3)
+        for name, mode in (("text__u0001", "text"), ("none__u0001", None)):      # the text alone, or no store: none
+            with self.subTest(mode=mode):
+                self.assertIsNone(calls.pictures_kept(self.trial(history(), name=name, mode=mode)))
+        linked = self.trial([], name="linked__u0001", mode=None)                 # a store reached through a link is not read
+        os.makedirs(os.path.join(linked, ".work", "relay"), exist_ok=True)
+        os.symlink(calls.store_folder(folder), calls.store_folder(linked))
+        self.assertIsNone(calls.pictures_kept(linked))
+
+
 class Unmarked:
     """The tests again on stores written without the mark of their format, as before it: they read the same."""
 
