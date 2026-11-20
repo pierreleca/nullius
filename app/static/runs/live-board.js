@@ -119,7 +119,9 @@
   function renderStats(s, state, oc) {
     const C = s.counts || {};
     const later = (s.trials || []).filter(t => outside(s, t)).length;
-    const queued = C.total != null ? Math.max(0, C.total - C.completed - C.running - later) : null;
+    // while a part runs, its trials not begun, as its table lists them: a task run again counts as done and as running
+    const queued = Array.isArray(s.part) ? (s.trials || []).filter(t => t.state === 'queued' && s.part.includes(t.trial)).length
+      : C.total != null ? Math.max(0, C.total - C.completed - C.running - later) : null;
     const rate = s.elapsed_sec > 60 && C.completed ? C.completed / (s.elapsed_sec / 60) : null;
     const ran = C.completed - (oc.infra_error || 0) - (oc.budget || 0);
     const when = state === 'finished' ? 'on the feed' : 'so far';   // the feed's outcomes, not the classifier's: Results has those

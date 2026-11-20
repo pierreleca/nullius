@@ -292,6 +292,17 @@ process.stdout.write(JSON.stringify(out));
         self.assertIn('class="lb-row lb-queued"', out["flight"])
         self.assertTrue(rows[name(3)].startswith("t-3 agent run"), rows[name(3)])
         self.assertEqual(text(out["stats"], r".*").split(" Rate")[0], "Done 3 /6 Running 1 Queued 1 Not run 1")
+        # a part that runs a task again beside one never run: the one never run is counted queued, as its row says
+        events[-4:] = [("job.end", None, {}), ("job.start", None, dict(n_total=6, tasks=["t-2", "t-4"])),
+                       ("trial.phase", name(2), dict(task="t-2", phase="agent_run"))]
+        (d / "events.jsonl").unlink()
+        writer = feed.Writer(str(d / "events.jsonl"), "r1")
+        for event, trial, data in events:
+            writer.emit(event, trial, **data)
+        out = json.loads(subprocess.run([node, "-e", program, self.page("/job/r1/live")], capture_output=True, text=True,
+                                        check=True, timeout=10).stdout)
+        self.assertEqual(text(out["stats"], r".*").split(" Rate")[0], "Done 3 /6 Running 1 Queued 1 Not run 2")
+        self.assertEqual(re.findall(r'<tr class="lb-row lb-queued" data-trial="([^"]+)"', out["flight"]), [name(4)])
 
     def test_a_task_first_run_in_a_later_part_names_that_try_by_what_it_was(self):
         d = self.run_of()
