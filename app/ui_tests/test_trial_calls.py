@@ -144,8 +144,10 @@ class TrialCalls(unittest.TestCase):
         if not node:
             self.skipTest("Node is required for the picture viewer")
         script = (Path(__file__).resolve().parents[1] / "static/traces/conversation.js").read_text(encoding="utf-8")
-        cut = (script[script.index("  const el = "):script.index("  const number = ")]
-               + script[script.index("  // A picture of the conversation over the page"):script.index("  const readJSON")])
+        cut = (script[script.index("  const el = "):script.index("  let viewer = null;")]
+               + script[script.index("  let viewer = null;"):script.index("  const readJSON")]
+               + script[script.index("    const size = value =>"):script.index("    const said = ")]
+               + script[script.index("    const picture = p => {"):script.index("    const item = (entry, selected) => {")])
         program = r"""
 const assert = require('node:assert/strict');
 function node(tag) {
@@ -157,11 +159,19 @@ function node(tag) {
 }
 const body = node('body'), document = {createElement: node, body};
 const click = (on, target) => (on.listeners.click || []).forEach(f => f({target}));
+// a click as the browser sends it, with the keys held: whether the page kept the link from opening its new tab
+const press = (on, keys = {}) => { let kept = false;
+  (on.listeners.click || []).forEach(f => f({target: on, button: 0, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, ...keys,
+                                             preventDefault() { kept = true; }}));
+  return kept; };
 """ + cut + r"""
-viewPicture('/p/1', 'Picture abc');
+const link = picture({url: '/p/1', sha256: 'abc'.padEnd(64, '0'), type: 'image/png', bytes: 2048});
+assert.equal(link.tagName, 'A'); assert.equal(link.target, '_blank');
+assert.equal(press(link, {ctrlKey: true}), false); assert.equal(body.children.length, 0);   // a key held: its own tab
+assert.equal(press(link), true);                                                           // a plain click: over the page
 const dialog = body.children[0], box = dialog.children[0], close = box.children[0];
 assert.equal(dialog.tagName, 'DIALOG'); assert.ok(dialog.open); assert.equal(dialog.attrs['aria-label'], 'Picture');
-assert.deepEqual([dialog.querySelector('img').src, dialog.querySelector('img').alt], ['/p/1', 'Picture abc']);
+assert.deepEqual([dialog.querySelector('img').src, dialog.querySelector('img').alt], ['/p/1', 'Picture abc000000000, image/png']);
 assert.equal(close.textContent, 'Close');
 click(close, close); assert.ok(!dialog.open);
 viewPicture('/p/2', 'b'); assert.equal(body.children.length, 1); assert.equal(dialog.querySelector('img').src, '/p/2');
@@ -170,9 +180,6 @@ click(dialog, dialog); assert.ok(!dialog.open);        // outside it, on the bac
 """
         got = subprocess.run([node, "-"], input=program, capture_output=True, text=True, timeout=10)
         self.assertEqual(got.returncode, 0, got.stderr)
-        # a plain click on a picture opens it there; one with a key held keeps the link's new tab
-        self.assertIn("if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;\n"
-                      "        event.preventDefault(); viewPicture(p.url, img.alt);", script)
 
     def test_the_flat_list_of_steps_is_kept_as_a_filter(self):
         data = self.get("/trial/calls-run/kept__u0001/conversation", query_string={"kind": "all"}).get_json()
