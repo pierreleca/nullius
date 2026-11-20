@@ -90,12 +90,14 @@
 </div>
 {% endif %}
 
-{% if (job_cap and job_cap.closed) or (not job_cap and job.budget and job.budget.stopped and job.budget.max_usd) %}
-{# The run's own spending cap ended it (a Nullius standard run's --max-usd): nothing failed, so the notice is neutral.
-   It names the job's one cap and all it spent, as the cap's line does; the units cut off are the first run's alone #}
+{%- set shard_stop = job.budget and job.budget.stopped and job.budget.shards and not job.reruns %}
+{% if (job_cap and (job_cap.closed or (shard_stop and not job_cap.changed))) or (not job_cap and job.budget and job.budget.stopped and job.budget.max_usd) %}
+{# The run's own spending cap ended it (a Nullius standard run's --max-usd), or some of its shards at their share:
+   nothing failed, so the notice is neutral. It names the job's one cap and all it spent, as the cap's line does; the
+   units cut off are the first run's alone #}
 {%- set spent = job_cap.spent_usd if job_cap else job.budget.spent_usd %}
 <div class="alert" id="cap-stopped">
-  <strong>{% if job.budget.shards and not job.reruns %}{{ job.budget.shards_stopped }} of {{ job.budget.shards }} shards stopped at their share of the spending cap{% else %}Stopped at its spending cap{% endif %}</strong> of {{ (job_cap or job.budget).max_usd|cap }}{% if spent is not none %}, with {{ spent|cap }} spent{% endif %}{% if job.reruns %}.{% else %}:
+  <strong>{% if shard_stop %}{{ job.budget.shards_stopped }} of {{ job.budget.shards }} shards stopped at their share of the spending cap{% else %}Stopped at its spending cap{% endif %}</strong> of {{ (job_cap or job.budget).max_usd|cap }}{% if spent is not none %}, with {{ spent|cap }} spent{% endif %}{% if job.reruns %}.{% else %}:
   {{ job.budget.cut_off|length }} cut off, {{ job.budget.not_run|length }} not run.{% endif %}
 </div>
 {% endif %}

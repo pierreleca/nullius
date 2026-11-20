@@ -202,6 +202,18 @@ class Merge(unittest.TestCase):
                 self.assertEqual((got["max_usd"], got["spent_usd"], got["left_usd"]), (20, spent, 20 - spent))
                 self.assertEqual([read(os.path.join(d, "result.json")) for d in dirs], before)
 
+    def test_a_merged_job_one_shard_of_which_stopped_at_its_share_keeps_what_the_others_left(self):
+        # two shards capped at 10 each: one stopped at 9.90, the other spent 1; the merged job has 9.10 left
+        with tempfile.TemporaryDirectory(dir=self.tmp) as root:
+            dirs = [write_shard(root, f"shard-{i}", [f"t-{i}"], i + 1, 2, total=2,
+                                budget={"max_usd": 10, "spent_usd": spent, "stopped": stopped, "cut_off": [], "not_run": []})
+                    for i, (spent, stopped) in enumerate(((9.9, True), (1, False)))]
+            out = merge.merge(dirs, os.path.join(root, "merged"))["out"]
+            self.assertEqual(read(os.path.join(out, "result.json"))["budget"]["shards_stopped"], 1)
+            got = rerun.budget(out)
+            self.assertEqual((got["max_usd"], got["closed"]), (20, False))
+            self.assertAlmostEqual(got["left_usd"], 9.1)
+
     def test_a_recorded_cap_is_read_leniently_and_an_amount_missing_is_not_zero(self):
         self.assertEqual(parse._budget(None), {})
         self.assertEqual(parse._budget({"max_usd": "2", "spent_usd": 1}), {})                # no cap named: no cap

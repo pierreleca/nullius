@@ -131,7 +131,8 @@ def budget(job_dir: str, res: Optional[dict] = None, cap: Optional[float] = None
     use = float(cap) if cap is not None else was
     spent = _spent(job_dir, res)
     changed = use != was
-    stopped = b.get("closed") is True if "closed" in b else (b.get("stopped") is True and not res.get("reruns"))
+    # a merged job's "stopped" says that some shard stopped at its share, not that the job's cap is spent
+    stopped = b.get("closed") is True if "closed" in b else (b.get("stopped") is True and not res.get("reruns") and not b.get("shards"))
     left = use - spent
     return {"max_usd": use, "spent_usd": spent, "left_usd": max(0.0, left), "closed": left <= 0 or (stopped and not changed),
             "changed": changed, "was": was}
