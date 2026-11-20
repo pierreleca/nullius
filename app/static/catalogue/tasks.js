@@ -12,7 +12,9 @@
   const st = {q: '', cats: {}, page: 1, showing: !!d.set && chosen.size > 0, ready: false, total: 0, pages: 1};
   const label = field => field.charAt(0).toUpperCase() + field.slice(1).replace(/_/g, ' ');
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
-  const post = (url, body) => nulliusFetch(url, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': d.csrf}, body: JSON.stringify(body)});
+  // the listing at the version the page shows (data-version, empty for the benchmark's default)
+  const at = url => d.version ? url + (url.includes('?') ? '&' : '?') + 'version=' + encodeURIComponent(d.version) : url;
+  const post = (url, body) => nulliusFetch(at(url), {method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': d.csrf}, body: JSON.stringify(body)});
   const count = n => `${n.toLocaleString('en-US')} ${n === 1 ? nouns.replace(/s$/, '') : nouns}`;
 
   function say(text, warn) {
@@ -60,6 +62,7 @@
     if (st.q) u.set('q', st.q);
     Object.entries(st.cats).forEach(([f, vs]) => vs.forEach(v => u.append('cat', `${f}=${v}`)));
     Object.entries(extra || {}).forEach(([k, v]) => u.set(k, v));
+    if (d.version) u.set('version', d.version);
     return d.listing + '?' + u;
   }
   let polling = null, asked = 0;
@@ -153,16 +156,12 @@
     let got;
     try { got = await (await post(d.save, {...body, units: [...chosen]})).json(); } catch { return msg('Not saved: the server did not answer.', true); }
     if (!got.ok) return msg(got.error, true);
-    if (body.set && !got.added) return msg(`Nothing changed: revision ${got.revision} holds these ${nouns} already.`);
     location.href = got.open;
   }
   $('tasks-create')?.addEventListener('submit', e => {
     e.preventDefault(); const f = e.target;
-    save({name: f.elements.namedItem('name').value.trim(), description: f.elements.namedItem('description').value.trim()});
-  });
-  $('tasks-revise')?.addEventListener('submit', e => {
-    e.preventDefault();
-    save({set: d.set, note: e.target.elements.namedItem('note').value.trim()});
+    save({name: f.elements.namedItem('name').value.trim(), description: f.elements.namedItem('description').value.trim(),
+      ...(d.version ? {version: d.version} : {})});
   });
   // the count and the way to save stay in view under the rows; the bar steps aside once the form is in view
   const bar = $('tasks-savebar'), form = document.querySelector('.tasks-save');

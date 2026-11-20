@@ -192,7 +192,7 @@
     if (was !== b || r.name === 'standard-experiment') { r.name = b.key + '-experiment'; r.title = b.label + ' experiment'; }
     return r;
   }
-  // A chosen dataset's task set, NAME@REV, run in place of all its tasks (recipe.py: task_sets, {dataset: NAME@REV});
+  // A chosen dataset's task set, NAME, run in place of all its tasks (recipe.py: task_sets, {dataset: NAME});
   // '' for all of them. A dataset no longer chosen keeps none.
   function setTaskSet(r, dataset, ref) {
     r.task_sets = {...(r.task_sets || {})};
@@ -204,7 +204,7 @@
     if (kept.length) r.task_sets = Object.fromEntries(kept); else delete r.task_sets;
     return r;
   }
-  // A chosen dataset's plan begun on a part (recipe.py: start_with, {dataset: N or set:NAME@REV}): '' for all of it, a
+  // A chosen dataset's plan begun on a part (recipe.py: start_with, {dataset: N or set:NAME}): '' for all of it, a
   // number of its tasks, or a task set of it; the rest run later in the job. A dataset no longer chosen keeps none.
   function setStartWith(r, dataset, value) {
     r.start_with = {...(r.start_with || {})};

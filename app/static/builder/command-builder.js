@@ -705,20 +705,23 @@
       + (C.leaderboard(rec) ? tile({attr:'model-choice',key:'leaderboard',title:'Like the leaderboard',on:on==='leaderboard'}) : '')
       + `${tile({attr:'model-choice',key:'any',title:'Any of your choice',on:on==='any'})}</div>`;
   }
-  // A chosen dataset's tasks: all of them, or one of its task sets (its name, its number of tasks, its revision), small
-  // cards, a select past five; and the page of its tasks, where a set is made
+  // A chosen dataset's tasks: all of them, or one of its task sets (its name, its number of tasks), small cards, a
+  // select past five; and the page of its tasks, where a set is made. A recipe from before sets were frozen may name
+  // one NAME@N: it is that set.
   function taskSetChoice(rec, b, x, u) {
-    const on = (rec.task_sets || {})[x.id] || '', sets = x.sets || [], ref = s => s.name + '@' + s.revision;
+    const on = (rec.task_sets || {})[x.id] || '', sets = x.sets || [], ref = s => s.name;
     const all = 'All ' + (x.units ? x.units + ' ' : '') + u.nouns;
     const page = `/benchmarks/${encodeURIComponent(b.key)}/tasks/${encodeURIComponent(x.id)}`;
-    const picked = sets.find(s => on === ref(s) || on === s.name);
+    const picked = sets.find(s => on === s.name || on.split('@')[0] === s.name);
+    // a set made at another version of the benchmark says which: the run refuses a task that version lacks
+    const made = s => s.version && b.version && s.version !== b.version ? ' · made at ' + s.version_label : '';
     const choice = sets.length + 1 > 5
       ? `<label class="nb-field">Tasks of ${esc(x.label)}<select data-std-taskset-select="${esc(x.id)}"><option value="">${esc(all)}</option>`
-        + sets.map(s => `<option value="${esc(ref(s))}" ${s === picked ? 'selected' : ''}>${esc(s.name)} · ${s.units} ${esc(u.nouns)} · revision ${s.revision}</option>`).join('')
+        + sets.map(s => `<option value="${esc(ref(s))}" ${s === picked ? 'selected' : ''}>${esc(s.label)} · ${s.units} ${esc(u.nouns)}${esc(made(s))}</option>`).join('')
         + (on && !picked ? `<option value="${esc(on)}" selected>${esc(on)}</option>` : '') + '</select></label>'
       : `<div class="nb-pick-grid std-optgrid">` + [tile({attr: 'std-taskset', key: '', data: ` data-of="${esc(x.id)}"`, on: !on, title: all}),
-          ...sets.map(s => tile({attr: 'std-taskset', key: ref(s), data: ` data-of="${esc(x.id)}"`, on: s === picked, title: s.name, tip: s.description || '',
-            meta: `${s.units} ${s.units === 1 ? u.noun : u.nouns} · revision ${s.revision}`})),
+          ...sets.map(s => tile({attr: 'std-taskset', key: ref(s), data: ` data-of="${esc(x.id)}"`, on: s === picked, title: s.label, tip: s.description || '',
+            meta: `${s.units} ${s.units === 1 ? u.noun : u.nouns}${made(s)}`})),
           ...(on && !picked ? [tile({attr: 'std-taskset', key: on, data: ` data-of="${esc(x.id)}"`, on: true, title: on})] : [])].join('') + '</div>';
     // the dataset's name only where several are chosen: one chosen is the one above
     const head = C.datasetsOf(rec).length > 1 ? esc(x.label) + ': which tasks?' : 'Which tasks?';
@@ -727,19 +730,19 @@
   // A chosen dataset's plan begun on a part: all of it, a number of its tasks, or a task set of it (not the one it runs),
   // small cards, a select past five; the rest stay planned, run later from the job's page
   function startChoice(rec, b, x, u) {
-    const on = (rec.start_with || {})[x.id] || '', plan = (rec.task_sets || {})[x.id] || '', ref = s => s.name + '@' + s.revision;
-    const sets = (x.sets || []).filter(s => plan !== ref(s) && plan !== s.name), count = /^\d+$/.test(on);
-    const picked = sets.find(s => on === 'set:' + ref(s) || on === 'set:' + s.name);
+    const on = (rec.start_with || {})[x.id] || '', plan = ((rec.task_sets || {})[x.id] || '').split('@')[0], ref = s => s.name;
+    const sets = (x.sets || []).filter(s => plan !== s.name), count = /^\d+$/.test(on);
+    const picked = sets.find(s => on.split('@')[0] === 'set:' + s.name);
     const data = ` data-of="${esc(x.id)}"`, many = n => n + ' ' + (n === 1 ? u.noun : u.nouns);
     const choice = sets.length + 2 > 5
       ? `<label class="nb-field">Start ${esc(x.label)} with<select data-std-start-select="${esc(x.id)}"><option value="">All of it</option>`
         + `<option value="${count ? esc(on) : '5'}" ${count ? 'selected' : ''}>A number of ${esc(u.nouns)}</option>`
-        + sets.map(s => `<option value="set:${esc(ref(s))}" ${s === picked ? 'selected' : ''}>${esc(s.name)} · ${many(s.units)} · revision ${s.revision}</option>`).join('')
+        + sets.map(s => `<option value="set:${esc(ref(s))}" ${s === picked ? 'selected' : ''}>${esc(s.label)} · ${many(s.units)}</option>`).join('')
         + (on && !count && !picked ? `<option value="${esc(on)}" selected>${esc(on.slice(4))}</option>` : '') + '</select></label>'
       : `<div class="nb-pick-grid std-optgrid">` + [tile({attr: 'std-start', key: '', data, on: !on, title: 'All of it'}),
           tile({attr: 'std-start', key: count ? on : '5', data, on: count, title: 'A number of ' + u.nouns}),
-          ...sets.map(s => tile({attr: 'std-start', key: 'set:' + ref(s), data, on: s === picked, title: s.name, tip: s.description || '',
-            meta: `${many(s.units)} · revision ${s.revision}`})),
+          ...sets.map(s => tile({attr: 'std-start', key: 'set:' + ref(s), data, on: s === picked, title: s.label, tip: s.description || '',
+            meta: many(s.units)})),
           ...(on && !count && !picked ? [tile({attr: 'std-start', key: on, data, on: true, title: on.slice(4)})] : [])].join('') + '</div>';
     return `<div class="nb-sectionhead std-sethead"><h3>${C.datasetsOf(rec).length > 1 ? esc(x.label) + ': start with' : 'Start with'}</h3></div>` + choice
       + (count ? `<div class="nb-two"><label class="nb-field">Number of ${esc(u.nouns)} to begin<input aria-label="Number of ${esc(u.nouns)} to begin" data-std-start-count="${esc(x.id)}" type="number" min="1" step="1" value="${esc(on)}" autocomplete="off"><small>The first ones, in its order; the rest are run later from the job's page.</small></label></div>` : '');
@@ -808,7 +811,7 @@
     if (step === S.limits) {
       const sets = b.datasets.filter(x => C.datasetsOf(rec).includes(x.id)), per = sets.length > 1 ? ' of each dataset' : '';
       // empty is the default, shown as the placeholder: every unit, one at a time, one attempt
-      const ds = sets.length === 1 ? sets[0] : null, mine = ds && (ds.sets || []).find(s => [s.name, s.name + '@' + s.revision].includes((rec.task_sets || {})[ds.id]));
+      const ds = sets.length === 1 ? sets[0] : null, mine = ds && (ds.sets || []).find(s => s.name === ((rec.task_sets || {})[ds.id] || '').split('@')[0]);
       const all = mine ? String(mine.units) : ds && ds.units ? String(ds.units) : 'all', most = /^\d+$/.test(all) ? all : '';
       // the field takes that many at most: more would be all of them
       return '<div class="nb-sectionhead"><h2>Scope</h2></div><div class="nb-two">'

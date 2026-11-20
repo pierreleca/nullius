@@ -620,8 +620,8 @@ def waiting_of(j, running=()) -> list:
 
 
 def plan_sets(j, waiting: list) -> list:
-    """The task sets of the job's benchmark and dataset that name planned tasks with no result, at their latest
-    revision: [{name, revision, trials, tasks}], ``trials`` those of ``waiting`` (:func:`waiting_of`) the set names and no
+    """The task sets of the job's benchmark and dataset that name planned tasks with no result: [{name, revision,
+    trials, tasks}], ``name`` the set's label, ``trials`` those of ``waiting`` (:func:`waiting_of`) the set names and no
     re-run is running. What the job page's "Run a set" offers; [] when no set names one."""
     if not waiting:
         return []
@@ -642,11 +642,11 @@ def plan_sets(j, waiting: list) -> list:
     for e in entries:
         if e.get("dataset") != dataset:
             continue
-        last = task_sets.revision(e)
+        last = task_sets.latest(e)
         wanted = set(last["units"])
         trials = [w["trial"] for w in waiting if w["unit"] in wanted and not w["running"]]
         if trials:
-            out.append({"name": e["name"], "revision": last["revision"], "trials": trials,
+            out.append({"name": task_sets.label_of(e), "revision": last["revision"], "trials": trials,
                         "tasks": len({w["unit"] for w in waiting if w["trial"] in trials})})
     return out
 
@@ -672,21 +672,17 @@ def _identity_names(identity: dict) -> dict:
 
 
 def _set_link(j) -> dict:
-    """The task set a job ran as its page names it: {name, link}. Found by its id, under the name it has now (a set
-    renamed since), its link the page of the revision the job ran; when the catalogue here holds no set of that id,
-    or not that revision, the name the job recorded and no link."""
+    """The task set a job ran as its page names it: {name, link}, ``name`` its label. Found by its id, under the name
+    it has now (a set renamed since), its link the set's page; when the catalogue here holds no set of that id, the
+    label the job recorded and no link."""
     ts = j.task_set
     if not ts:
         return {}
     entry = task_sets.by_id(ts["benchmark"], ts.get("id"), ts["name"]) if ts.get("benchmark") else None
     if entry is None:
-        return {"name": ts["name"], "link": ""}
-    try:
-        task_sets.revision(entry, ts.get("revision"))
-    except task_sets.Refused:
-        return {"name": entry["name"], "link": ""}
-    return {"name": entry["name"], "link": url_for("benchmark_tasks", key=ts["benchmark"], dataset=entry["dataset"],
-                                                   set=entry["name"], rev=ts.get("revision"))}
+        return {"name": ts.get("label") or ts["name"], "link": ""}
+    return {"name": task_sets.label_of(entry), "link": url_for("benchmark_tasks", key=ts["benchmark"], dataset=entry["dataset"],
+                                                               set=entry["name"])}
 
 
 def _set_saving(j) -> bool:
@@ -713,7 +709,9 @@ def job_task_set(job_id):
     if j is None or not _set_saving(j):
         abort(404)
     with open(os.path.join(j.dir, "config.json"), encoding="utf-8") as f:
-        bench = standard_definitions.get("benchmark", json.load(f)["standard"]["benchmark"])
+        std = json.load(f)["standard"]
+    # the set is made at the version the job ran, when the catalogue still knows it
+    bench = standard_definitions.get("benchmark", str(std.get("benchmark_ref") or "")) or standard_definitions.get("benchmark", std["benchmark"])
     name, outcome = (request.form.get("name") or "").strip(), (request.form.get("outcome") or "").strip()
     from . import catalogue
     problem = catalogue._set_problem(bench["key"], name)
@@ -728,8 +726,8 @@ def job_task_set(job_id):
     except task_sets.Refused as e:
         flash(str(e), "error")
         return redirect(back)
-    flash(f"Saved the task set {entry['name']}: {len(got['units'])} {'task' if len(got['units']) == 1 else 'tasks'}.", "ok")
-    return redirect(url_for("benchmark_tasks", key=bench["key"], dataset=entry["dataset"], set=entry["name"], rev=1))
+    flash(f"Saved the task set {entry['label']}: {len(got['units'])} {'task' if len(got['units']) == 1 else 'tasks'}.", "ok")
+    return redirect(url_for("benchmark_tasks", key=bench["key"], dataset=entry["dataset"], set=entry["name"]))
 
 
 def _until_again(j, names):

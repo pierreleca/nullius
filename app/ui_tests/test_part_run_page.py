@@ -346,10 +346,10 @@ class TheBuilder(task_set_pages.BuilderCase):
     def test_review_says_planned_and_to_begin(self):
         recipe = {"version": 1, "harness": "standard", "name": "fake-0101-120000", "title": "t", "benchmark": "fakebench", "dataset": "all",
                   "other": "fake", "provider": "openai", "model": "gpt-5-mini", "concurrency": 1, "unsandboxed": True, "where": "local",
-                  "start_with": {"all": "set:dev@1"}}
+                  "start_with": {"all": "set:dev"}}
         out = self.post("/new-run/runner", {"recipe": recipe})
         self.assertEqual(out["errors"], [])
-        self.assertIn(["Dataset", "all · 4 planned, 2 to begin (task set dev, revision 1)"], [r[1:] for r in out["review"]])
+        self.assertIn(["Dataset", "all · 4 planned, 2 to begin (task set dev)"], [r[1:] for r in out["review"]])
         self.assertEqual(out["confirm"], "")
         out = self.post("/new-run/runner", {"recipe": dict(recipe, start_with={"all": "9"})})
         self.assertEqual([e["message"] for e in out["errors"]], ["Start with 9 tasks: all plans 4."])
