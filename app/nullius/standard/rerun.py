@@ -144,7 +144,10 @@ def resolve(cfg: dict, results: List[dict], root: Optional[str] = None) -> tuple
     if kind == "control":
         other = definitions.control(bench, plugged)
     elif kind == "upstream":
-        other, _ = definitions.setup(bench, plugged, str((std.get("setup") or {}).get("asked") or ""), std.get("provider") or "")
+        # a benchmark with agents of its own: the one the job ran, by the upstream's name its run was given
+        given = std.get("benchmark_options") if isinstance(std.get("benchmark_options"), dict) else {}
+        other, _ = definitions.setup(bench, plugged, str((std.get("setup") or {}).get("asked") or ""), std.get("provider") or "",
+                                     str(given.get("agent") or ""))
     else:
         other = definitions.get(kind, plugged, root)
     if other is None:
@@ -360,7 +363,7 @@ def _begin(r: "run.Run", name: str, iur: tuple, retry: int, work_unit) -> Option
     """A trial with no folder, begun: its unit's own run, as the run's first pass does, at try ``retry`` + 1. A
     try that does not end - not begun, or stopped under it - leaves no folder: the task stands as it was."""
     here = os.path.join(r.job_dir, name)
-    r.feed.emit("trial.queued", name, agent=r.other["key"], position=0)
+    r.feed.emit("trial.queued", name, agent=job.agent_name(r.other), position=0)
     res = None
     try:
         res = work_unit((*iur, retry))
@@ -397,7 +400,7 @@ def _again(r: "run.Run", job_dir: str, old: dict, cfg: dict, trials: Dict[str, d
     r.feed = live_feed.Writer(path, r.name)
     r.feed.seq = _last_seq(path)
     r.feed.emit("job.start", n_total=int(old.get("n_total_trials") or len(trials)), n_concurrent=r.concurrency,
-                agents=[r.other["key"]], tasks=[u for _, u, _ in work],
+                agents=[job.agent_name(r.other)], tasks=[u for _, u, _ in work],
                 **({"budget": {k: v for k, v in (("max_usd", r.max_usd), ("unit_max_usd", r.unit_max_usd)) if v is not None}}
                    if r.ledger is not None else {}))
     mark = {"by": "hand", "at": job.iso(t0), **({"reason": reason} if reason else {})}

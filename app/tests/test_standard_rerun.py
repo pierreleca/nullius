@@ -409,6 +409,34 @@ class RerunTest(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(job_dir, ".work", "rerun-1", "ledger", "ledger.json")))
 
 
+class OwnAgent(unittest.TestCase):
+    """A later part of a job of one of a benchmark's own agents runs that agent again, named as its job names it."""
+
+    def test_the_agent_the_job_ran_is_the_one_resolved(self):
+        bench = definitions.get("benchmark", "osworld1")
+        for upstream, key, model in (("openai_cua", "openai-cua", "computer-use-preview"), ("", "m3", "MiniMax-M3")):
+            std = {"benchmark": "osworld1", **rerun.job._version(bench), "plugged": "original", "kind": "upstream",
+                   "provider": "openrouter", "setup": {"name": "original", "agent": key, "asked": model},
+                   **({"benchmark_options": {"agent": upstream}} if upstream else {})}
+            with self.subTest(agent=key):
+                _, other = rerun.resolve({"standard": std}, [])
+                self.assertEqual((other["agent"], rerun.job.agent_name(other), other["asked"]), (key, key, model))
+
+    def test_a_trial_begun_in_a_later_part_is_queued_under_the_jobs_agent(self):
+        # the board names a queued trial by the job's agent, as the first part did, not by the setup it runs under
+        got, tmp = [], tempfile.mkdtemp(prefix="nullius-own-agent-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+
+        class Feed:
+            def emit(self, event, trial=None, **kw):
+                got.append((event, trial, kw.get("agent")))
+
+        r = mock.Mock(job_dir=tmp, other={"key": "original", "agent": "openai-cua"}, feed=Feed())
+        r._stopped.is_set.return_value = False
+        self.assertIsNone(rerun._begin(r, "t__1", (0, "t", 1), 0, lambda iur: None))
+        self.assertEqual(got, [("trial.queued", "t__1", "openai-cua")])
+
+
 # five units, each one model call of 0.00003 USD (3 tokens out at 10 USD a million), each scored a pass
 FIVE_DRIVER = '''from nullius.standard.jsonl import serve
 serve({"units": lambda dataset: {"units": [f"t{i}" for i in range(5)]}, "setup": lambda unit, dir: {"prompt": "model hi"},
