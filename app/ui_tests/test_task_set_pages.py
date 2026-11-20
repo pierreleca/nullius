@@ -183,6 +183,55 @@ class TheTasksPagesData(Case):
         self.assertEqual(got["unknown"], ["nowhere"])
 
 
+class TheTaskRows(unittest.TestCase):
+    """A task is one line: its title cut to the width; its whole text in the row's tooltip and, on a click of the row or
+    Enter on it, in place; its id beside it on hover or focus. A click on its tick only ticks it."""
+
+    def test_a_row_is_one_line_with_its_whole_text_on_hover_and_click_and_its_id_beside_it(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node is required for the task rows")
+        script = Path(__file__).resolve().parents[1] / "static/catalogue/tasks.js"
+        program = r"""
+const assert = require('node:assert/strict'), elements = new Map();
+function element(id) {
+  if (!elements.has(id)) elements.set(id, {
+    dataset: {}, textContent: '', innerHTML: '', listeners: {}, attributes: {}, classList: {toggle() {}},
+    addEventListener(event, callback) { this.listeners[event] = callback; },
+    setAttribute(key, value) { this.attributes[key] = value; }, querySelector(selector) { return element(id + selector); }
+  });
+  return elements.get(id);
+}
+element('tasks-page').dataset = {writable: 'true', listing: '/listing', rows: '/rows'};
+const long = 'Open the report and ' + 'make the second table match the first one, '.repeat(6);
+const tasks = [{id: 'os__a', title: long.slice(0, 99) + '…', text: long, categories: {}}, {id: 'b', title: '', text: '', categories: {}}];
+const request = async () => ({json: async () => ({ok: true, ready: true, total: 2, of: 2, pages: 1, page: 1, categories: {}, described: true, tasks})});
+require('node:vm').runInNewContext(require('node:fs').readFileSync(process.argv[1], 'utf8'), {
+  document: {getElementById: element, querySelectorAll: () => [], querySelector: () => null},
+  URLSearchParams, nulliusFetch: request, setTimeout: callback => { callback(); return 1; }, clearTimeout() {}
+});
+(async () => {
+  for (let n = 0; n < 20; n++) await Promise.resolve();
+  const rows = element('tasks-rows').innerHTML;
+  assert.ok(rows.includes(`<button type="button" class="tasks-row" aria-expanded="false" title="${long}"><span class="tasks-title">${long.slice(0, 99)}…</span>`), rows);
+  assert.ok(rows.includes(`<span class="tasks-whole">${long}</span><small class="tasks-id mono faint">os__a</small></button>`), rows);
+  // an id alone is its own title, with nothing beside it
+  assert.ok(rows.includes('<span class="tasks-title">b</span><span class="tasks-whole">b</span></button>'), rows);
+  const said = {}, open = new Set(), button = {setAttribute: (k, v) => { said[k] = v; }};
+  const tr = {classList: {toggle: c => open.has(c) ? !open.delete(c) : !!open.add(c)}, querySelector: () => button};
+  const click = tick => element('tasks-rows').listeners.click({target: {closest: s => s === 'input, a' ? (tick ? {} : null) : tr}});
+  click(false); assert.equal(said['aria-expanded'], 'true'); assert.ok(open.has('tasks-open'));
+  click(true); assert.equal(said['aria-expanded'], 'true');           // the tick leaves it as it is
+  click(false); assert.equal(said['aria-expanded'], 'false'); assert.ok(!open.has('tasks-open'));
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+        got = subprocess.run([node, "-e", program, str(script)], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
+        self.assertEqual(got.returncode, 0, got.stderr)
+        css = (Path(__file__).resolve().parents[1] / "static/catalogue/catalogue.css").read_text(encoding="utf-8")
+        self.assertIn(".tasks-row .tasks-title { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }", css)
+        self.assertIn(".tasks-table tr:hover .tasks-id, .tasks-table tr:focus-within .tasks-id { display: inline; }", css)
+
+
 class AFirstListing(Case):
     """Each answer of the state function: in the cache, shown at once; light, made out of the request with what it
     fetches said; full, never started, with what it needs said; refused, why. No request starts a fetch or an

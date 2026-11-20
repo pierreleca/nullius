@@ -23,10 +23,15 @@
     if ($('tasks-bar-chosen')) $('tasks-bar-chosen').textContent = $('tasks-chosen').textContent;
     $('tasks-show').disabled = !chosen.size && !st.showing;
   }
+  // a task on one line: its title cut to the width, the whole text in its tooltip and, on a click of the row (or Enter
+  // on it), in place; its id beside it on hover or focus, and once open
   function row(t) {
     const tags = Object.values(t.categories || {}).map(v => `<span class="cat-tag">${esc(v)}</span>`).join(' ');
+    const whole = t.text || t.title || t.id;
     return `<tr data-id="${esc(t.id)}"><td class="tasks-tick"><input type="checkbox" aria-label="Choose ${esc(t.id)}"${chosen.has(t.id) ? ' checked' : ''}${writable ? '' : ' disabled'}></td>`
-      + `<td><span class="tasks-title">${esc(t.title || t.id)}</span>${t.title ? `<small class="mono faint">${esc(t.id)}</small>` : ''}${t.unknown ? '<small class="warn">not in the listing</small>' : ''}`
+      + `<td class="tasks-text"><button type="button" class="tasks-row" aria-expanded="false" title="${esc(whole)}"><span class="tasks-title">${esc(t.title || t.id)}</span>`
+      + `<span class="tasks-whole">${esc(whole)}</span>${t.title ? `<small class="tasks-id mono faint">${esc(t.id)}</small>` : ''}</button>`
+      + `${t.unknown ? '<small class="warn">not in the listing</small>' : ''}`
       + (tags ? `<span class="tasks-tags">${tags}</span>` : '') + `</td><td class="tasks-catcol">${tags}</td></tr>`;
   }
   function draw(tasks) {
@@ -111,6 +116,11 @@
     st.cats[f] = vs.includes(v) ? vs.filter(x => x !== v) : [...vs, v];
     if (!st.cats[f].length) delete st.cats[f];
     setShowing(false); st.page = 1; load();
+  });
+  $('tasks-rows').addEventListener('click', e => {
+    if (e.target.closest('input, a')) return;                  // a tick is a tick
+    const tr = e.target.closest('tr[data-id]'), b = tr && tr.querySelector('.tasks-row'); if (!b) return;
+    b.setAttribute('aria-expanded', String(tr.classList.toggle('tasks-open')));
   });
   $('tasks-rows').addEventListener('change', e => {
     const box = e.target.closest('input[type=checkbox]'); if (!box) return;
