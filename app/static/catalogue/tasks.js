@@ -84,6 +84,7 @@ function mount(page, opts = {}) {
     polling = setTimeout(load, 2500);
   }
   async function load() {
+    if (page.isConnected === false) return;            // a list the builder's dialog has since replaced asks nothing more
     let got;
     try { got = await (await nulliusFetch(query({page: st.page}))).json(); } catch { return say('The list could not be read. Reload the page.', true); }
     if (!got.ok) return say(got.error || 'The list could not be read.', true);
