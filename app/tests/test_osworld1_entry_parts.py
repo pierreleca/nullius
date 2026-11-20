@@ -653,6 +653,18 @@ class Texts(unittest.TestCase):
             with open(page) as f:
                 self.assertIn(line, f.read())
 
+    def test_the_pause_says_what_it_waits_for_and_where_its_default_comes_from(self):
+        with open(os.path.join(ENTRY, "standard.json")) as f:
+            pause = json.load(f)["options"]["pause"]
+        self.assertEqual(pause["label"], "Pause after each action (seconds)")
+        self.assertIn("after each action before it takes the next screenshot", pause["summary"])
+        self.assertIn("3 seconds is the default of OSWorld's own runner for the M3 agent, run_multienv_m3.py", pause["summary"])
+        self.assertNotIn("sleep_after_execution", pause["summary"])      # a name of the upstream's code, not what it does
+        # the default said is the one the driver falls back on
+        self.assertEqual(pause["default"], "3.0")
+        with open(os.path.join(ENTRY, "driver.py")) as f:
+            self.assertIn('_option("pause", "3.0", float)', f.read())
+
 
 class Snapshot(unittest.TestCase):
     """The copy Nullius makes of the entry for a run on a host carries the runner, and the port's shared code with
