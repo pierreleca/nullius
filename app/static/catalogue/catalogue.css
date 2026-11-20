@@ -436,6 +436,8 @@ a.std-need { font-size: .78rem; color: var(--text-dim); text-decoration: underli
 .bench-sets td, .bench-sets th { vertical-align: top; }
 .bench-sets small { display: block; color: var(--text-faint); font-size: 12px; }
 .bench-setlinks { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.bench-sets-group { margin: 14px 0 0; font-size: 13px; font-weight: 500; color: var(--text-dim); }
+.bench-ownsets { margin-top: 8px; }
 .bench-newset { position: relative; }
 .bench-newset > summary { list-style: none; }
 .bench-newset > summary::-webkit-details-marker { display: none; }

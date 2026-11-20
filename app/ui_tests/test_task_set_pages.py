@@ -532,12 +532,12 @@ class TheBenchmarksSection(Case):
         self.assertNotIn("<table", part)
 
     def test_new_task_set_in_the_sections_head_opens_the_tasks_of_a_dataset(self):
-        osw = _GET("benchmark", "osworld1")
-        head = re.search(r'<div class="bench-section-head">(.*?)</div>\s*</details>', self.section("osworld1"), re.S).group(1)
+        gaia = _GET("benchmark", "gaia")
+        head = re.search(r'<div class="bench-section-head">(.*?)</div>\s*</details>', self.section("gaia"), re.S).group(1)
         self.assertIn('<summary class="btn sm" aria-haspopup="true">New task set</summary>', head)
         self.assertIn('<details class="bench-newset pop">', head)          # a menu: not a disclosure, no chevron
-        for d in osw["datasets"]:                     # several datasets: a choice of them, each its tasks' page
-            self.assertIn(f'<a href="/benchmarks/osworld1/tasks/{d["id"]}">{d.get("label") or d["id"]}<small>', head)
+        for d in gaia["datasets"]:                    # several datasets: a choice of them, each its tasks' page
+            self.assertIn(f'<a href="/benchmarks/gaia/tasks/{d["id"]}">{d.get("label") or d["id"]}<small>', head)
         [only] = _GET("benchmark", "humaneval")["datasets"]
         one = self.section("humaneval")              # one dataset: the button is its link
         self.assertIn(f'<a class="btn sm" href="/benchmarks/humaneval/tasks/{only["id"]}">New task set</a>', one)
@@ -551,13 +551,87 @@ class TheBenchmarksSection(Case):
         earlier = _GET("benchmark", "osworld1@044bc33")
         sets.create(earlier, "Chrome tabs", dataset="test_nogdrive", units=["a"])
         text = visible(self.section("osworld1"))
-        self.assertIn("Task sets 2", text)
+        own = len([d for d in osw["datasets"] if d.get("subset_of")])       # the benchmark's own sets, counted too
+        self.assertIn(f"Task sets {2 + own}", text)
         self.assertNotIn("Revision", text)
         label = next(d.get("label") or d["id"] for d in osw["datasets"] if d["id"] == "test_nogdrive")
         self.assertRegex(text, re.escape(f"Chrome tabs four of them {label} 4 {osw['_version']} ") + r"\d{4}-\d\d-\d\d")
         self.assertRegex(text, re.escape(f"Chrome tabs {label} 1 main (044bc33) ") + r"\d{4}-\d\d-\d\d")
         self.assertIn('href="/benchmarks/osworld1/tasks/test_nogdrive?set=chrome-tabs"', self.section("osworld1"))
         self.assertIn('href="/benchmarks/osworld1/tasks/test_nogdrive?set=chrome-tabs-2"', self.section("osworld1"))
+
+
+class TheBenchmarksOwnSets(Case):
+    """A benchmark whose lists name the one they are cut from: its page and the builder draw one dataset, and its cuts as
+    the benchmark's own task sets, before the user's."""
+
+    def section(self, key):
+        html = self.get(f"/benchmarks/{key}").get_data(as_text=True)
+        return re.search(r'<section class="bench-section" id="task-sets".*?</section>', html, re.S).group(0)
+
+    def test_the_page_lists_its_own_sets_then_the_users_and_one_dataset_to_cut_from(self):
+        osw = _GET("benchmark", "osworld1")
+        cuts = [d for d in osw["datasets"] if d.get("subset_of")]
+        part = self.section("osworld1")
+        text = visible(part)
+        self.assertIn(f"Task sets {len(cuts)}", text)
+        self.assertIn("From OSWorld1", text)
+        for d in cuts:
+            self.assertIn(f'href="/benchmarks/osworld1/tasks/{d["id"]}"', part)
+            self.assertIn(f"{d['label']} · {d['units']} tasks", text)
+        self.assertNotIn("Yours", text)
+        # New task set opens the whole list's tasks: one dataset, no menu
+        self.assertIn('<a class="btn sm" href="/benchmarks/osworld1/tasks/test_all">New task set</a>', part)
+        self.assertNotIn("bench-newset", part)
+        sets.create(osw, "Chrome tabs", dataset="test_nogdrive", units=["a", "b"])
+        text = visible(self.section("osworld1"))
+        self.assertIn(f"Task sets {len(cuts) + 1}", text)
+        self.assertLess(text.index("From OSWorld1"), text.index("Yours"))
+        self.assertLess(text.index("Yours"), text.index("Chrome tabs"))
+        # a benchmark that declares nothing is drawn as before
+        self.assertNotIn("From ", visible(self.section("gaia")))
+
+    def node_program(self, body):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node is required for the dataset step")
+        html = self.get("/new-run").get_data(as_text=True)
+        schema = json.loads(re.search(r'<script id="nb-schema" type="application/json">(.*?)</script>', html, re.S).group(1))
+        folder = Path(__file__).resolve().parents[1] / "static/builder"
+        page = (folder / "command-builder.js").read_text(encoding="utf-8")
+        cut = lambda start, end: page[page.index(start):page.index(end, page.index(start))]
+        line = lambda name: re.search(r"^  const %s = .*$" % name, page, re.M).group(0) + "\n"
+        program = (f"const schema={json.dumps(schema)};const C=require({json.dumps(str(folder / 'command-builder-core.js'))})(schema);\n"
+                   + line("esc") + cut("  const SOURCE_SAYS =", "  // The yes to an agent") + cut("  const tile = t =>", "  // The grids drawn by the server")
+                   + cut("  // a dataset's proofs as its card shows them", "  // Specific tasks:") + body)
+        return json.loads(subprocess.run([node, "-"], input=program, check=True, capture_output=True, text=True, timeout=10).stdout)
+
+    def test_the_builder_draws_all_of_it_the_benchmarks_own_sets_then_the_users(self):
+        osw = _GET("benchmark", "osworld1")
+        sets.create(osw, "Chrome tabs", dataset="test_nogdrive", units=["a", "b"])
+        got = self.node_program(
+            "const r=C.createStandard('osworld1'),b=C.standardBench(r),u={noun:'task',nouns:'tasks'};"
+            "const first=JSON.parse(JSON.stringify(r.datasets));"
+            "const x=()=>b.datasets.find(d=>d.id===r.datasets[0]);const drawn=familyChoice(r,b,x(),u);"
+            "C.swapDataset(r,'test_nogdrive','test_small');const small=JSON.parse(JSON.stringify(r));"
+            "C.swapDataset(r,'test_small','test_nogdrive');C.setTaskSet(r,'test_nogdrive','chrome-tabs');const mine=familyChoice(r,b,x(),u);"
+            "C.swapDataset(r,'test_nogdrive','test_all');const whole=JSON.parse(JSON.stringify(r));"
+            "process.stdout.write(JSON.stringify({first,drawn,small,mine,whole,nested:C.nestedDatasets(b),root:C.wholeOf(b,'test_small')}));")
+        self.assertEqual((got["first"], got["nested"], got["root"]), (["test_nogdrive"], True, "test_all"))
+        titles = re.findall(r"<strong>(.*?)</strong>", got["drawn"])
+        self.assertEqual(titles, ["All of it", "Without Google Drive", "Small", "Infeasible", "Chrome tabs"])
+        self.assertEqual(re.findall(r'aria-pressed="true"[^>]*>.*?<strong>(.*?)</strong>', got["drawn"]), ["Without Google Drive"])
+        self.assertIn('aria-label="Your task sets"', got["drawn"])
+        self.assertEqual(re.findall(r"<h3>(.*?)</h3>", got["drawn"]), ["Which tasks?"])
+        self.assertEqual((got["small"]["datasets"], got["small"].get("task_sets")), (["test_small"], None))
+        self.assertEqual(re.findall(r'aria-pressed="true"[^>]*>.*?<strong>(.*?)</strong>', got["mine"]), ["Chrome tabs"])
+        self.assertEqual((got["whole"]["datasets"], got["whole"].get("task_sets")), (["test_all"], None))
+
+    def test_a_benchmark_that_declares_nothing_is_drawn_as_before(self):
+        got = self.node_program("const b=C.standardBench(C.createStandard('gaia'));"
+                                "process.stdout.write(JSON.stringify({nested:C.nestedDatasets(b),n:b.datasets.length}));")
+        self.assertEqual(got["nested"], False)
+        self.assertGreater(got["n"], 1)
 
 
 class BuilderCase(Case):

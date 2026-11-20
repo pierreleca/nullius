@@ -727,6 +727,29 @@
     const head = C.datasetsOf(rec).length > 1 ? esc(x.label) + ': which tasks?' : 'Which tasks?';
     return `<div class="nb-sectionhead std-sethead"><h3>${head}</h3><a class="nb-inlinebutton" href="${page}${picked ? '?set=' + encodeURIComponent(picked.name) : ''}">${picked ? 'Open ' + esc(picked.name) : 'Choose its tasks'} <span aria-hidden="true">→</span></a></div>` + choice;
   }
+  // a dataset's proofs as its card shows them: its controls, then whether its ids are stable and nothing leaks
+  const datasetChecks = (b, x) => (x.controls || []).map(c => controlChip(c)).join('') + checkChip('stable', (x.proofs || {}).units, (x.failed || {}).units, 'the same ids twice, each unique')
+    + ((b.controls || []).some(c => c.key === 'oracle') ? checkChip('no leak', (x.proofs || {}).leak, (x.failed || {}).leak, 'nothing of the reference shows before the run') : '');
+  // Which tasks? of a benchmark whose lists are cut from one (subset_of): all of it, the benchmark's own sets (its
+  // lists cut from it), then the user's sets of any of them. A choice names the list the run runs (data-was: the
+  // one chosen before) and, for a user's set, the set
+  function familyChoice(rec, b, x, u) {
+    const whole = b.datasets.find(d => d.id === C.wholeOf(b, x.id)) || x, cuts = b.datasets.filter(d => d.subset_of === whole.id);
+    const on = (rec.task_sets || {})[x.id] || '', many = n => n + ' ' + (n === 1 ? u.noun : u.nouns), was = ` data-was="${esc(x.id)}"`;
+    const mine = [whole, ...cuts].flatMap(d => (d.sets || []).map(s => ({...s, of: d})));
+    const picked = mine.find(s => s.of.id === x.id && s.name === on.split('@')[0]);
+    const made = s => s.version && b.version && s.version !== b.version ? ' · made at ' + s.version_label : '';
+    const own = [tile({attr: 'std-family', key: whole.id, data: was, on: x.id === whole.id && !on, title: 'All of it', meta: whole.units ? many(whole.units) : ''}),
+      ...cuts.map(d => tile({attr: 'std-family', key: d.id, data: was, on: x.id === d.id && !on, title: d.label, tip: d.summary || '',
+        meta: d.units ? many(d.units) : '', foot: datasetChecks(b, d)}))];
+    const yours = [...mine.map(s => tile({attr: 'std-family-set', key: s.name, data: was + ` data-in="${esc(s.of.id)}"`, on: s === picked, title: s.label,
+        tip: s.description || '', meta: many(s.units) + made(s)})),
+      ...(on && !picked ? [tile({attr: 'std-family-set', key: on, data: was + ` data-in="${esc(x.id)}"`, on: true, title: on})] : [])];
+    const page = `/benchmarks/${encodeURIComponent(b.key)}/tasks/${encodeURIComponent(picked ? picked.of.id : whole.id)}`;
+    const head = C.datasetsOf(rec).length > 1 ? esc(whole.label) + ': which tasks?' : 'Which tasks?';
+    return `<div class="nb-sectionhead std-sethead"><h3>${head}</h3><a class="nb-inlinebutton" href="${page}${picked ? '?set=' + encodeURIComponent(picked.name) : ''}">${picked ? 'Open ' + esc(picked.label) : 'Choose its tasks'} <span aria-hidden="true">→</span></a></div>`
+      + `<div class="nb-pick-grid std-optgrid">${own.join('')}</div>` + (yours.length ? `<div class="nb-pick-grid std-optgrid std-yoursets" aria-label="Your task sets">${yours.join('')}</div>` : '');
+  }
   // A chosen dataset's plan begun on a part: all of it, or specific tasks, ticked in the list of the plan's tasks (the
   // dataset's, or the set's it runs; pickTasks), the rest planned and run later from the job's page. A recipe from
   // before holds a number or a task set: shown chosen, as it is, until another choice.
@@ -770,14 +793,18 @@
     const st = C.standard(), b = C.standardBench(rec);
     if (!b) return note('Choose a benchmark first', button('Benchmark step', `data-step="${S.benchmark}"`, 'nb-inlinebutton'));
     const u = unitsOf(rec);
-    if (step === S.dataset)
+    if (step === S.dataset) {
+      // a benchmark whose lists name the one they are cut from: one dataset each list cut from none, its cuts drawn
+      // under Which tasks? as its own task sets (familyChoice); the recipe still names the list a run runs
+      const nested = C.nestedDatasets(b), chosen = C.datasetsOf(rec);
+      const shown = nested ? b.datasets.filter(x => !x.subset_of) : b.datasets;
+      const on = x => nested ? chosen.some(id => C.wholeOf(b, id) === x.id) : chosen.includes(x.id);
       return `<div class="nb-sectionhead"><h2>Which datasets?</h2></div>`
-        + `<div class="nb-pick-grid std-optgrid">${b.datasets.map(x => tile({attr: 'std-dataset', key: x.id, on: C.datasetsOf(rec).includes(x.id), title: x.label,
-          tip: x.summary || '', meta: x.units ? x.units + ' ' + u.nouns : '',
-          foot: (x.controls || []).map(c => controlChip(c)).join('') + checkChip('stable', (x.proofs || {}).units, (x.failed || {}).units, 'the same ids twice, each unique')
-            + ((b.controls || []).some(c => c.key === 'oracle') ? checkChip('no leak', (x.proofs || {}).leak, (x.failed || {}).leak, 'nothing of the reference shows before the run') : '')})).join('')}</div>`
-        + b.datasets.filter(x => C.datasetsOf(rec).includes(x.id)).map(x => taskSetChoice(rec, b, x, u) + startChoice(rec, b, x, u)).join('')
-        + benchOptions(rec, b, 'dataset') + credentialWarnings(b, b.datasets.filter(x => C.datasetsOf(rec).includes(x.id)));
+        + `<div class="nb-pick-grid std-optgrid">${shown.map(x => tile({attr: 'std-dataset', key: x.id, on: on(x), title: x.label,
+          tip: x.summary || '', meta: x.units ? x.units + ' ' + u.nouns : '', foot: datasetChecks(b, x)})).join('')}</div>`
+        + b.datasets.filter(x => chosen.includes(x.id)).map(x => (nested ? familyChoice(rec, b, x, u) : taskSetChoice(rec, b, x, u)) + startChoice(rec, b, x, u)).join('')
+        + benchOptions(rec, b, 'dataset') + credentialWarnings(b, b.datasets.filter(x => chosen.includes(x.id)));
+    }
     if (step === S.agent) {
       const agent = b.family === 'agent', all = C.standardOthers(rec), others = all.filter(o => !o.control && (!o.setup || o.own));
       const setups = all.filter(o => o.setup && !o.own), controls = all.filter(o => o.control);
@@ -1197,7 +1224,9 @@
     else if(d.runner){toRunner(d.runner,C.benchKey(r()));}
     else if(d.stdBench){C.setStandardBenchmark(r(),d.stdBench);}
     else if(d.stdOther){const rec=r(),c=C.chosenOf(rec);rec.others=c.includes(d.stdOther)?c.filter(k=>k!==d.stdOther):[...c,d.stdOther];delete rec.other;if(rec.options)delete rec.options[d.stdOther];}   // a check
-    else if(d.stdDataset){const rec=r(),c=C.datasetsOf(rec);rec.datasets=c.includes(d.stdDataset)?(c.length>1?c.filter(k=>k!==d.stdDataset):c):[...c,d.stdDataset];delete rec.dataset;C.keepTaskSets(rec);C.keepStartWith(rec);}
+    else if(d.stdDataset){const rec=r(),c=C.datasetsOf(rec),b=C.standardBench(rec),mine=c.filter(k=>C.wholeOf(b,k)===d.stdDataset);rec.datasets=mine.length?(c.length>mine.length?c.filter(k=>!mine.includes(k)):c):[...c,d.stdDataset];delete rec.dataset;C.keepTaskSets(rec);C.keepStartWith(rec);}
+    else if(d.stdFamily!==undefined){C.swapDataset(r(),d.was,d.stdFamily);}
+    else if(d.stdFamilySet!==undefined){C.swapDataset(r(),d.was,d.in);C.setTaskSet(r(),d.in,d.stdFamilySet);}
     else if(d.stdTaskset!==undefined){C.setTaskSet(r(),d.of,d.stdTaskset);}
     else if(d.stdStart!==undefined){C.setStartWith(r(),d.of,d.stdStart);}
     else if(d.stdStartPick!==undefined){pickTasks(d.stdStartPick);return;}
