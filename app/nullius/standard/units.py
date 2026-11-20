@@ -274,9 +274,11 @@ def _matches(task: dict, words: List[str]) -> bool:
 
 
 def find(bench: dict, dataset: str, options: Optional[dict] = None, search: str = "",
-         categories: Optional[Dict[str, List[str]]] = None, page: int = 1, size: Optional[int] = PAGE) -> dict:
+         categories: Optional[Dict[str, List[str]]] = None, page: int = 1, size: Optional[int] = PAGE,
+         within: Optional[List[str]] = None) -> dict:
     """The tasks of ``dataset`` under ``options`` that the search text and the category values match, a page
-    of ``size`` (all of them when None), page 1 first:
+    of ``size`` (all of them when None), page 1 first; ``within``, ids that bound it (a task set's), the others
+    left out as if the dataset did not hold them:
     {total, page, pages, of, described, tasks: [{id, title, text, categories}],
      categories: {FIELD: [{value, count}, ...]}}. ``total`` counts every match, ``of`` the dataset's tasks;
     each field's values are counted over the tasks the search and the other fields' filters match, the most
@@ -285,6 +287,9 @@ def find(bench: dict, dataset: str, options: Optional[dict] = None, search: str 
         raise Refused(f"page {page}: 1, 2, ...")
     got = listing(bench, dataset, options)
     tasks, chosen = got["tasks"], categories or {}
+    if within is not None:
+        bound = set(within)
+        tasks = [t for t in tasks if t["id"] in bound]
     fields = sorted({f for t in tasks for f in t["categories"]})
     unknown = [f for f in chosen if f not in fields]
     if unknown:

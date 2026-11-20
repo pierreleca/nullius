@@ -497,15 +497,30 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
             add("dataset", f"The task set {sets.label_of(entry)} is cut from the dataset {entry['dataset']}, not {ds_id}.")
             continue
         set_of[ds_id] = {"name": set_name, "label": sets.label_of(entry), "units": len(got["units"]), "ids": set(got["units"])}
-    # a chosen dataset's plan begun on a part (``start_with``: {dataset: N or set:NAME}): the rest run later
+    # a chosen dataset's plan begun on a part (``start_with``: {dataset: [ID, ...], the tasks the page ticked, or
+    # from a recipe before it, N or set:NAME}): the rest run later
     start_of = {}                      # {dataset: {"value": the --start-with word, "units": N, "label": what Review says}}
     asked = recipe.get("start_with") or {}
-    if not isinstance(asked, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in asked.items()):
-        add("dataset", "Start with is a dataset with a number or a task set each.")
+    if not isinstance(asked, dict) or not all(isinstance(k, str) and (isinstance(v, str) or isinstance(v, list) and all(isinstance(i, str) for i in v))
+                                              for k, v in asked.items()):
+        add("dataset", "Start with is a dataset with its tasks each.")
         asked = {}
     for ds_id, given in asked.items():
         if ds_id not in {x["id"] for x in dss}:
-            add("dataset", f"Start with {given} is for {ds_id}, a dataset not chosen.")
+            add("dataset", f"Start with {'its tasks' if isinstance(given, list) else given} is for {ds_id}, a dataset not chosen.")
+            continue
+        if isinstance(given, list):
+            # the tasks ticked, given inline: ids:A,B,... (an id with a comma or a space cannot be)
+            ids = list(dict.fromkeys(given))
+            if not ids:
+                add("dataset", "Start with: tick at least one task, or start with all of it.")
+            elif any(not i or "," in i or i != i.strip() for i in ids):
+                add("dataset", "Start with: an id holding a comma or a space cannot be ticked here; give the tasks in a file.")
+            elif ds_id in set_of and set(ids) - set_of[ds_id]["ids"]:
+                add("dataset", f"Start with: {len(set(ids) - set_of[ds_id]['ids'])} of the tasks ticked are not in the task set "
+                               f"{set_of[ds_id]['label']}.")
+            else:
+                start_of[ds_id] = {"value": "ids:" + ",".join(ids), "units": len(ids), "label": "the tasks ticked"}
             continue
         if given.isdigit():
             if int(given) < 1:
@@ -1010,6 +1025,20 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
                        "providers": {s["name"]: s["provider"] for s in declared if s.get("provider")}}
 
 
+    noun_one = (b.get("units") or {}).get("noun", "unit")
+    if picks and all(p.get("setup") for p in picks):
+        noun_one = picks[0]["o"]["units"]["noun"]
+
+    def first_words(ds_id: str) -> str:
+        """What a part's start runs first and what it leaves for later, in a sentence of Review."""
+        m, whole = start_of[ds_id]["units"], planned_of.get(ds_id)
+        rest = (whole - m) if whole else None
+        ran = f"{m} {noun_one if m == 1 else nouns} {'runs' if m == 1 else 'run'} first ({start_of[ds_id]['label']})"
+        if rest == 0:
+            return ran + ", and nothing is left for later"
+        left = "the rest stay" if rest is None else f"the other {rest} {'stays' if rest == 1 else 'stay'}"
+        return f"{ran}; {left} planned, to run later from the job's page"
+
     def row(p: dict) -> list:
         o = p["o"]
         if p["control"]:
@@ -1028,9 +1057,8 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
                       ", ".join(f"{x.get('label') or x['id']}" + (f" · task set {set_of[x['id']]['label']}"
                                                                    + ("" if x["id"] in start_of else f" · {set_of[x['id']]['units']} {nouns}")
                                                                    if x["id"] in set_of else f" · {x['units']} {nouns}" if x.get("units") and x["id"] not in start_of else "")
-                                # begun on a part: what it plans in place of its count, and what begins
-                                + (f" · {planned_of.get(x['id']) or 'all its ' + nouns} planned, {start_of[x['id']]['units']} to begin "
-                                   f"({start_of[x['id']]['label']})" if x["id"] in start_of else "") for x in dss)],
+                                # begun on a part: what runs first, and what stays for later
+                                + (f" · {first_words(x['id'])}" if x["id"] in start_of else "") for x in dss)],
                      *[[STEP["limits" if (b.get("options") or {})[k].get("limit") else "dataset" if (b.get("options") or {})[k].get("step") else "agent"], (b.get("options") or {})[k].get("label") or k.replace("_", " ").capitalize(),
                         _shown((b.get("options") or {})[k], v, per_ds[next(x["id"] for x in dss if per_ds[x["id"]].get(k) == v)]) + ("" if k in chosen_opts else " (its default)") + f" · {', '.join(x['id'] for x in dss if per_ds[x['id']].get(k) == v)}"]
                        for k, v in {k: v for vals in per_ds.values() for k, v in vals.items()}.items()
@@ -1047,7 +1075,8 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
                       + (f" · user simulator {sim_model or (b.get('simulator') or {}).get('model')}" + (" (leaderboard)" if lb.get("simulator") else "" if sim_model else " (official)") if b.get("simulator") else "")
                       + (f" · judge {judge_model or b['score']['judge']['model']}" + ("" if judge_model else " (official)") if (b.get("score") or {}).get("judge") else "")
                       + "".join(f" · {SERVED_LABEL[r_]} served by {', '.join(s)}" for r_, s in served.items())],
-                     [STEP["limits"], "Scope", (f"{planned or 'all'} planned, {begin or 'all'} to begin" if set_of or start_of
+                     [STEP["limits"], "Scope", (f"{begin} first, {planned - begin if planned else 'the rest'} later" if start_of and begin
+                      else f"{planned or 'all'} planned, {begin or 'all'} to begin" if set_of or start_of
                       else f"{'first ' + str(n) if isinstance(limit, int) else 'all ' + str(total or '')} {nouns}")
                       + (" of each shard" if of > 1 and isinstance(limit, int) else "")
                       + (" · as many at a time as Boat allows" if backend == "boat" and not recipe.get("concurrency")

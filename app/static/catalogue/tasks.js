@@ -2,12 +2,14 @@
 // values (web/catalogue.py, standard/units.py); this page keeps the chosen ids alone. The listing is asked for once the
 // page has loaded: in the cache, it shows at once; one that can be made lightly is started out of the request and
 // the page asks again until it is ready; one that needs the benchmark's full environment is never started here.
+// The run builder mounts the same list in a dialog (nulliusTasks, data-manual): the tasks of a dataset or of one of
+// its sets (data-within), its ticks given back through onChange.
 (() => {
-  const page = document.getElementById('tasks-page');
-  if (!page) return;
+function mount(page, opts = {}) {
   const $ = id => document.getElementById(id), d = page.dataset, nouns = d.nouns || 'tasks';
   const writable = d.writable === 'true';
-  const chosen = new Set(JSON.parse(($('tasks-chosen-ids') || {}).textContent || '[]'));
+  const chosen = new Set(opts.chosen || JSON.parse(($('tasks-chosen-ids') || {}).textContent || '[]'));
+  const changed = () => opts.onChange && opts.onChange([...chosen]);
   // opened from a set: its members first; Show all browses the dataset
   const st = {q: '', cats: {}, page: 1, showing: !!d.set && chosen.size > 0, ready: false, total: 0, pages: 1};
   const label = field => field.charAt(0).toUpperCase() + field.slice(1).replace(/_/g, ' ');
@@ -63,6 +65,7 @@
     Object.entries(st.cats).forEach(([f, vs]) => vs.forEach(v => u.append('cat', `${f}=${v}`)));
     Object.entries(extra || {}).forEach(([k, v]) => u.set(k, v));
     if (d.version) u.set('version', d.version);
+    if (d.within) u.set('within', d.within);
     return d.listing + '?' + u;
   }
   let polling = null, asked = 0;
@@ -128,7 +131,7 @@
   $('tasks-rows').addEventListener('change', e => {
     const box = e.target.closest('input[type=checkbox]'); if (!box) return;
     const id = box.closest('tr').dataset.id;
-    box.checked ? chosen.add(id) : chosen.delete(id); chosenLine();
+    box.checked ? chosen.add(id) : chosen.delete(id); chosenLine(); changed();
   });
   $('tasks-pages').addEventListener('click', e => {
     const b = e.target.closest('[data-page]'); if (!b) return;
@@ -139,12 +142,12 @@
   });
   $('tasks-match')?.addEventListener('click', async () => {
     const got = await (await nulliusFetch(query({ids: 1}))).json();
-    if (got.ok && got.ready) { got.ids.forEach(id => chosen.add(id)); load(); }
+    if (got.ok && got.ready) { got.ids.forEach(id => chosen.add(id)); changed(); load(); }
   });
-  $('tasks-clear')?.addEventListener('click', () => { chosen.clear(); load(); });
+  $('tasks-clear')?.addEventListener('click', () => { chosen.clear(); changed(); load(); });
   $('tasks-paste-add')?.addEventListener('click', async () => {
     const ids = [...new Set($('tasks-paste').value.split(/[\s,]+/).map(s => s.trim()).filter(s => s && !s.startsWith('#')))];
-    ids.forEach(id => chosen.add(id));
+    ids.forEach(id => chosen.add(id)); changed();
     $('tasks-paste').value = ''; $('tasks-paste').closest('details').open = false;
     window.nulliusNotify?.(`${count(ids.length)} added.`);
     load();
@@ -174,4 +177,9 @@
   setShowing(st.showing);
   chosenLine();
   load();
+  return {chosen};
+}
+globalThis.nulliusTasks = mount;
+const page = document.getElementById('tasks-page');
+if (page && !page.dataset.manual) mount(page);
 })();

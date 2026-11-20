@@ -208,12 +208,20 @@ def benchmark_tasks_listing(key, dataset):
         if eq and field_ and value:
             cats.setdefault(field_, []).append(value)
     page = request.args.get("page", "1")
+    # ``within=NAME``: the tasks of that set alone, as the run builder's start on specific tasks lists them
+    within = None
+    if request.args.get("within"):
+        try:
+            entry = sets.load(key, request.args["within"])
+        except sets.Refused as e:
+            return jsonify(ok=False, error=sets.plain(e, key, request.args["within"])), 400
+        within = sets.latest(entry)["units"]
     try:
         if request.args.get("ids"):           # every match's id, for "select the N that match"
-            got = units.find(bench, dataset, search=request.args.get("q", ""), categories=cats, size=None)
+            got = units.find(bench, dataset, search=request.args.get("q", ""), categories=cats, size=None, within=within)
             return jsonify(ok=True, ready=True, total=got["total"], ids=[t["id"] for t in got["tasks"]])
         got = units.find(bench, dataset, search=request.args.get("q", ""), categories=cats,
-                         page=int(page) if page.isdigit() and int(page) >= 1 else 1)
+                         page=int(page) if page.isdigit() and int(page) >= 1 else 1, within=within)
     except units.Refused as e:
         return jsonify(ok=False, error=str(e)), 400
     return jsonify(ok=True, ready=True, **got)

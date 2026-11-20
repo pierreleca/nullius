@@ -171,6 +171,19 @@ class TheTasksPagesData(Case):
         self.assertEqual(self.listing(ids=1, cat=["kind=alpha"])["ids"], [t["id"] for t in units.find(self.b, "all", categories={"kind": ["alpha"]}, size=None)["tasks"]])
         self.assertEqual(self.starts(), before)             # every answer from the cache: no driver started
 
+    def test_within_a_set_the_listing_holds_its_tasks_alone(self):
+        units.listing(self.b, "all")
+        sets.create(self.b, "Three", dataset="all", units=["t001", "t007", "t120"])
+        got = self.listing(within="three")
+        self.assertEqual(([t["id"] for t in got["tasks"]], got["total"], got["of"]), (["t001", "t007", "t120"], 3, 3))
+        self.assertEqual(got, dict(units.find(self.b, "all", within=["t001", "t007", "t120"]), ok=True, ready=True))
+        self.assertEqual(self.listing(within="three", ids=1)["ids"], ["t001", "t007", "t120"])
+        searched = self.listing(within="three", q="spreadsheet")
+        self.assertEqual([t["id"] for t in searched["tasks"]], [t["id"] for t in units.find(self.b, "all", search="spreadsheet")["tasks"]
+                                                                if t["id"] in ("t001", "t007", "t120")])
+        r = self.client.get("/benchmarks/described/tasks/all/listing?within=nowhere"); self.addCleanup(r.close)
+        self.assertEqual((r.status_code, r.get_json()["error"]), (400, "There is no task set nowhere."))
+
     def test_an_unknown_category_is_refused_plainly(self):
         units.listing(self.b, "all")
         r = self.client.get("/benchmarks/described/tasks/all/listing?cat=colour=red"); self.addCleanup(r.close)

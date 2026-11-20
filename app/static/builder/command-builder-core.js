@@ -197,6 +197,8 @@
   function setTaskSet(r, dataset, ref) {
     r.task_sets = {...(r.task_sets || {})};
     if (ref) r.task_sets[dataset] = ref; else delete r.task_sets[dataset];
+    // tasks ticked to start with were ticked in the plan's list: another plan asks for them again
+    if (Array.isArray((r.start_with || {})[dataset])) setStartWith(r, dataset, '');
     return keepTaskSets(r);
   }
   function keepTaskSets(r) {
@@ -204,15 +206,18 @@
     if (kept.length) r.task_sets = Object.fromEntries(kept); else delete r.task_sets;
     return r;
   }
-  // A chosen dataset's plan begun on a part (recipe.py: start_with, {dataset: N or set:NAME}): '' for all of it, a
-  // number of its tasks, or a task set of it; the rest run later in the job. A dataset no longer chosen keeps none.
+  // A chosen dataset's plan begun on a part (recipe.py: start_with, {dataset: [ID, ...]}): '' for all of it, the ids
+  // of the tasks ticked (an empty list while none is), or from a recipe before, N or set:NAME; the rest run later in
+  // the job. A dataset no longer chosen keeps none.
   function setStartWith(r, dataset, value) {
     r.start_with = {...(r.start_with || {})};
-    if (value) r.start_with[dataset] = String(value); else delete r.start_with[dataset];
+    if (Array.isArray(value)) r.start_with[dataset] = value.filter(v => typeof v === 'string' && v);
+    else if (value) r.start_with[dataset] = String(value); else delete r.start_with[dataset];
     return keepStartWith(r);
   }
   function keepStartWith(r) {
-    const on = datasetsOf(r), kept = Object.entries(r.start_with || {}).filter(([k, v]) => on.includes(k) && typeof v === 'string' && v);
+    const on = datasetsOf(r), kept = Object.entries(r.start_with || {}).filter(([k, v]) => on.includes(k)
+      && (typeof v === 'string' && v || Array.isArray(v) && v.every(i => typeof i === 'string')));
     if (kept.length) r.start_with = Object.fromEntries(kept); else delete r.start_with;
     return r;
   }

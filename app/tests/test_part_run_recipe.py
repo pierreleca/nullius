@@ -1,7 +1,8 @@
-"""A recipe's plan begun on a part (``start_with``): all of it, a number of its tasks or a task set of its dataset;
-compiled to ``--start-with``, said in Review as what it plans and what it begins, refused where the run would
-refuse it; the set it begins with carried to a host, and a run there begun on it. No key, no network: the runs
-are the fake benchmark's control."""
+"""A recipe's plan begun on a part (``start_with``): all of it, or the tasks ticked (``[ID, ...]``, the builder's
+form), or from a recipe before, a number of its tasks or a task set of its dataset; compiled to ``--start-with``
+(``ids:A,B`` for the ticks), said in Review as what runs first and what stays for later, refused where the run
+would refuse it; the set it begins with carried to a host, and a run there begun on it. No key, no network: the
+runs are the fake benchmark's control."""
 from __future__ import annotations
 
 import io
@@ -25,30 +26,34 @@ class StartWith(Scratch):
                 out = self.compile(datasets=datasets, limit=limit, start_with={"all": "1"})
                 self.assertEqual(out["errors"], [])
                 self.assertEqual(out["confirm"], "")
-                self.assertTrue(next(r[2] for r in out["review"] if r[1] == "Scope").startswith(f"{planned} planned, {begun} to begin"))
+                self.assertTrue(next(r[2] for r in out["review"] if r[1] == "Scope").startswith(f"{begun} first, {planned - begun} later"))
         # every task of the datasets, with none chosen: Run asks first, as it always did
         self.assertTrue(self.compile(datasets=["all", "more"])["confirm"].startswith("Run all 8 tasks of Fake bench (all, more) with "))
 
-    def test_a_number_or_a_set_compiles_to_the_option_and_review_says_planned_and_to_begin(self):
+    def test_the_tasks_ticked_a_number_or_a_set_compile_to_the_option_and_review_says_what_runs_first(self):
         sets.create(self.b, "first", dataset="all", units=["good", "slow"])
-        for given, word, said in (("2", "2", "all · 4 planned, 2 to begin (the first 2)"),
-                                  ("set:first", "set:first", "all · 4 planned, 2 to begin (task set first)")):
+        later = "; the other 2 stay planned, to run later from the job's page"
+        for given, word, said in ((["slow", "good"], "ids:slow,good", "all · 2 tasks run first (the tasks ticked)" + later),
+                                  ("2", "2", "all · 2 tasks run first (the first 2)" + later),
+                                  ("set:first", "set:first", "all · 2 tasks run first (task set first)" + later)):
             with self.subTest(given=given):
                 out = self.compile(start_with={"all": given})
                 self.assertEqual(out["errors"], [])
                 self.assertIn(f"--dataset all --start-with {word} -j 1", out["shards"][0]["command"])
                 self.assertEqual(next(r for r in out["review"] if r[1] == "Dataset")[2], said)
-                self.assertTrue(next(r[2] for r in out["review"] if r[1] == "Scope").startswith("4 planned, 2 to begin"))
+                self.assertTrue(next(r[2] for r in out["review"] if r[1] == "Scope").startswith("2 first, 2 later"))
                 self.assertEqual(out["confirm"], "")
         # the plan a set or a limit cuts is what is planned
         sets.create(self.b, "dev", dataset="all", units=["good", "wrong", "slow"])
-        out = self.compile(task_sets={"all": "dev"}, start_with={"all": "set:first"})
+        out = self.compile(task_sets={"all": "dev"}, start_with={"all": ["wrong"]})
         self.assertEqual(out["errors"], [])
-        self.assertIn("--set dev --start-with set:first", out["shards"][0]["command"])
-        self.assertIn("· 3 planned, 2 to begin", next(r for r in out["review"] if r[1] == "Dataset")[2])
+        self.assertIn("--set dev --start-with ids:wrong", out["shards"][0]["command"])
+        self.assertIn("· 1 task runs first (the tasks ticked); the other 2 stay planned", next(r for r in out["review"] if r[1] == "Dataset")[2])
+        out = self.compile(task_sets={"all": "dev"}, start_with={"all": ["wrong", "good", "slow"]})
+        self.assertIn("· 3 tasks run first (the tasks ticked), and nothing is left for later", next(r for r in out["review"] if r[1] == "Dataset")[2])
         out = self.compile(limit=3, start_with={"all": "1"})
         self.assertIn("--limit 3 --start-with 1", out["shards"][0]["command"])
-        self.assertIn("· 3 planned, 1 to begin", next(r for r in out["review"] if r[1] == "Dataset")[2])
+        self.assertIn("· 1 task runs first (the first 1); the other 2 stay planned", next(r for r in out["review"] if r[1] == "Dataset")[2])
 
     def test_what_the_run_would_refuse_is_refused_on_its_step(self):
         sets.create(self.b, "other-ds", dataset="more", units=["good"])
@@ -60,6 +65,11 @@ class StartWith(Scratch):
                                 "Start with: the task set other-ds is cut from the dataset more, not all."),
                                ({"start_with": {"all": "set:nosuch"}}, "dataset", "Fake bench has no task set nosuch to start with"),
                                ({"start_with": {"all": "first.txt"}}, "dataset", "Start with all of the tasks, a number of them, or a task set."),
+                               ({"start_with": {"all": []}}, "dataset", "Start with: tick at least one task, or start with all of it."),
+                               ({"start_with": {"all": ["a,b"]}}, "dataset", "Start with: an id holding a comma or a space cannot be ticked here"),
+                               ({"start_with": {"all": [3]}}, "dataset", "Start with is a dataset with its tasks each."),
+                               ({"task_sets": {"all": "dev"}, "start_with": {"all": ["good", "slow"]}}, "dataset",
+                                "Start with: 1 of the tasks ticked are not in the task set dev."),
                                ({"start_with": {"more": "1"}}, "dataset", "Start with 1 is for more, a dataset not chosen."),
                                ({"task_sets": {"all": "dev"}, "start_with": {"all": "set:wide"}}, "dataset",
                                 "Start with: the task set wide names 1 of all's tasks outside the task set dev."),
@@ -69,6 +79,21 @@ class StartWith(Scratch):
                 out = self.compile(**kw)
                 self.assertIn(recipe.STEP[step], [e["step"] for e in out["errors"]], out["errors"])
                 self.assertTrue(any(e["message"].startswith(said) for e in out["errors"]), out["errors"])
+
+    def test_the_tasks_ticked_run_first_and_the_rest_stay_planned(self):
+        out = self.compile(start_with={"all": ["slow", "good"]})
+        jobs = self.tmp / "jobs"
+        command = out["shards"][0]["command"].replace('--from-run --jobs "${NULLIUS_JOBS:-jobs_standard}"', f"--jobs {jobs}")
+        words = command.split()[3:]
+        out_, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(cli, "_bench", return_value=self.b), mock.patch.object(cli, "_exit_on_term"), \
+                mock.patch.object(cli.settings, "load"), redirect_stdout(out_), redirect_stderr(err):
+            code = cli.main(["run", *words])
+        self.assertEqual(code, 0, out_.getvalue() + err.getvalue())
+        cfg = json.loads((jobs / "fake-sets" / "config.json").read_text())
+        self.assertEqual(cfg["standard"]["start_with"], {"units": ["good", "slow"]})          # in the plan's order
+        self.assertEqual(sorted(d for d in os.listdir(jobs / "fake-sets") if "__u" in d), ["good__u0000", "slow__u0002"])
+        self.assertEqual(sorted(x["unit"] for x in rerun.unfinished(str(jobs / "fake-sets")).values()), ["model", "wrong"])
 
     def test_a_recipe_without_it_compiles_as_before(self):
         self.assertEqual(self.compile(), self.compile(start_with={}))

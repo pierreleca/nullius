@@ -727,25 +727,44 @@
     const head = C.datasetsOf(rec).length > 1 ? esc(x.label) + ': which tasks?' : 'Which tasks?';
     return `<div class="nb-sectionhead std-sethead"><h3>${head}</h3><a class="nb-inlinebutton" href="${page}${picked ? '?set=' + encodeURIComponent(picked.name) : ''}">${picked ? 'Open ' + esc(picked.name) : 'Choose its tasks'} <span aria-hidden="true">→</span></a></div>` + choice;
   }
-  // A chosen dataset's plan begun on a part: all of it, a number of its tasks, or a task set of it (not the one it runs),
-  // small cards, a select past five; the rest stay planned, run later from the job's page
+  // A chosen dataset's plan begun on a part: all of it, or specific tasks, ticked in the list of the plan's tasks (the
+  // dataset's, or the set's it runs; pickTasks), the rest planned and run later from the job's page. A recipe from
+  // before holds a number or a task set: shown chosen, as it is, until another choice.
   function startChoice(rec, b, x, u) {
-    const on = (rec.start_with || {})[x.id] || '', plan = ((rec.task_sets || {})[x.id] || '').split('@')[0], ref = s => s.name;
-    const sets = (x.sets || []).filter(s => plan !== s.name), count = /^\d+$/.test(on);
-    const picked = sets.find(s => on.split('@')[0] === 'set:' + s.name);
-    const data = ` data-of="${esc(x.id)}"`, many = n => n + ' ' + (n === 1 ? u.noun : u.nouns);
-    const choice = sets.length + 2 > 5
-      ? `<label class="nb-field">Start ${esc(x.label)} with<select data-std-start-select="${esc(x.id)}"><option value="">All of it</option>`
-        + `<option value="${count ? esc(on) : '5'}" ${count ? 'selected' : ''}>A number of ${esc(u.nouns)}</option>`
-        + sets.map(s => `<option value="set:${esc(ref(s))}" ${s === picked ? 'selected' : ''}>${esc(s.label)} · ${many(s.units)}</option>`).join('')
-        + (on && !count && !picked ? `<option value="${esc(on)}" selected>${esc(on.slice(4))}</option>` : '') + '</select></label>'
-      : `<div class="nb-pick-grid std-optgrid">` + [tile({attr: 'std-start', key: '', data, on: !on, title: 'All of it'}),
-          tile({attr: 'std-start', key: count ? on : '5', data, on: count, title: 'A number of ' + u.nouns}),
-          ...sets.map(s => tile({attr: 'std-start', key: 'set:' + ref(s), data, on: s === picked, title: s.label, tip: s.description || '',
-            meta: many(s.units)})),
-          ...(on && !count && !picked ? [tile({attr: 'std-start', key: on, data, on: true, title: on.slice(4)})] : [])].join('') + '</div>';
-    return `<div class="nb-sectionhead std-sethead"><h3>${C.datasetsOf(rec).length > 1 ? esc(x.label) + ': start with' : 'Start with'}</h3></div>` + choice
-      + (count ? `<div class="nb-two"><label class="nb-field">Number of ${esc(u.nouns)} to begin<input aria-label="Number of ${esc(u.nouns)} to begin" data-std-start-count="${esc(x.id)}" type="number" min="1" step="1" value="${esc(on)}" autocomplete="off"><small>The first ones, in its order; the rest are run later from the job's page.</small></label></div>` : '');
+    const on = (rec.start_with || {})[x.id] || '', ids = Array.isArray(on) ? on : null, data = ` data-of="${esc(x.id)}"`;
+    const set = typeof on === 'string' && on.startsWith('set:') ? (x.sets || []).find(s => s.name === on.slice(4).split('@')[0]) : null;
+    const older = typeof on === 'string' && on ? (/^\d+$/.test(on) ? 'The first ' + on : set ? set.label : on.slice(4)) : '';
+    const tiles = [tile({attr: 'std-start', key: '', data, on: !on, title: 'All of it'}),
+      tile({attr: 'std-start-pick', key: x.id, on: !!ids, title: 'Specific ' + u.nouns, meta: ids ? ids.length + ' chosen' : ''}),
+      ...(older ? [tile({attr: 'std-start', key: on, data, on: true, title: older})] : [])];
+    return `<div class="nb-sectionhead std-sethead"><h3>${C.datasetsOf(rec).length > 1 ? esc(x.label) + ': start with' : 'Start with'}</h3>`
+      + (ids ? `<button type="button" class="nb-inlinebutton" data-std-start-pick="${esc(x.id)}">Change the ${esc(u.nouns)} <span aria-hidden="true">→</span></button>` : '')
+      + `</div><div class="nb-pick-grid std-optgrid">${tiles.join('')}</div>`;
+  }
+  // Specific tasks: the tasks page's list (catalogue/tasks.js) in a dialog, of the dataset's tasks at the recipe's
+  // version, or of the set it runs; each tick goes into the recipe at once. Closed with none ticked: all of it.
+  function pickTasks(id) {
+    const rec = r(), b = C.standardBench(rec), x = b && b.datasets.find(d => d.id === id), dialog = document.getElementById('nb-tasks');
+    if (!x || !dialog || !globalThis.nulliusTasks) return;
+    const u = unitsOf(rec), plan = ((rec.task_sets || {})[id] || '').split('@')[0], set = plan && (x.sets || []).find(s => s.name === plan);
+    const page = document.getElementById('nb-tasks-list').content.firstElementChild.cloneNode(true);
+    const base = `/benchmarks/${encodeURIComponent(b.key)}/tasks/${encodeURIComponent(id)}`;
+    Object.assign(page.dataset, {listing: base + '/listing', prepare: base + '/prepare', rows: base + '/rows', csrf: schema.csrf || '',
+      local: schema.local ? 'true' : 'false', nouns: u.nouns, version: b.version || '', within: set ? set.name : ''});
+    document.getElementById('nb-tasks-body').replaceChildren(page);
+    document.getElementById('nb-tasks-title').textContent = 'Start with: ' + (set ? set.label : x.label);
+    const was = (rec.start_with || {})[id];
+    globalThis.nulliusTasks(page, {chosen: Array.isArray(was) ? was : [], onChange: ids => { C.setStartWith(r(), id, ids); }});
+    if (!Array.isArray(was)) C.setStartWith(rec, id, []);
+    const close = () => {
+      const now = (r().start_with || {})[id];
+      if (Array.isArray(now) && !now.length) C.setStartWith(r(), id, '');
+      dialog.close(); renderForm(); refreshPlan();
+    };
+    document.getElementById('nb-tasks-done').onclick = close;
+    document.getElementById('nb-tasks-close').onclick = close;
+    dialog.oncancel = e => { e.preventDefault(); close(); };
+    dialog.showModal();
   }
   function standardForm(rec) {
     const st = C.standard(), b = C.standardBench(rec);
@@ -1181,6 +1200,7 @@
     else if(d.stdDataset){const rec=r(),c=C.datasetsOf(rec);rec.datasets=c.includes(d.stdDataset)?(c.length>1?c.filter(k=>k!==d.stdDataset):c):[...c,d.stdDataset];delete rec.dataset;C.keepTaskSets(rec);C.keepStartWith(rec);}
     else if(d.stdTaskset!==undefined){C.setTaskSet(r(),d.of,d.stdTaskset);}
     else if(d.stdStart!==undefined){C.setStartWith(r(),d.of,d.stdStart);}
+    else if(d.stdStartPick!==undefined){pickTasks(d.stdStartPick);return;}
     // the standard's machines: each a toggle, one at least; several split the run into shards
     else if(d.stdWhere){const rec=r(),list=C.whereList(rec),on=list.includes(d.stdWhere),next=on?list.filter(w=>w!==d.stdWhere):[...list,d.stdWhere];if(!next.length)return;rec.where=next.length>1?next:next[0];}
     // hosts or Boat sandboxes: a sandbox run starts from this machine alone
@@ -1237,7 +1257,6 @@
       else if(['model','simulator_model','judge_model'].includes(d.field)){C.setModelOf(rec,d.field,value);syncServed();}   // the field's pin goes with its model; its Served by follows, in place
       else rec[d.field]=value;
       if(el.list?.id==='nb-paths')completeDirectory(el.value);
-    }else if(d.stdStartCount!==undefined){if(/^[1-9]\d*$/.test(el.value))C.setStartWith(rec,d.stdStartCount,el.value);refreshPlan();return;
     }else if(d.stdMinutes){const t=Object.assign({},rec.timeouts);if(el.value===''||!(Number(el.value)>0))delete t[d.stdMinutes];else t[d.stdMinutes]=Number(el.value);if(Object.keys(t).length)rec.timeouts=t;else delete rec.timeouts;refreshPlan();return;
     }else if(d.minutes){C.setPhaseMinutes(rec,d.minutes,el.value===''?'':Number(el.value));const row=el.closest('tr');if(row){const m=row.querySelector('.nb-mono');const t=C.effectiveTimeouts(rec);const p=t&&t.phases.find(x=>x.key===d.minutes);if(m&&p)m.textContent='×'+p.multiplier;}refreshPlan();return;}
     else if(d.customAgent!==undefined){rec.customAgents[Number(d.customAgent)]=el.value;refreshPlan();return;}
@@ -1264,7 +1283,6 @@
     else if(d.stdVersion!==undefined){   // in place: only the card's count changes on this step, so nothing else is drawn again
       C.setStandardBenchmark(r(),el.value);benchTasks();render(false,false);}
     else if(d.stdTasksetSelect!==undefined){C.setTaskSet(r(),d.stdTasksetSelect,el.value);renderForm();refreshPlan();}
-    else if(d.stdStartSelect!==undefined){C.setStartWith(r(),d.stdStartSelect,el.value);renderForm();refreshPlan();}
     // an option at its default is left out: the recipe names only what was changed. A select's value can show or hide
     // the options that apply under it (`when`): the step is drawn again and the focus goes back to the select, or to the
     // menu button controls.js puts after it once this change is handled; a typed value is left as it is

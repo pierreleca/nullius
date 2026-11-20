@@ -340,17 +340,23 @@ new Function('$', '$$', 'rows', 'document', 'nulliusFetch', 'URL', 'location',
 
 
 class TheBuilder(task_set_pages.BuilderCase):
-    """Start with in the builder: Review, compiled by the server, says what is planned and what begins; the core keeps
-    the choice in the recipe, drops it with its dataset and its benchmark, and reads it back from a saved recipe."""
+    """Start with in the builder: All of it or Specific tasks, ticked in a dialog holding the tasks page's list; Review,
+    compiled by the server, says what runs first and what stays for later; the core keeps the choice in the recipe,
+    drops it with its dataset, its plan and its benchmark, and reads it back from a saved recipe."""
 
-    def test_review_says_planned_and_to_begin(self):
+    def test_review_says_what_runs_first_and_what_stays_for_later(self):
         recipe = {"version": 1, "harness": "standard", "name": "fake-0101-120000", "title": "t", "benchmark": "fakebench", "dataset": "all",
                   "other": "fake", "provider": "openai", "model": "gpt-5-mini", "concurrency": 1, "unsandboxed": True, "where": "local",
-                  "start_with": {"all": "set:dev"}}
+                  "start_with": {"all": ["wrong", "good"]}}
         out = self.post("/new-run/runner", {"recipe": recipe})
         self.assertEqual(out["errors"], [])
-        self.assertIn(["Dataset", "all · 4 planned, 2 to begin (task set dev)"], [r[1:] for r in out["review"]])
-        self.assertEqual(out["confirm"], "")
+        self.assertIn(["Dataset", "all · 2 tasks run first (the tasks ticked); the other 2 stay planned, to run later from the job's page"],
+                      [r[1:] for r in out["review"]])
+        self.assertEqual(out["confirm"], "")                     # no popup asks again
+        recipe["start_with"] = {"all": "set:dev"}                # a recipe from before
+        out = self.post("/new-run/runner", {"recipe": recipe})
+        self.assertIn(["Dataset", "all · 2 tasks run first (task set dev); the other 2 stay planned, to run later from the job's page"],
+                      [r[1:] for r in out["review"]])
         out = self.post("/new-run/runner", {"recipe": dict(recipe, start_with={"all": "9"})})
         self.assertEqual([e["message"] for e in out["errors"]], ["Start with 9 tasks: all plans 4."])
 
@@ -371,6 +377,51 @@ class TheBuilder(task_set_pages.BuilderCase):
                    "process.stdout.write(JSON.stringify({read,cleared,count,dropped,other:r.start_with===undefined}));")
         got = json.loads(subprocess.run([node, "-"], input=program, check=True, capture_output=True, text=True).stdout)
         self.assertEqual(got, {"read": {"all": "set:dev@1"}, "cleared": True, "count": "3", "dropped": True, "other": True})
+        program = (f"const C=require({json.dumps(str(core))})({json.dumps(schema)});\n"
+                   "const r=C.fromJSON({version:1,harness:'standard',benchmark:'fakebench',datasets:['all'],others:['fake'],"
+                   "start_with:{all:['good','wrong'],bad:[1]}});\n"
+                   "const read=JSON.parse(JSON.stringify(r.start_with));\n"
+                   "C.setStartWith(r,'all',['slow']);const ticked=r.start_with.all;\n"
+                   "C.setTaskSet(r,'all','dev');const replanned=r.start_with===undefined;\n"
+                   "process.stdout.write(JSON.stringify({read,ticked,replanned}));")
+        got = json.loads(subprocess.run([node, "-"], input=program, check=True, capture_output=True, text=True).stdout)
+        self.assertEqual(got, {"read": {"all": ["good", "wrong"]}, "ticked": ["slow"], "replanned": True})
+
+    def test_the_step_offers_all_of_it_and_specific_tasks_alone(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node is required for the dataset step")
+        sets.create(self.fake, "other", dataset="all", units=["good"])
+        html = self.get("/new-run").get_data(as_text=True)
+        schema = json.loads(re.search(r'<script id="nb-schema" type="application/json">(.*?)</script>', html, re.S).group(1))
+        folder = Path(__file__).resolve().parents[1] / "static/builder"
+        page = (folder / "command-builder.js").read_text(encoding="utf-8")
+        cut = lambda start, end: page[page.index(start):page.index(end, page.index(start))]
+        line = lambda name: re.search(r"^  const %s = .*$" % name, page, re.M).group(0) + "\n"
+        program = (f"const schema={json.dumps(schema)};const C=require({json.dumps(str(folder / 'command-builder-core.js'))})(schema);\n"
+                   + line("esc") + cut("  const tile = t =>", "  // The grids drawn by the server") + cut("  function startChoice(", "  // Specific tasks:")
+                   + "const r=C.createStandard('fakebench'),b=C.standardBench(r),x=b.datasets[0],u={noun:'task',nouns:'tasks'};"
+                   + "const all=startChoice(r,b,x,u);C.setStartWith(r,x.id,['good','slow']);const ticked=startChoice(r,b,x,u);"
+                   + "C.setStartWith(r,x.id,'2');const older=startChoice(r,b,x,u);"
+                   + "process.stdout.write(JSON.stringify({all,ticked,older}));")
+        got = json.loads(subprocess.run([node, "-"], input=program, check=True, capture_output=True, text=True, timeout=10).stdout)
+        titles = lambda h: re.findall(r"<strong>(.*?)</strong>", h)
+        pressed = lambda h: re.findall(r'aria-pressed="true"[^>]*>.*?<strong>(.*?)</strong>', h)
+        self.assertEqual((titles(got["all"]), pressed(got["all"])), (["All of it", "Specific tasks"], ["All of it"]))
+        self.assertEqual((titles(got["ticked"]), pressed(got["ticked"])), (["All of it", "Specific tasks"], ["Specific tasks"]))
+        self.assertIn("2 chosen", got["ticked"])
+        self.assertIn('data-std-start-pick="all"', got["ticked"])
+        self.assertNotIn("other", task_set_pages.visible(got["all"]))           # the other sets are not offered there
+        self.assertEqual(titles(got["older"]), ["All of it", "Specific tasks", "The first 2"])    # a recipe from before, shown chosen
+
+    def test_the_page_holds_the_dialog_with_the_tasks_list(self):
+        html = self.get("/new-run").get_data(as_text=True)
+        dialog = re.search(r'<dialog id="nb-tasks".*?</dialog>', html, re.S).group(0)
+        self.assertIn('id="nb-tasks-done"', dialog)
+        template = re.search(r'<template id="nb-tasks-list">(.*?)</template>', html, re.S).group(1)
+        for part in ('data-manual="true"', 'id="tasks-q"', 'id="tasks-cats"', 'id="tasks-rows"', 'id="tasks-match"', 'id="tasks-show"'):
+            self.assertIn(part, template)
+        self.assertIn("catalogue/tasks.js", html)
 
     def test_deselecting_a_dataset_removes_its_start_choice_before_review(self):
         node = shutil.which("node")
