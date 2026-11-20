@@ -374,7 +374,7 @@ tick().then(() => process.stdout.write(JSON.stringify(destination)));
         r = self.cap("r1", {"max_usd": "6"})
         self.assertEqual((r.status_code, r.json["error"]), (409, "Still running: more tasks can be started once it has ended."))
         self.assertEqual(text(self.page("/job/r1?view=results"), r'<div class="sp cap-spent" id="cap-spent">.*?</div>'),
-                         "$0.31 spent · changed once this part ends")
+                         "$0.31 spent · change it when this part ends")
         self.assertEqual(ex.plan.caps, {})
 
     def test_a_job_whose_cap_is_spent_is_refused_and_the_question_says_so(self):
@@ -382,7 +382,7 @@ tick().then(() => process.stdout.write(JSON.stringify(destination)));
         self.capped(d, {"max_usd": 0.5, "spent_usd": 0.5, "stopped": True, "cut_off": [], "not_run": []})
         self.open(d.parent)
         html = self.page("/job/r1?view=results")
-        self.assertEqual(text(html, r'<p class="small" id="rerun-budget">.*?</p>'), "Budget for the whole run: $0.50, spent. Change it to run more.")
+        self.assertEqual(text(html, r'<p class="small" id="rerun-budget">.*?</p>'), "Budget for the whole run: $0.50, all spent. Change it to run more.")
         self.assertIn("data-go data-spent>", html)
         r = self.post("r1", {"trials": [trial_name(0)]})
         self.assertEqual((r.status_code, r.json["error"]),
@@ -391,6 +391,18 @@ tick().then(() => process.stdout.write(JSON.stringify(destination)));
         self.assertEqual(self.cap("r1", {"max_usd": "1"}).status_code, 200)
         self.assertEqual(self.post("r1", {"trials": [trial_name(0)]}).status_code, 200)
         self.assertIn("--max-usd 1 --from-run", self.asked[-1][1]["script"])
+
+    def test_a_job_whose_last_part_stopped_at_its_cap_is_refused_until_it_changes(self):
+        d = self.run_of()
+        self.capped(d, {"max_usd": 0.8, "spent_usd": 0.5445, "stopped": False, "cut_off": [], "not_run": [],
+                        "spent_total_usd": 0.726, "closed": True})
+        self.open(d.parent)
+        self.assertEqual(text(self.page("/job/r1?view=results"), r'<p class="small" id="rerun-budget">.*?</p>'),
+                         "Budget for the whole run: $0.80, $0.726 spent; the last part stopped at it. Change it to run more.")
+        r = self.post("r1", {"trials": [trial_name(0)]})
+        self.assertEqual((r.status_code, r.json["error"]), (409, "The job's spending cap of 0.80 USD is spent (0.726 spent, and a "
+                                                                 "call did not fit what was left): change it to run more."))
+        self.assertEqual(self.asked, [])
 
     def test_an_older_job_with_caps_of_its_own_parts_shows_what_every_part_spent(self):
         d = self.run_of()
