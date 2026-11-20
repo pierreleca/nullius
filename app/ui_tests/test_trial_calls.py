@@ -136,7 +136,8 @@ class TrialCalls(unittest.TestCase):
         _, plain = self.tab("record__u0002")                     # a call record with no store keeps no picture
         self.assertNotIn("artifact-pictures", plain)
         script = (Path(__file__).resolve().parents[1] / "static/traces/conversation.js").read_text(encoding="utf-8")
-        self.assertIn("event.target.closest('a[data-open-tab]')", script)       # the link opens the tab in place
+        self.assertIn("document.getElementById('trial-artifacts')?.addEventListener('click', event => {\n"
+                      "    const link = event.target.closest('a[data-open-tab]');", script)       # the link opens the tab in place
 
     def test_a_picture_opens_over_the_page_and_closes_by_close_or_a_click_outside(self):
         node = shutil.which("node")

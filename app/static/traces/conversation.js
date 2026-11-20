@@ -300,8 +300,8 @@
       if (next !== undefined) { event.preventDefault(); tabs[next].focus(); openTab(tabs[next].dataset.tab); }
     });
   });
-  // a link to another tab of this page opens it in place
-  document.addEventListener('click', event => {
+  // a link of the Artifacts tab to another tab of this page opens it in place
+  document.getElementById('trial-artifacts')?.addEventListener('click', event => {
     const link = event.target.closest('a[data-open-tab]');
     if (!link || !tabs.some(tab => tab.dataset.tab === link.dataset.openTab)) return;
     event.preventDefault(); openTab(link.dataset.openTab); document.getElementById('tab-' + link.dataset.openTab)?.focus();
