@@ -483,9 +483,14 @@ def _again(r: "run.Run", job_dir: str, old: dict, cfg: dict, trials: Dict[str, d
     if (r.max_usd is not None or r.unit_max_usd is not None) and r.base:
         # a ledger of its own, opened with what the job's cap has left and the replies its earlier parts had: theirs stay
         seen: Dict[str, list] = {}
-        for path in [os.path.join(job_dir, ".work", "ledger", "ledger.json")] + [
-                os.path.join(job_dir, ".work", f"rerun-{k}", "ledger", "ledger.json") for k in range(1, n)]:
-            for model, (count, tokens) in (ledgers.Ledger(path).replies() if os.path.isfile(path) else {}).items():
+        for k, path in enumerate([os.path.join(job_dir, ".work", "ledger", "ledger.json")] + [
+                os.path.join(job_dir, ".work", f"rerun-{k}", "ledger", "ledger.json") for k in range(1, n)]):
+            replies = ledgers.Ledger(path).replies() if os.path.isfile(path) else {}
+            part = old["reruns"][k - 1] if k else {}
+            # Earlier shared-cap records already inherited replies and identified the part by its remaining budget.
+            if replies and (part.get("cumulative_replies") or "left_usd" in part):
+                seen = {}
+            for model, (count, tokens) in replies.items():
                 seen[model] = [seen.get(model, [0, 0])[0] + count, seen.get(model, [0, 0])[1] + tokens]
         r.ledger = ledgers.Ledger.create(os.path.join(job_dir, ".work", f"rerun-{n}", "ledger", "ledger.json"), r.max_usd,
                                          r.unit_max_usd, seen=seen)
@@ -567,6 +572,7 @@ def _again(r: "run.Run", job_dir: str, old: dict, cfg: dict, trials: Dict[str, d
         record.update({"at": job.iso(t0), "finished_at": job.iso(time.time()), **({"reason": reason} if reason else {}),
                        "trials": list(picked), "replaced": replaced, **({"begun": begun} if fresh else {}),
                        **({"no_result": list(killed)} if killed else {}),
+                       **({"cumulative_replies": True} if r.ledger is not None else {}),
                        "max_usd": capped["max_usd"] if capped and r.max_usd is not None else r.max_usd,
                        **({"left_usd": r.max_usd} if capped and r.max_usd is not None else {}), "spent_usd": spent,
                        **({"stopped": True} if r._stopped.is_set() or (budget or {}).get("stopped") else {})})

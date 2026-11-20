@@ -439,9 +439,7 @@ class OneBudget(unittest.TestCase):
         self.assertIn(f"spent {usd(CALL)} USD; the job has spent {usd(2 * CALL)} of its 0.0001 USD cap", lines)
         # the third call does not fit what is left: that part stops at the cap, and the next is refused until it changes
         got = self.again(job_dir, ["model"])
-        earlier = [self.read(job_dir, ".work", "ledger", "ledger.json")["seen"]["m-1"], self.ledger(job_dir, 1)["seen"]["m-1"]]
-        self.assertEqual(self.ledger(job_dir, 2)["seen"], {"m-1": [sum(x[0] for x in earlier), sum(x[1] for x in earlier)]},
-                         earlier)                                            # booked at the earlier parts' replies, not guessed
+        self.assertEqual(self.ledger(job_dir, 2)["seen"], self.ledger(job_dir, 1)["seen"])
         self.assertTrue(got["stopped"])
         self.assertTrue(self.read(job_dir, "result.json")["budget"]["closed"])
         whole = digest(job_dir)
@@ -565,6 +563,40 @@ class BudgetAccounting(unittest.TestCase):
         parsed = parse.parse_job(str(path))
         self.assertEqual(parsed.budget["spent_usd"], 0)
         self.assertTrue(all(r["spent_usd"] == 0 for r in parsed.reruns))
+
+    def test_next_part_inherits_cumulative_replies_once(self):
+        path = self.job(1.61, 1, 100)
+        row = {"input": 0.0, "output": 10000.0}
+        self.part(path, 0.01, 1, amount=lambda usual: ledger.bound({"max_tokens": 1}, b"{}", row, seen=usual))
+        result = json.loads((path / "result.json").read_text())
+        result["reruns"][0].pop("cumulative_replies", None)
+        (path / "result.json").write_text(json.dumps(result))
+        record, admitted = self.part(path, 0.01, 1, amount=lambda usual: ledger.bound({}, b"{}", row, seen=usual))
+        self.assertEqual(admitted, [(True, 0.51)])
+        self.assertFalse(record.get("stopped", False))
+        state = json.loads((path / ".work/rerun-2/ledger/ledger.json").read_text())
+        self.assertEqual(state["seen"]["m-1"], [3, 102])
+
+    def test_older_per_part_replies_are_combined_before_inheritance(self):
+        path = self.job(1.61, 1, 100)
+        self.part(path, 0.01, 1)
+        result = json.loads((path / "result.json").read_text())
+        result["budget"].pop("spent_total_usd")
+        result["reruns"][0].pop("cumulative_replies", None)
+        result["reruns"][0].pop("left_usd")
+        (path / "result.json").write_text(json.dumps(result))
+        older = path / ".work/rerun-1/ledger/ledger.json"
+        state = json.loads(older.read_text())
+        state["seen"]["m-1"] = [1, 1]
+        older.write_text(json.dumps(state))
+        before = older.read_bytes()
+        row = {"input": 0.0, "output": 10000.0}
+        for part, amount, seen in ((2, 0.51, [3, 102]), (3, 0.34, [4, 103])):
+            _, admitted = self.part(path, 0.01, 1, amount=lambda usual: ledger.bound({}, b"{}", row, seen=usual))
+            self.assertEqual(admitted, [(True, amount)])
+            state = json.loads((path / f".work/rerun-{part}/ledger/ledger.json").read_text())
+            self.assertEqual(state["seen"]["m-1"], seen)
+        self.assertEqual(older.read_bytes(), before)
 
 
 class NoVersion(unittest.TestCase):
