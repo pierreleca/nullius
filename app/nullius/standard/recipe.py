@@ -196,8 +196,9 @@ def _bench_page(b: dict) -> dict:
                                        for c in controls],
                           "proofs": {k: status[d["id"]][k]["proven"] for k in ("units", "leak")},
                           "failed": {k: status[d["id"]][k]["failed"] for k in ("units", "leak") if status[d["id"]][k]["failed"]},
-                          # the user's task sets cut from it (standard/sets.py), each at its latest revision
-                          "sets": [s for s in task_sets if s["dataset"] == d["id"]]}
+                          # the user's task sets cut from it (standard/sets.py), each with the version it was made at
+                          "sets": [dict(s, version_label=sets.version_label(b, s["version"]) if s["version"] else "")
+                                   for s in task_sets if s["dataset"] == d["id"]]}
                          for d in b["datasets"]]}
 
 
@@ -463,8 +464,9 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
     unknown = [x for x in wanted if x not in {y["id"] for y in b["datasets"]}]
     if not dss or unknown:
         add("dataset", f"Choose one or more of {b['label']}'s datasets" + (f" ({', '.join(unknown)} is not one)" if unknown else "") + ".")
-    # a chosen dataset's task set (``task_sets``: {dataset: NAME or NAME@REV}), run in place of all its tasks
-    set_of = {}                        # {dataset: {name, revision, units}}
+    # a chosen dataset's task set (``task_sets``: {dataset: NAME}), run in place of all its tasks; a recipe from
+    # before sets were frozen may name one NAME@N
+    set_of = {}                        # {dataset: {name, label, units, ids}}
     asked = recipe.get("task_sets") or {}
     if not isinstance(asked, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in asked.items()):
         add("dataset", "Task sets are a dataset with a set's name each.")
@@ -487,15 +489,15 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
             add("dataset", sets.plain(e, b["key"], set_name))
             continue
         try:
-            got = sets.revision(entry, rev)
+            got = sets.latest(entry, rev)
         except sets.Refused as e:
             add("dataset", f"Task set {ref}: {e}.")
             continue
         if entry["dataset"] != ds_id:
-            add("dataset", f"The task set {set_name} is cut from the dataset {entry['dataset']}, not {ds_id}.")
+            add("dataset", f"The task set {sets.label_of(entry)} is cut from the dataset {entry['dataset']}, not {ds_id}.")
             continue
-        set_of[ds_id] = {"name": set_name, "revision": got["revision"], "units": len(got["units"]), "ids": set(got["units"])}
-    # a chosen dataset's plan begun on a part (``start_with``: {dataset: N or set:NAME@REV}): the rest run later
+        set_of[ds_id] = {"name": set_name, "label": sets.label_of(entry), "units": len(got["units"]), "ids": set(got["units"])}
+    # a chosen dataset's plan begun on a part (``start_with``: {dataset: N or set:NAME}): the rest run later
     start_of = {}                      # {dataset: {"value": the --start-with word, "units": N, "label": what Review says}}
     asked = recipe.get("start_with") or {}
     if not isinstance(asked, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in asked.items()):
@@ -528,20 +530,20 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
             add("dataset", sets.plain(e, b["key"], set_name))
             continue
         try:
-            got = sets.revision(entry, rev)
+            got = sets.latest(entry, rev)
         except sets.Refused as e:
             add("dataset", f"Start with {given[4:]}: {e}.")
             continue
         if entry["dataset"] != ds_id:
-            add("dataset", f"Start with: the task set {set_name} is cut from the dataset {entry['dataset']}, not {ds_id}.")
+            add("dataset", f"Start with: the task set {sets.label_of(entry)} is cut from the dataset {entry['dataset']}, not {ds_id}.")
             continue
         outside = set(got["units"]) - set_of[ds_id]["ids"] if ds_id in set_of else set()
         if outside:
-            add("dataset", f"Start with: the task set {set_name} names {len(outside)} of {ds_id}'s tasks outside "
-                           f"the task set {set_of[ds_id]['name']}.")
+            add("dataset", f"Start with: the task set {sets.label_of(entry)} names {len(outside)} of {ds_id}'s tasks outside "
+                           f"the task set {set_of[ds_id]['label']}.")
             continue
-        start_of[ds_id] = {"value": f"set:{set_name}@{got['revision']}", "units": len(got["units"]),
-                           "label": f"task set {set_name}, revision {got['revision']}"}
+        start_of[ds_id] = {"value": f"set:{set_name}", "units": len(got["units"]),
+                           "label": f"task set {sets.label_of(entry)}"}
     side = "agent" if b["family"] == "agent" else "capability"
     # A control the benchmark declares (nop, oracle) is a choice beside the agents or capabilities: it runs
     # nothing as you and calls no model - a judged benchmark's judge only - so it asks for neither.
@@ -927,7 +929,7 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
         o, control, given = p["o"], p["control"], p["given"]
         m = p["model"] if p.get("setup") else model
         words = ["nullius", "standard", "run", definitions.ref_of(b), o["_ref"], *(["--model", m] if m else []), "--provider", provider,
-                 "--dataset", d["id"], *(["--set", f"{set_of[d['id']]['name']}@{set_of[d['id']]['revision']}"] if d["id"] in set_of else []),
+                 "--dataset", d["id"], *(["--set", set_of[d["id"]]["name"]] if d["id"] in set_of else []),
                  *(["--limit", str(limit)] if isinstance(limit, int) else []),
                  *(["--start-with", start_of[d["id"]]["value"]] if d["id"] in start_of else []), "-j", str(conc),
                  *[w for k, v in options_for_pick(d, p).items() for w in ("--bench-option", f"{k}={v}")],
@@ -1023,7 +1025,7 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
     out["review"] = [[STEP["benchmark"], "Benchmark", f"{b['label']} · needs {', '.join(b['needs'])}"],
                      [STEP["runner"], "Runner", "Nullius"],
                      [STEP["dataset"], "Datasets" if many else "Dataset",
-                      ", ".join(f"{x.get('label') or x['id']}" + (f" · task set {set_of[x['id']]['name']}, revision {set_of[x['id']]['revision']}"
+                      ", ".join(f"{x.get('label') or x['id']}" + (f" · task set {set_of[x['id']]['label']}"
                                                                    + ("" if x["id"] in start_of else f" · {set_of[x['id']]['units']} {nouns}")
                                                                    if x["id"] in set_of else f" · {x['units']} {nouns}" if x.get("units") and x["id"] not in start_of else "")
                                 # begun on a part: what it plans in place of its count, and what begins

@@ -200,7 +200,7 @@ def _cached(destination: Path, marker: str, files: dict) -> bool:
 
 
 def recipe_sets(recipe: dict) -> list[tuple[str, str]]:
-    """The task sets a standard recipe runs (``task_sets``) and those it begins with (``start_with``, set:NAME@REV),
+    """The task sets a standard recipe runs (``task_sets``) and those it begins with (``start_with``, set:NAME),
     as (benchmark, name): what its snapshot carries."""
     asked = (recipe or {}).get("task_sets")
     begun = (recipe or {}).get("start_with")

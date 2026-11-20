@@ -417,11 +417,11 @@ class Job:
     launch_id: str = ""
     # Source job names explicitly recorded by standard merge.
     merged_from: list[str] = field(default_factory=list)
-    # The task set a Nullius standard job ran (config ``standard.task_set``): its name, revision and id, its
-    # benchmark, and ``units``, its number of ids. {} for every other job.
+    # The task set a Nullius standard job ran (config ``standard.task_set``): its name, its label (its name for a
+    # job from before labels) and id, its benchmark, and ``units``, its number of ids. {} for every other job.
     task_set: dict = field(default_factory=dict)
     # A Nullius standard job planned on a whole and begun on a part of it (config ``standard.start_with``): how the
-    # part was named, ``by`` count, file or set, and ``name`` (the file's, or the set's NAME@REV; "" for a count),
+    # part was named, ``by`` count, file or set, and ``name`` (the file's, or the set's label; "" for a count),
     # and ``units``, the part's number of units. {} for every other job: the plan is then the job's from the start.
     start_with: dict = field(default_factory=dict)
     # Each time chosen trials of a Nullius standard job were run again in it (``result.json`` ``reruns``,
@@ -1196,7 +1196,7 @@ def parse_job(job_dir: str, reuse=None, trials: bool = True) -> Job:
     merged = std.get("merged_from")
     job.merged_from = [s["job"] for s in merged if isinstance(s, dict) and isinstance(s.get("job"), str) and s["job"]] if isinstance(merged, list) else []
     ts = std.get("task_set") if isinstance(std.get("task_set"), dict) else {}
-    job.task_set = ({"name": str(ts["name"]), "revision": ts.get("revision") if isinstance(ts.get("revision"), int) else None,
+    job.task_set = ({"name": str(ts["name"]), "label": str(ts.get("label") or ts["name"]),
                      "id": str(ts.get("id") or ""), "benchmark": str(std.get("benchmark") or ""),
                      "units": len(ts["units"]) if isinstance(ts.get("units"), list) else 0}
                     if isinstance(ts.get("name"), str) and ts["name"] else {})
@@ -1205,7 +1205,7 @@ def parse_job(job_dir: str, reuse=None, trials: bool = True) -> Job:
         src = sw.get("units_file") if isinstance(sw.get("units_file"), dict) else sw.get("task_set") if isinstance(sw.get("task_set"), dict) else {}
         by = "file" if sw.get("units_file") else "set" if sw.get("task_set") else "count"
         job.start_with = {"by": by, "units": len(sw["units"]),
-                          "name": (f"{src.get('name')}@{src.get('revision')}" if by == "set" else str(src.get("name") or ""))}
+                          "name": (str(src.get("label") or src.get("name") or "") if by == "set" else str(src.get("name") or ""))}
     job.budget = _budget(res.get("budget"))
     job.identity = identity_of(cfg, res, job.agent_version)
     job.reruns = _reruns(res)

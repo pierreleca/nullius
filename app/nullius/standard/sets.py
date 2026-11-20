@@ -3,26 +3,32 @@
 An entry is ``sets/<benchmark>/<name>.json`` under the user catalogue
 (``paths.catalogue_dir``, ``NULLIUS_CATALOGUE``): a plain file to copy or keep
 in git. A set is a group of tasks, run as a benchmark's own dataset is: it
-holds an id minted when it is made, its name and description, the benchmark,
-the dataset it is cut from, and its revisions, and nothing that binds a run
-(no benchmark option, no setup). A revision is one membership: its number,
-its date, a note, the unit ids and a content hash over the benchmark, the
-dataset and the sorted ids. Two runs ran the same set when their jobs name the
-same id; the revision and the hash say which membership. Two entries with
-equal lists stay two sets. An entry holding any other field is refused where
-it is read; one of the earlier format, which kept a run's options, is refused
-as such (``Earlier``), and ``plain`` says it on a page without its path.
-``rename`` gives a set another name, its id and revisions kept, so a job that
-ran it finds it by its id (``by_id``); ``delete`` removes its file, and a job
-that ran it keeps its record.
+holds an id minted when it is made, its label and the name made from it, its
+description, the benchmark, the version of the benchmark it was made at, the
+dataset it is cut from, and its list, and nothing that binds a run (no
+benchmark option, no setup). The label is the text a person typed; the name
+is what commands take: the label in lower case with hyphens, ``-2`` and on
+for a second equal one (``name_for``).
 
-Only a change of membership adds a revision; the earlier ones stay in the
-file, and ``NAME@REV`` names one. ``record`` is what a job's ``config.json``
-keeps of the set it ran (``standard.task_set``): its id, name, revision, hash
-and units. With the job's benchmark and dataset that is enough for
-``import_path`` to rebuild the entry on another machine, its description
-empty and the revision dated by the import. The same id and revision with
-another hash is refused there.
+A set is frozen: nothing changes its list once made, and another list is
+another set. The file keeps one entry in ``revisions``: its number, its date,
+a note, the unit ids and a content hash over the benchmark, the dataset and
+the sorted ids. A file made before sets were frozen may hold several; it reads
+as its latest, and is never rewritten for it. Two runs ran the same set when
+their jobs name the same id. Two entries with equal lists stay two sets. An
+entry holding any other field is refused where it is read; one of the earlier
+format, which kept a run's options, is refused as such (``Earlier``), and
+``plain`` says it on a page without its path. ``rename`` gives a set another
+label, and the name made from it, its id and list kept, so a job that ran it
+finds it by its id (``by_id``); ``delete`` removes its file, and a job that
+ran it keeps its record.
+
+``record`` is what a job's ``config.json`` keeps of the set it ran
+(``standard.task_set``): its id, name, label, the number of its list, the
+hash, the units and the version it was made at. With the job's benchmark and
+dataset that is enough for ``import_path`` to rebuild the entry on another
+machine, its description empty and its list dated by the import. The same id
+with another list is refused there.
 """
 from __future__ import annotations
 
@@ -31,6 +37,7 @@ import json
 import os
 import re
 import tempfile
+import unicodedata
 import uuid
 from datetime import datetime, timezone
 from typing import Iterable, List, Optional, Tuple
@@ -43,6 +50,10 @@ SCHEMA = "nullius.task-set/v1"
 FOLDER = "sets"
 # A name stays inside its benchmark's folder: no slash, no leading dot, no ``..``
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+NAME_MAX = 64
+LABEL_MAX = 80
+# the base of a name made from a label that holds no Latin letter or digit
+FALLBACK = "task-set"
 _TAG = re.compile(r"__u(\d+)(?:r\d+)?$")
 # The outcome groups ``--outcome`` takes beside the pages' outcome names: a pass, a verdict against the
 # agent (its failures and its own errors, as the attempts' pass count reads them), the infrastructure's
@@ -52,11 +63,13 @@ GROUPS = {
                classify.NO_PATCH, classify.AGENT_ERROR},
     "infra": set(classify.INFRA_OUTCOMES),
 }
-HEADER = ("id", "name", "description", "benchmark", "dataset")
+HEADER = ("id", "name", "label", "description", "benchmark", "version", "dataset")
 # what an entry of the earlier format held beside its header: a run's options, bound to the set
 EARLIER = ("benchmark_version", "benchmark_options", "setup")
 REVISION = ("revision", "date", "note", "units", "hash")
 RECORD = ("id", "name", "revision", "hash", "units")
+# what the record of a newer job holds beside those: what its page shows, and what a run checks the set against
+RECORD_MORE = ("label", "version")
 
 
 class Refused(Exception):
@@ -64,7 +77,7 @@ class Refused(Exception):
 
 
 class NotFound(Refused):
-    """No such set, revision, file or job."""
+    """No such set, file or job."""
 
 
 class Earlier(Refused):
@@ -80,6 +93,61 @@ def check_name(name: str) -> str:
         raise Refused(f"{name!r} is not a task set's name: letters, digits, '.', '_' and '-', "
                       "starting with a letter or a digit, at most 64, no '..'")
     return name
+
+
+def check_label(label: str) -> str:
+    """The words a person names a set with, trimmed: any words with at least one letter or digit, at most 80
+    characters, on one line."""
+    text = label.strip() if isinstance(label, str) else ""
+    if not text:
+        raise Refused("a task set needs a name")
+    if len(text) > LABEL_MAX:
+        raise Refused(f"a task set's name is at most {LABEL_MAX} characters")
+    if any(unicodedata.category(c) == "Cc" for c in text):
+        raise Refused("a task set's name is one line")
+    if not any(c.isalnum() for c in text):
+        raise Refused("a task set's name needs a letter or a digit")
+    return text
+
+
+def slug(label: str) -> str:
+    """The name a label makes: its Latin letters and digits in lower case, every other run of characters one
+    hyphen, at most 64; ``task-set`` when nothing is left. "Custom task set" makes ``custom-task-set``."""
+    plain = unicodedata.normalize("NFKD", label or "").encode("ascii", "ignore").decode("ascii")
+    s = re.sub(r"[^a-z0-9]+", "-", plain.lower()).strip("-")
+    return s[:NAME_MAX].rstrip("-") or FALLBACK
+
+
+def name_for(benchmark: str, label: str, root: Optional[str] = None, but: str = "") -> str:
+    """The name a set of ``benchmark`` labelled ``label`` takes: its ``slug``, or the first ``<slug>-<n>`` from 2
+    that no other set of the benchmark has (``but``, the set's own name when it is renamed, counts as free)."""
+    base = slug(check_label(label))
+    folder = _folder(benchmark, root)
+    taken = {f[:-5] for f in os.listdir(folder) if f.endswith(".json")} if os.path.isdir(folder) else set()
+    taken.discard(but)
+    if base not in taken:
+        return base
+    for i in range(2, 10000):
+        name = f"{base[:NAME_MAX - len(str(i)) - 1].rstrip('-')}-{i}"
+        if name not in taken:
+            return name
+    raise Refused(f"every name made from {label!r} is taken")
+
+
+def label_of(entry: dict) -> str:
+    """What a person reads a set by: its label, or the name of a set made before labels."""
+    return entry.get("label") or entry["name"]
+
+
+def version_label(bench: Optional[dict], version: str) -> str:
+    """A version a set was made at as a reader names it (``main (044bc33)``); the version's key itself when the
+    benchmark's definition no longer knows it."""
+    return ((bench or {}).get("_labels") or {}).get(version) or version
+
+
+def version_of(bench: dict) -> str:
+    """The version of the benchmark a set made from ``bench`` records: its resolved version, "" when it has none."""
+    return str(bench.get("_version") or "")
 
 
 def _bench_key(benchmark: str) -> str:
@@ -108,12 +176,13 @@ def path_of(benchmark: str, name: str, root: Optional[str] = None) -> str:
 
 
 def split_ref(ref: str) -> Tuple[str, Optional[int]]:
-    """``NAME`` or ``NAME@REV``: (name, revision or None)."""
+    """``NAME``, or ``NAME@N`` as recipes and commands made before sets were frozen name one: (name, N or None).
+    ``latest`` reads N."""
     name, at, rev = str(ref).partition("@")
     if not at:
         return check_name(name), None
     if not rev.isdigit() or int(rev) < 1:
-        raise Refused(f"{ref!r}: NAME@REV, REV a revision's number (1, 2, ...)")
+        raise Refused(f"{ref!r}: a task set's name")
     return check_name(name), int(rev)
 
 
@@ -145,7 +214,7 @@ def _ids(units: Iterable[str], what: str) -> List[str]:
 
 
 def check(entry: dict, where: str) -> dict:
-    """``entry`` as read from ``where``, its shape and every revision's hash checked."""
+    """``entry`` as read from ``where``, its shape and every list's hash checked."""
     if not isinstance(entry, dict) or entry.get("schema") != SCHEMA:
         raise Refused(f"{where}: not a task set (schema {SCHEMA})")
     other = sorted(set(entry) - {"schema", *HEADER, "revisions"})
@@ -153,8 +222,8 @@ def check(entry: dict, where: str) -> dict:
         raise Earlier(f"{where}: holds {', '.join(other)}, which a task set does not hold: an entry of the earlier "
                       "format, which kept a run's options. Delete it and make it again")
     if other:
-        raise Refused(f"{where}: holds {', '.join(other)}, which a task set does not hold: a set is its dataset, "
-                      "its ids and its revisions, and a run gives its own options")
+        raise Refused(f"{where}: holds {', '.join(other)}, which a task set does not hold: a set is its dataset "
+                      "and its ids, and a run gives its own options")
     for k in ("id", "name", "benchmark", "dataset"):
         if not isinstance(entry.get(k), str) or not entry[k]:
             raise Refused(f"{where}: no {k}")
@@ -162,24 +231,27 @@ def check(entry: dict, where: str) -> dict:
     _bench_key(entry["benchmark"])
     if not isinstance(entry.get("description"), str):
         raise Refused(f"{where}: description is text")
+    for k in ("label", "version"):
+        if k in entry and (not isinstance(entry[k], str) or not entry[k]):
+            raise Refused(f"{where}: {k} is text")
     revs = entry.get("revisions")
     if not isinstance(revs, list) or not revs:
-        raise Refused(f"{where}: no revision")
+        raise Refused(f"{where}: no list of units")
     seen = set()
     for r in revs:
         n = r.get("revision") if isinstance(r, dict) else None
         if not isinstance(n, int) or isinstance(n, bool) or n < 1 or n in seen:
-            raise Refused(f"{where}: a revision's number is a whole number, each once")
+            raise Refused(f"{where}: a list's number is a whole number, each once")
         seen.add(n)
         if not isinstance(r.get("date"), str) or not r["date"]:
-            raise Refused(f"{where}: revision {n} has no date")
+            raise Refused(f"{where}: list {n} has no date")
         if not isinstance(r.get("note"), str):
-            raise Refused(f"{where}: revision {n}'s note is text")
+            raise Refused(f"{where}: list {n}'s note is text")
         if not isinstance(r.get("units"), list) or any(not isinstance(u, str) for u in r["units"]):
-            raise Refused(f"{where}: revision {n} lists no units")
-        _ids(r["units"], f"{where}: revision {n}")
+            raise Refused(f"{where}: list {n} lists no units")
+        _ids(r["units"], f"{where}: list {n}")
         if r.get("hash") != _hash_of(entry, r["units"]):
-            raise Refused(f"{where}: revision {n}'s hash is not that of its units and dataset: "
+            raise Refused(f"{where}: list {n}'s hash is not that of its units and dataset: "
                           "the file was changed by hand")
     return entry
 
@@ -204,15 +276,18 @@ def load(benchmark: str, name: str, root: Optional[str] = None) -> dict:
     return entry
 
 
-def revision(entry: dict, rev: Optional[int] = None) -> dict:
-    """Revision ``rev`` of ``entry``, its latest when None."""
-    revs = sorted(entry["revisions"], key=lambda r: r["revision"])
-    if rev is None:
-        return revs[-1]
-    got = next((r for r in revs if r["revision"] == rev), None)
-    if got is None:
-        raise NotFound(f"{entry['name']} has no revision {rev}: its revisions are {', '.join(str(r['revision']) for r in revs)}")
-    return got
+def latest(entry: dict, rev: Optional[int] = None) -> dict:
+    """The list ``entry`` holds: its latest, the only one of a set made since sets were frozen. ``rev``, the number a
+    recipe or a command from before named it by, is taken when it is that list's, and refused otherwise."""
+    last = max(entry["revisions"], key=lambda r: r["revision"])
+    if rev is not None and rev != last["revision"]:
+        raise NotFound(f"{entry['name']}@{rev} names an earlier list of the task set {label_of(entry)}: a set is "
+                       f"read as its latest list now; name it {entry['name']}")
+    return last
+
+
+# the name the modules that read a set by its list number knew it by
+revision = latest
 
 
 def entries(benchmark: Optional[str] = None, root: Optional[str] = None) -> Tuple[List[dict], List[str]]:
@@ -244,13 +319,14 @@ def entries(benchmark: Optional[str] = None, root: Optional[str] = None) -> Tupl
 
 
 def rows(benchmark: str, root: Optional[str] = None) -> List[dict]:
-    """The readable entries of ``benchmark`` as a page lists them, by name: {name, description, dataset, revision,
-    units, date}, the revision the latest, ``units`` its number of ids, ``date`` its date."""
+    """The readable entries of ``benchmark`` as a page lists them, by name: {name, label, description, dataset,
+    version, units, date}, ``units`` the number of its ids, ``date`` the day its list was made, ``version`` ""
+    for a set made before sets recorded one."""
     out = []
     for e in entries(benchmark, root)[0]:
-        last = revision(e)
-        out.append({"name": e["name"], "description": e.get("description") or "", "dataset": e["dataset"],
-                    "revision": last["revision"], "units": len(last["units"]), "date": last["date"]})
+        last = latest(e)
+        out.append({"name": e["name"], "label": label_of(e), "description": e.get("description") or "", "dataset": e["dataset"],
+                    "version": e.get("version") or "", "units": len(last["units"]), "date": last["date"]})
     return out
 
 
@@ -309,49 +385,21 @@ def _dataset(bench: dict, dataset: Optional[str]) -> str:
     return dataset
 
 
-def create(bench: dict, name: str, *, dataset: str, units: List[str], description: str = "", note: str = "",
+def create(bench: dict, label: str, *, dataset: str, units: List[str], description: str = "", note: str = "",
            root: Optional[str] = None) -> dict:
-    """A new entry at revision 1, written; refused when one of that name exists."""
-    check_name(name)
-    path = path_of(bench["key"], name, root)
-    if os.path.exists(path):
-        raise Refused(f"a task set {name!r} of {bench['key']} exists already ({path}): set update changes it")
-    entry = {"id": uuid.uuid4().hex, "name": name, "description": description or "", "benchmark": bench["key"],
-             "dataset": _dataset(bench, dataset)}
-    ids = _ids(units, f"the set {name}")
+    """A new entry labelled ``label``, its name made from it (``name_for``), at the version ``bench`` is; written.
+    A label another set has already gives the next free name."""
+    label = check_label(label)
+    entry = {"id": uuid.uuid4().hex, "name": name_for(bench["key"], label, root), "label": label,
+             "description": description or "", "benchmark": bench["key"],
+             **({"version": version_of(bench)} if version_of(bench) else {}), "dataset": _dataset(bench, dataset)}
+    path = path_of(bench["key"], entry["name"], root)
+    if os.path.lexists(path):
+        raise Refused(f"a task set {entry['name']!r} of {bench['key']} exists already ({path})")
+    ids = _ids(units, f"the set {label}")
     entry["revisions"] = [{"revision": 1, "date": _now(), "note": note or "", "units": ids, "hash": _hash_of(entry, ids)}]
     write(entry, root)
     return entry
-
-
-def update(benchmark: str, name: str, *, add: Optional[List[str]] = None, remove: Optional[List[str]] = None,
-           units: Optional[List[str]] = None, note: str = "", root: Optional[str] = None) -> Tuple[dict, bool]:
-    """(the entry, whether a revision was added): a change of membership adds one, kept beside the earlier
-    ones; the same membership adds none. Removing an id the set does not hold is refused, as is a set left
-    with no unit."""
-    entry = load(benchmark, name, root)
-    last = revision(entry)
-    now = list(last["units"])
-    if units is not None:
-        new = _ids(units, "the list")
-    elif add:
-        new = now + [u for u in dict.fromkeys(_ids(add, "--add")) if u not in now]
-    elif remove:
-        gone = _ids(remove, "--remove")
-        absent = [u for u in gone if u not in now]
-        if absent:
-            raise Refused(f"{name} does not hold {', '.join(absent)}")
-        new = [u for u in now if u not in gone]
-        if not new:
-            raise Refused(f"{name} would hold no unit")
-    else:
-        raise Refused("set update: --add, --remove or --units")
-    if set(new) == set(now):
-        return entry, False
-    entry["revisions"].append({"revision": last["revision"] + 1, "date": _now(), "note": note or "", "units": new,
-                               "hash": _hash_of(entry, new)})
-    write(entry, root)
-    return entry, True
 
 
 def _file_of(benchmark: str, name: str, root: Optional[str]) -> str:
@@ -363,17 +411,22 @@ def _file_of(benchmark: str, name: str, root: Optional[str]) -> str:
     return path
 
 
-def rename(benchmark: str, name: str, new: str, root: Optional[str] = None) -> dict:
-    """The entry under the name ``new``, its id, description and revisions kept: written under the new name, then
-    the old file removed. Refused: a name taken or not allowed, and an entry that cannot be read."""
+def rename(benchmark: str, name: str, label: str, root: Optional[str] = None) -> dict:
+    """The entry labelled ``label`` and named by it (``name_for``, its own name free), its id, description and list
+    kept: written under the new name, then the old file removed. Refused: a label it has already or one not
+    allowed, and an entry that cannot be read."""
     old = _file_of(benchmark, name, root)
     entry = load(benchmark, name, root)
-    target = path_of(benchmark, check_name(new), root)
-    if new == name or os.path.lexists(target) or os.path.lexists(os.path.join(_folder(benchmark, root), new + ".json")):
-        raise Refused(f"a task set {new!r} of {benchmark} exists already ({target})")
-    entry = dict(entry, name=new)
+    label = check_label(label)
+    if label == label_of(entry):
+        raise Refused(f"the task set {name} is named {label!r} already")
+    new = name_for(benchmark, label, root, but=name)
+    if new != name and os.path.lexists(os.path.join(_folder(benchmark, root), new + ".json")):
+        raise Refused(f"a task set {new!r} of {benchmark} exists already")
+    entry = dict(entry, name=new, label=label)
     write(entry, root)
-    os.unlink(old)
+    if new != name:
+        os.unlink(old)
     return entry
 
 
@@ -466,30 +519,33 @@ def from_job(bench: dict, job_dir: str, outcomes: Optional[List[str]] = None, na
             + (f": {'; '.join(said)}" if said else "")}
 
 
-def record(entry: dict, rev: dict) -> dict:
-    """What a job's config keeps of the set it ran (``standard.task_set``): its id, name, revision, hash and units."""
-    return {"id": entry["id"], "name": entry["name"], "revision": rev["revision"], "hash": rev["hash"], "units": rev["units"]}
+def record(entry: dict, rev: Optional[dict] = None) -> dict:
+    """What a job's config keeps of the set it ran (``standard.task_set``): its id, name, label, the number and
+    hash of its list, its units, and the version it was made at when it recorded one."""
+    rev = rev or latest(entry)
+    return {"id": entry["id"], "name": entry["name"], "label": label_of(entry), "revision": rev["revision"],
+            "hash": rev["hash"], "units": rev["units"], **({"version": entry["version"]} if entry.get("version") else {})}
 
 
 def for_run(bench: dict, ref: str, *, dataset: Optional[str] = None, units_given: bool = False,
             root: Optional[str] = None) -> Tuple[dict, str]:
-    """``run --set NAME[@REV]``: (the record the job keeps, the dataset), the set's dataset taken over the run's.
+    """``run --set NAME``: (the record the job keeps, the dataset), the set's dataset taken over the run's.
     A ``--units`` beside it, or another ``--dataset``, is refused. The run's benchmark options are its own, as
     on the whole dataset: the run then refuses an id its driver does not list under them."""
     name, rev = split_ref(ref)
     if units_given:
         raise Refused(f"--set {ref} and --units: the set lists the units, give one or the other")
     entry = load(bench["key"], name, root)
-    got = revision(entry, rev)
+    got = latest(entry, rev)
     if dataset and dataset != entry["dataset"]:
         raise Refused(f"--dataset {dataset}: the task set {name} is cut from the dataset {entry['dataset']}")
     return record(entry, got), entry["dataset"]
 
 
-def import_path(path: str, root: Optional[str] = None) -> Tuple[dict, List[int]]:
-    """(the entry, the revisions added): an entry's file, or a job that ran a set (its ``standard.task_set``),
-    merged into the entry of that name here. Refused when the entry here has another id, when another entry
-    holds the id, and when a revision here of the same number has another hash."""
+def import_path(path: str, root: Optional[str] = None) -> Tuple[dict, bool]:
+    """(the entry, whether it was written): an entry's file, or a job that ran a set (its ``standard.task_set``),
+    written here when no set of that name is. When one is, with the same id and the same list, nothing is written.
+    Refused: the entry here has another id, another entry holds the id, or the same id holds another list here."""
     path = os.path.abspath(path.rstrip("/"))
     if os.path.isdir(path):
         cfg = _job_config(path)
@@ -499,7 +555,8 @@ def import_path(path: str, root: Optional[str] = None) -> Tuple[dict, List[int]]
         missing = [k for k in RECORD if k not in rec]
         if missing:
             raise Refused(f"{path}: its task set's record has no {', '.join(missing)}")
-        incoming = {"schema": SCHEMA, "id": rec["id"], "name": rec["name"], "description": "",
+        incoming = {"schema": SCHEMA, "id": rec["id"], "name": rec["name"],
+                    **{k: rec[k] for k in RECORD_MORE if k in rec}, "description": "",
                     "benchmark": cfg["standard"].get("benchmark"), "dataset": _job_dataset(cfg),
                     "revisions": [{"revision": rec["revision"], "date": _now(),
                                    "note": f"from the job {cfg.get('job_name') or os.path.basename(path)}",
@@ -518,22 +575,14 @@ def import_path(path: str, root: Optional[str] = None) -> Tuple[dict, List[int]]
     if not os.path.exists(target):
         incoming = {k: v for k, v in incoming.items() if k != "schema"}
         write(incoming, root)
-        return incoming, sorted(r["revision"] for r in incoming["revisions"])
+        return incoming, True
     here = load(bench, name, root)
     if here["id"] != incoming["id"]:
         raise Refused(f"a task set {name!r} of {bench} with another id is here already ({target})")
     if here["dataset"] != incoming["dataset"]:
         raise Refused(f"the set {name} here differs in its dataset: {here['dataset']!r}, not {incoming['dataset']!r}")
-    have = {r["revision"]: r for r in here["revisions"]}
-    added = []
-    for r in incoming["revisions"]:
-        old = have.get(r["revision"])
-        if old is None:
-            here["revisions"].append(r)
-            added.append(r["revision"])
-        elif old["hash"] != r["hash"]:
-            raise Refused(f"revision {r['revision']} of {name} holds another list here (hash {old['hash'][:12]}, "
-                          f"not {r['hash'][:12]}): the same id and revision with another hash")
-    if added:
-        write(here, root)
-    return here, sorted(added)
+    mine, theirs = latest(here), latest(incoming)
+    if mine["hash"] != theirs["hash"]:
+        raise Refused(f"the set {name} holds another list here (hash {mine['hash'][:12]}, not {theirs['hash'][:12]}): "
+                      "the same id with another list")
+    return here, False

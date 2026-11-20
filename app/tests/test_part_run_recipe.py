@@ -32,7 +32,7 @@ class StartWith(Scratch):
     def test_a_number_or_a_set_compiles_to_the_option_and_review_says_planned_and_to_begin(self):
         sets.create(self.b, "first", dataset="all", units=["good", "slow"])
         for given, word, said in (("2", "2", "all · 4 planned, 2 to begin (the first 2)"),
-                                  ("set:first", "set:first@1", "all · 4 planned, 2 to begin (task set first, revision 1)")):
+                                  ("set:first", "set:first", "all · 4 planned, 2 to begin (task set first)")):
             with self.subTest(given=given):
                 out = self.compile(start_with={"all": given})
                 self.assertEqual(out["errors"], [])
@@ -44,7 +44,7 @@ class StartWith(Scratch):
         sets.create(self.b, "dev", dataset="all", units=["good", "wrong", "slow"])
         out = self.compile(task_sets={"all": "dev"}, start_with={"all": "set:first"})
         self.assertEqual(out["errors"], [])
-        self.assertIn("--set dev@1 --start-with set:first@1", out["shards"][0]["command"])
+        self.assertIn("--set dev --start-with set:first", out["shards"][0]["command"])
         self.assertIn("· 3 planned, 2 to begin", next(r for r in out["review"] if r[1] == "Dataset")[2])
         out = self.compile(limit=3, start_with={"all": "1"})
         self.assertIn("--limit 3 --start-with 1", out["shards"][0]["command"])
@@ -78,7 +78,7 @@ class StartWith(Scratch):
 class OnAHost(Scratch):
     def test_the_snapshot_carries_the_set_begun_with_and_the_run_there_plans_the_whole(self):
         entry = sets.create(self.b, "first", dataset="all", units=["wrong"])
-        r = self.recipe(start_with={"all": "set:first@1"})
+        r = self.recipe(start_with={"all": "set:first"})
         self.assertEqual(payload.recipe_sets(r), [("fakebench", "first")])
         self.assertEqual(payload.recipe_sets(self.recipe(start_with={"all": "2"})), [])
         empty = self.tmp / "empty-package"
@@ -92,11 +92,11 @@ class OnAHost(Scratch):
         with mock.patch.dict(os.environ, {"NULLIUS_CATALOGUE": str(run_catalogue)}), \
                 mock.patch.object(cli, "_bench", return_value=self.b), mock.patch.object(cli, "_exit_on_term"), \
                 mock.patch.object(cli.settings, "load"), redirect_stdout(out), redirect_stderr(err):
-            code = cli.main(["run", "fakebench", "nop", "--dataset", "all", "--start-with", "set:first@1", "-j", "1",
+            code = cli.main(["run", "fakebench", "nop", "--dataset", "all", "--start-with", "set:first", "-j", "1",
                              "--name", "begun", "--jobs", str(jobs)])
         self.assertEqual(code, 0, out.getvalue() + err.getvalue())
         cfg = json.loads((jobs / "begun" / "config.json").read_text())
-        self.assertEqual(cfg["standard"]["start_with"], {"task_set": sets.record(entry, sets.revision(entry, 1)), "units": ["wrong"]})
+        self.assertEqual(cfg["standard"]["start_with"], {"task_set": sets.record(entry), "units": ["wrong"]})
         self.assertEqual(cfg["datasets"][0]["n_tasks"], 4)
         self.assertEqual(sorted(d for d in os.listdir(jobs / "begun") if "__u" in d), ["wrong__u0001"])
         self.assertEqual(len(rerun.unfinished(str(jobs / "begun"))), 3)

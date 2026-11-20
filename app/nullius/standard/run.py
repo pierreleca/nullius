@@ -76,7 +76,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from nullius import constraints as limits, paths, prices as price_list, progress, providers, settings
 from nullius.redact import redact
 from nullius.harbor import feed as live_feed
-from nullius.standard import acp, boat, container, definitions, exchanges as exchange_store, hostreq, install, job, jsonl, ledger as ledgers, match, mcp_machine, pace as pacing, relay, shard as shards
+from nullius.standard import acp, boat, container, definitions, exchanges as exchange_store, hostreq, install, job, jsonl, ledger as ledgers, match, mcp_machine, pace as pacing, relay, sets, shard as shards
 from nullius.standard.retries import RETRIES, retryable
 
 # the totals a unit's end carries onto the live board, from its trial's agent_result
@@ -1177,11 +1177,19 @@ class Run:
                 if self.units_file:
                     why = (f"{self.units_file['name']} lists {len(unknown)} {words['noun'] if len(unknown) == 1 else words['nouns']} "
                            f"that {self.bench['label']}'s dataset {self.ds['id']} does not hold: " + ", ".join(unknown))
+                elif self.task_set.get("version") and self.task_set["version"] != str(self.bench.get("_version") or ""):
+                    # made at another version of the benchmark, whose list may hold other tasks
+                    label = self.task_set.get("label") or self.task_set["name"]
+                    ours, theirs = (sets.version_label(self.bench, v) for v in (str(self.bench.get("_version") or ""), self.task_set["version"]))
+                    why = (f"the task set {label} was made at {self.bench['label']} {theirs}, and {unknown[0]} is not a task of "
+                           f"{self.ds['id']} at {ours}, the version this run is at"
+                           + (f" ({len(unknown) - 1} more are not either)" if len(unknown) > 1 else "")
+                           + f": run it at {theirs}, or make a set at {ours}")
                 else:
                     # a set holds no option: its ids are checked against the listing under this run's own
                     given = ", ".join(f"{k}={v}" for k, v in sorted(self.bench_options.items())) or "none"
-                    why = (f"{len(unknown)} of the {len(listed)} ids of the task set {self.task_set['name']}@"
-                           f"{self.task_set['revision']} are not listed by {self.bench['label']}'s dataset {self.ds['id']} "
+                    why = (f"{len(unknown)} of the {len(listed)} ids of the task set {self.task_set.get('label') or self.task_set['name']} "
+                           f"are not listed by {self.bench['label']}'s dataset {self.ds['id']} "
                            f"under the run's options ({given}): " + ", ".join(unknown[:5]) + (", ..." if len(unknown) > 5 else ""))
         # the list and the shard, then the limit; each unit keeps its place in the whole dataset (its trial's tag)
         mine = shards.select(everything, *self.shard, by=self.shard_by) if self.shard else list(enumerate(everything))
@@ -1300,7 +1308,7 @@ class Run:
                               f"{many(len(plan))} of {self.ds['id']}")
             return plan[:n], ""
         source = given.get("units_file") or given.get("task_set") or {}
-        named = (f"{source['name']}@{source['revision']}" if given.get("task_set") else source.get("name", ""))
+        named = (f"set:{source['name']}" if given.get("task_set") else source.get("name", ""))
         held = set(plan)
         outside = [u for u in source.get("units") or [] if u not in held]
         if outside:

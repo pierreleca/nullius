@@ -103,7 +103,7 @@ class PartTest(unittest.TestCase):
                 j = parse.parse_job(job_dir)
                 self.assertEqual((len(j.trials), j.n_planned, j.n_tasks, j.n_tasks_run, j.state), (2, 6, 6, 2, "finished"))
                 self.assertEqual(j.start_with, {"by": how, "units": 2,
-                                                "name": {"count": "", "file": "first.txt", "set": "first-two@1"}[how]})
+                                                "name": {"count": "", "file": "first.txt", "set": "first-two"}[how]})
                 self.assertEqual(j.raw_solve_rate, 1.0)                                  # over the tasks run
                 text, row = self.show(job_dir)
                 self.assertIn("2 trial(s) of 6 planned", text)
