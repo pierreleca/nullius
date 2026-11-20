@@ -57,7 +57,7 @@ class TheRecipe(Scratch):
                 dataset_row = next(r for r in out["review"] if r[1] == "Dataset")
                 self.assertEqual(dataset_row[2], f"all · task set dev, revision {rev} · {n} tasks")
                 self.assertTrue(next(r for r in out["review"] if r[1] == "Scope")[2].startswith(f"{n} planned, {n} to begin"))
-                self.assertTrue(out["confirm"].startswith(f"Run all {n} tasks of Fake bench with "), out["confirm"])
+                self.assertEqual(out["confirm"], "")                 # the set is the choice of tasks: Run asks nothing more
         out = self.compile(task_sets={"all": "dev"}, limit=2, where=["local", "me@bench"])  # a shard's limit is its own
         self.assertTrue(next(r for r in out["review"] if r[1] == "Scope")[2].startswith("2 planned, 2 to begin of each shard"))
 

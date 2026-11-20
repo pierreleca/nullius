@@ -350,7 +350,7 @@ class TheBuilder(task_set_pages.BuilderCase):
         out = self.post("/new-run/runner", {"recipe": recipe})
         self.assertEqual(out["errors"], [])
         self.assertIn(["Dataset", "all · 4 planned, 2 to begin (task set dev, revision 1)"], [r[1:] for r in out["review"]])
-        self.assertTrue(out["confirm"].startswith("Plan 4 tasks of Fake bench and begin 2 with "), out["confirm"])
+        self.assertEqual(out["confirm"], "")
         out = self.post("/new-run/runner", {"recipe": dict(recipe, start_with={"all": "9"})})
         self.assertEqual([e["message"] for e in out["errors"]], ["Start with 9 tasks: all plans 4."])
 

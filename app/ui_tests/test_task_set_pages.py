@@ -552,7 +552,7 @@ class TheBuilder(BuilderCase):
         out = self.post("/new-run/runner", {"recipe": recipe})
         self.assertEqual(out["errors"], [])
         self.assertIn(["Dataset", "all · task set dev, revision 1 · 2 tasks"], [r[1:] for r in out["review"]])
-        self.assertTrue(out["confirm"].startswith("Run all 2 tasks of Fake bench"))
+        self.assertEqual(out["confirm"], "")                     # the set is the choice of tasks: Run asks nothing more
 
 
 class TheDatasetStep(BuilderCase):

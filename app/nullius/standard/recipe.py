@@ -1084,10 +1084,8 @@ def compile(recipe: dict, defs: Optional[Dict[str, List[dict]]] = None, *,
     if any(p["control"] for p in picks) and any(definitions.own_image(e) for e in (b.get("environments") or {}).values()):
         notes.append(f"Each {(b.get('units') or {}).get('noun', 'unit')} of {b['label']} is its own image: the control "
                      "runs in it, so docker is needed where it runs, whatever the backend.")
-    if start_of:
-        out["confirm"] = (f"Plan {planned or 'all the'} {nouns} of {b['label']} and begin {begin or 'the selected ' + nouns} "
-                          f"with {', '.join(p['o']['label'] for p in picks)}?").replace("  ", " ")
-    elif not isinstance(limit, int):
+    # Run asks first before every task of the datasets; a task set or a start on a part is a choice of tasks made already
+    if not isinstance(limit, int) and not set_of and not start_of:
         out["confirm"] = f"Run all {total or ''} {nouns} of {b['label']}{' (' + ', '.join(x.get('label') or x['id'] for x in dss) + ')' if many else ''} with {', '.join(p['o']['label'] for p in picks)}?".replace("  ", " ")
     return out
 

@@ -17,16 +17,17 @@ from tests.test_task_set_recipe import Scratch
 
 
 class StartWith(Scratch):
-    def test_confirmation_counts_every_limited_plan_and_its_start(self):
+    def test_a_start_on_a_part_asks_nothing_at_run_and_review_counts_what_it_plans_and_begins(self):
         for datasets, limit, planned, begun in ((["all", "more"], None, 8, 5),
                                                (["all", "more"], 2, 4, 3),
                                                (["all"], 2, 2, 1)):
             with self.subTest(datasets=datasets, limit=limit):
                 out = self.compile(datasets=datasets, limit=limit, start_with={"all": "1"})
                 self.assertEqual(out["errors"], [])
-                self.assertTrue(out["confirm"].startswith(f"Plan {planned} tasks of Fake bench and begin {begun} with "),
-                                out["confirm"])
+                self.assertEqual(out["confirm"], "")
                 self.assertTrue(next(r[2] for r in out["review"] if r[1] == "Scope").startswith(f"{planned} planned, {begun} to begin"))
+        # every task of the datasets, with none chosen: Run asks first, as it always did
+        self.assertTrue(self.compile(datasets=["all", "more"])["confirm"].startswith("Run all 8 tasks of Fake bench (all, more) with "))
 
     def test_a_number_or_a_set_compiles_to_the_option_and_review_says_planned_and_to_begin(self):
         sets.create(self.b, "first", dataset="all", units=["good", "slow"])
@@ -38,7 +39,7 @@ class StartWith(Scratch):
                 self.assertIn(f"--dataset all --start-with {word} -j 1", out["shards"][0]["command"])
                 self.assertEqual(next(r for r in out["review"] if r[1] == "Dataset")[2], said)
                 self.assertTrue(next(r[2] for r in out["review"] if r[1] == "Scope").startswith("4 planned, 2 to begin"))
-                self.assertTrue(out["confirm"].startswith("Plan 4 tasks of Fake bench and begin 2 with "), out["confirm"])
+                self.assertEqual(out["confirm"], "")
         # the plan a set or a limit cuts is what is planned
         sets.create(self.b, "dev", dataset="all", units=["good", "wrong", "slow"])
         out = self.compile(task_sets={"all": "dev"}, start_with={"all": "set:first"})
