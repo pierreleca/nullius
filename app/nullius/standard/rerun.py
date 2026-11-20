@@ -174,17 +174,48 @@ def _last_seq(path: str) -> int:
     return n
 
 
-def resolve(cfg: dict, results: List[dict], root: Optional[str] = None) -> tuple:
+def earlier_version(d: dict) -> Optional[str]:
+    """Of a benchmark's definition with versions (as its file has it), the one a job that records none ran: such a
+    job is older than the versions, and ran the pin the definition held then. That pin stays as the one version
+    whose own ``upstream`` names a branch and no tag, repository or commit of its own: it runs the shared commit.
+    None when no version, or more than one, is such."""
+    vs = d.get("versions") if isinstance(d.get("versions"), dict) else {}
+    pinned = [v for v, blk in vs.items() if isinstance(blk, dict) and isinstance(blk.get("upstream"), dict)
+              and blk["upstream"].get("branch") and not any(k in blk["upstream"] for k in ("tag", "repository", "tested"))]
+    return pinned[0] if len(pinned) == 1 and (d.get("upstream") or {}).get("tested") else None
+
+
+def _ran_before_versions(bench: dict, root: Optional[str]) -> Optional[dict]:
+    """The version of ``bench`` a job that records none ran (:func:`earlier_version`), resolved; None if it cannot be told."""
+    folder = definitions.entry_dir("benchmark", bench.get("key") or "", root)
+    path = definitions.definition_path(folder, "benchmark") if folder else ""
+    d = definitions._read(path, "benchmark", bench["key"])[0] if path and os.path.isfile(path) else None
+    v = earlier_version(d or {})
+    return definitions.get("benchmark", f"{bench['key']}@{v}", root) if v else None
+
+
+def resolve(cfg: dict, results: List[dict], root: Optional[str] = None, say: Optional[Callable[[str], None]] = None) -> tuple:
     """(benchmark, agent or other) a job ran, from today's catalogue; refused, naming the difference, when either
-    is gone or resolves to another version than the job recorded (its config, its trials' ``agent_info``)."""
+    is gone or resolves to another version than the job recorded (its config, its trials' ``agent_info``). A job
+    that records no version of a benchmark that has versions now ran the one it had before
+    (:func:`earlier_version`): taken as that one, and ``say`` told."""
     std = cfg["standard"]
     ref = std.get("benchmark_ref") or std.get("benchmark") or ""
     bench = definitions.get("benchmark", ref, root) or next((k for k in definitions.kits() if k["key"] == ref), None)
     if bench is None:
         raise run.Refused(f"the job ran the benchmark {ref}, which the catalogue no longer holds")
     ran = {k: std[k] for k in ("benchmark_version", "benchmark_ref") if std.get(k)}
-    if job._version(bench) != ran:
+    earlier = _ran_before_versions(bench, root) if not ran and job._version(bench) else None
+    if earlier is not None:
+        (say or (lambda s: None))(f"{os.path.basename(str(std.get('job') or cfg.get('job_name') or 'the job'))} records no "
+                                  f"version of {ref}: taken as {earlier['_ref']}, {definitions.version_label(earlier)}, "
+                                  f"the one {ref} had before it had versions")
+        bench = earlier
+    elif job._version(bench) != ran:
         now = job._version(bench).get("benchmark_version") or "no version"
+        if not ran:
+            raise run.Refused(f"the job records no version of {ref}, and its definition does not say which of its versions "
+                              f"({', '.join(bench.get('_versions') or [])}) the job ran: start a new run to compare")
         raise run.Refused(f"the job ran {ref} {ran.get('benchmark_version') or 'with no version'}, and it resolves to "
                           f"{now} now: start a new run to compare")
     kind, plugged = std.get("kind") or "agent", str(std.get("plugged") or "")
@@ -361,7 +392,7 @@ def rerun(job_dir: str, ids: List[str], *, reason: str = "", concurrency: Option
     capped = budget(job_dir, old, max_usd)       # one cap for the job: this part has what its earlier parts left
     if capped is not None and capped["closed"]:
         raise run.Refused(spent_out(capped))
-    bench, other = resolve(cfg, list(trials.values()), root)
+    bench, other = resolve(cfg, list(trials.values()), root, say=say)
     model = str(((cfg.get("agents") or [{}])[0] or {}).get("model_name") or "")
     dataset = str(((cfg.get("datasets") or [{}])[0] or {}).get("name") or "").partition("/")[2]
     prices = ((std.get("prices") or {}).get("models") or {})

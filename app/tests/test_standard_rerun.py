@@ -495,6 +495,44 @@ class OneBudget(unittest.TestCase):
         self.assertEqual((j.budget["max_usd"], [r["max_usd"] for r in j.reruns]), (0.0001, [5.0, None]))
 
 
+class NoVersion(unittest.TestCase):
+    """A job that records no version of a benchmark that has versions now is older than them: it ran the pin the
+    definition held then, the one version that runs the shared commit."""
+
+    def test_the_version_that_runs_the_shared_pin_is_the_earlier_one(self):
+        up = {"repository": "https://example.org/b", "tested": "a" * 40}
+        for versions, want in [({"v2": {"upstream": {"tag": "v2", "tested": "b" * 40}}, "old": {"upstream": {"branch": "main"}}}, "old"),
+                               ({"v2": {"upstream": {"tag": "v2", "tested": "b" * 40}}, "v1": {"upstream": {"tag": "v1"}}}, None),
+                               ({"a": {"upstream": {"branch": "main"}}, "b": {"upstream": {"branch": "dev"}}}, None),
+                               ({"fork": {"upstream": {"branch": "main", "repository": "https://example.org/fork"}}}, None),
+                               ({}, None)]:
+            with self.subTest(versions=list(versions)):
+                self.assertEqual(rerun.earlier_version({"upstream": up, "default": "v2", "versions": versions}), want)
+        self.assertIsNone(rerun.earlier_version({"upstream": {}, "versions": {"old": {"upstream": {"branch": "main"}}}}))
+
+    def test_a_job_of_osworld1_from_before_its_versions_is_taken_as_the_earlier_one(self):
+        bench = definitions.get("benchmark", "osworld1")
+        self.assertEqual(bench["_version"], "desktop-env-v1.0.3")                # what a bare key resolves to now
+        lines = []
+        std = {"benchmark": "osworld1", "plugged": "nop", "kind": "control"}     # recorded before versions: none
+        got, other = rerun.resolve({"job_name": "old-job", "standard": std}, [], say=lines.append)
+        self.assertEqual((got["_ref"], other["key"]), ("osworld1@044bc33", "nop"))
+        self.assertEqual(lines, ["old-job records no version of osworld1: taken as osworld1@044bc33, main (044bc33), "
+                                 "the one osworld1 had before it had versions"])
+        lines.clear()
+        std = dict(std, **rerun.job._version(definitions.get("benchmark", "osworld1@044bc33")))
+        self.assertEqual(rerun.resolve({"standard": std}, [], say=lines.append)[0]["_ref"], "osworld1@044bc33")
+        self.assertEqual(lines, [])                                              # a recorded version is the one run
+
+    def test_without_one_earlier_version_the_job_is_refused_with_what_to_do(self):
+        bench = dict(definitions.get("benchmark", "osworld1"))
+        with mock.patch.object(rerun, "_ran_before_versions", lambda b, root: None), \
+                mock.patch.object(rerun.definitions, "get", lambda kind, ref, root=None: bench), self.assertRaises(run.Refused) as e:
+            rerun.resolve({"standard": {"benchmark": "osworld1", "plugged": "nop", "kind": "control"}}, [])
+        self.assertEqual(str(e.exception), "the job records no version of osworld1, and its definition does not say which of "
+                                           "its versions (desktop-env-v1.0.3, 044bc33) the job ran: start a new run to compare")
+
+
 class OwnAgent(unittest.TestCase):
     """A later part of a job of one of a benchmark's own agents runs that agent again, named as its job names it."""
 

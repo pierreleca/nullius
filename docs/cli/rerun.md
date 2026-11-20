@@ -34,6 +34,7 @@ A trial with a score, or one that ended on any other error, the agent's own amon
 | The settings | The job's `config.json`, none given again; the endpoint and the key from the environment, as for a run |
 | A try | As an automatic retry's: the trial's folder kept as `retried/<trial>.try-N`, the unit run again under the trial's name, its place and its attempt kept. A stopped try puts the one before back |
 | Refused, nothing moved | No task named; an id the job never planned; a job still running or being run again; a merge of shards that differed (`merge --force`); a benchmark or an agent that resolves to another version than the job ran; a cap with nothing left |
+| A job from before its benchmark's versions | It records none: taken as the version that runs the definition's shared pin (its `upstream` a `branch`, no tag or commit of its own), and the command says so; refused when no single version is such |
 | A merged job | Run again in place; its shards' files stay as they were |
 | The trial's record | Its `result.json`: `standard.retries`, the tries before it, and `standard.rerun`: by hand, when, the reason, the result it replaced, or `begun` for a first try |
 | The job's record | `result.json` recomputed from the trials as [`merge`](shard-and-merge.md) does; its start and end the first run's; `reruns`: each re-run's time, reason, trials, results replaced, tasks `begun`, trials with `no_result`, the cap, what it had left of it (`left_usd`) and its spend |
