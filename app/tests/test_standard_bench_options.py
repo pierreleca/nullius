@@ -317,6 +317,13 @@ class MachineDocker(unittest.TestCase):
                 self.assertFalse(prerequisites.ready([{"rows": rows}]))
                 self.assertTrue(prerequisites.ready([{"rows": prerequisites.check_here([], setups, which=lambda p: "/usr/bin/" + p)}]))
 
+    def test_an_agents_run_is_asked_the_tick_alone_since_no_container_starts_the_vms(self):
+        out = recipe.compile(self.a_recipe(["codex"], model_choice="any", model="vendor/m", unsandboxed=False))
+        said = [e["message"] for e in out["errors"] if "not sandboxed" in e["message"]]
+        self.assertEqual(len(said), 1, out["errors"])
+        self.assertTrue(said[0].endswith(" would run as you, not sandboxed: tick Run it as me; a container cannot start its VMs."), said)
+        self.assertEqual(recipe.compile(self.a_recipe(["codex"], model_choice="any", model="vendor/m", unsandboxed=True))["errors"], [])
+
     def test_a_value_shows_its_name_and_the_recipe_keeps_the_value(self):
         out = recipe.compile(self.a_recipe(["original"], bench_options={"agent": "muse_spark"}, model="muse-spark-1.1"))
         self.assertEqual(out["errors"], [])
