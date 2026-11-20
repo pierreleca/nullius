@@ -324,7 +324,7 @@ class BenchmarkPage(PageCase):
 
     def test_a_machine_setup_says_what_checks_it_and_what_installs_it(self):
         osworld = self.page("osworld1")
-        self.assertIn("Setup: docker", osworld)
+        self.assertIn("Setup: Docker for the tasks' VMs", osworld)
         self.assertIn("Checked by docker on PATH, on each machine a run uses; the builder's Where step checks it.", osworld)
         self.assertNotIn("nothing installs it", osworld)
         self.assertIn("the builder's Where step checks it and can install it.", self.page("tau3-bench"))
@@ -335,7 +335,7 @@ class BenchmarkPage(PageCase):
             self.assertIn("Setup: " + label, osworld2)
             self.assertIn("needs " + label, osworld2)
         self.assertNotIn("Setup: scoring_programs", osworld2)
-        self.assertIn("Setup: docker", self.page("osworld1"))
+        self.assertIn("Setup: Docker for the tasks' VMs", self.page("osworld1"))
 
 
 class DatasetsOnTheirPage(PageCase):
