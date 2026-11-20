@@ -564,6 +564,22 @@ class BudgetAccounting(unittest.TestCase):
         self.assertEqual(parsed.budget["spent_usd"], 0)
         self.assertTrue(all(r["spent_usd"] == 0 for r in parsed.reruns))
 
+    def test_a_spend_equal_to_the_cap_but_for_float_noise_closes_the_job(self):
+        # eight calls of 0.1 under a cap of 0.8 add up to 0.7999999999999999: nothing is left, and no part opens on it
+        path = self.job(0.8, 0.1, 1)
+        noisy = 0.0
+        for _ in range(8):
+            noisy += 0.1                                                         # as a ledger adds its calls
+        result = json.loads((path / "result.json").read_text())
+        result["budget"].update(spent_total_usd=noisy, closed=False)
+        (path / "result.json").write_text(json.dumps(result))
+        self.assertGreater(0.8 - noisy, 0)
+        got = rerun.budget(str(path))
+        self.assertEqual((got["closed"], got["left_usd"]), (True, 0.0))
+        with self.assertRaises(run.Refused) as e:
+            self.part(path, 0.1, 1)
+        self.assertEqual(str(e.exception), "the job's spending cap of 0.80 USD is spent (0.80 spent): raise it with --max-usd USD")
+
     def test_next_part_inherits_cumulative_replies_once(self):
         path = self.job(1.61, 1, 100)
         row = {"input": 0.0, "output": 10000.0}

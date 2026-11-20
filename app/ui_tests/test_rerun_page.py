@@ -453,6 +453,20 @@ tick().then(() => process.stdout.write(JSON.stringify(destination)));
         html = self.page("/job/r1?view=results")
         self.assertNotIn('id="cap-stopped"', html)
 
+    def test_a_cap_equal_to_the_spend_the_page_shows_is_refused(self):
+        d = self.run_of()
+        noisy = 0.0
+        for _ in range(8):
+            noisy += 0.1                                                         # 0.7999999999999999, as a ledger adds its calls
+        self.capped(d, {"max_usd": 0.5, "spent_usd": noisy, "stopped": True, "cut_off": [], "not_run": [], "spent_total_usd": noisy})
+        self.open(d.parent)
+        self.assertEqual(text(self.page("/job/r1?view=results"), r'<div class="sp cap-spent" id="cap-spent">.*?</div>'), "$0.80 spent · Change")
+        for typed in ("0.8", "0.80000000001"):
+            with self.subTest(typed=typed):
+                r = self.cap("r1", {"max_usd": typed})
+                self.assertEqual((r.status_code, r.json["error"]), (400, "The cap must be above what this run has spent, 0.80 USD."))
+        self.assertEqual(self.cap("r1", {"max_usd": "0.81"}).status_code, 200)
+
     def test_a_job_with_no_cap_has_none_until_one_is_set(self):
         d = self.run_of()
         self.open(d.parent)

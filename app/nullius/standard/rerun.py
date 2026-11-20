@@ -72,6 +72,9 @@ from nullius.standard import boat, definitions, job, ledger as ledgers, merge, r
 
 LOCK = "rerun.lock"                          # in the job's .work: held while a re-run of it runs
 NO_RESULT = "no-result.json"                 # in a kept try that ended with no result: when it was found so
+# what is left of a cap at or under which nothing is: unrounded sums of calls leave float noise, eight calls of
+# 0.1 under a cap of 0.8 leaving 1.1e-16
+NOTHING_LEFT_USD = 1e-9
 _TAG = re.compile(r"__u(\d{4,})(?:r(\d+))?$")
 
 
@@ -134,7 +137,8 @@ def budget(job_dir: str, res: Optional[dict] = None, cap: Optional[float] = None
     # a merged job's "stopped" says that some shard stopped at its share, not that the job's cap is spent
     stopped = b.get("closed") is True if "closed" in b else (b.get("stopped") is True and not res.get("reruns") and not b.get("shards"))
     left = use - spent
-    return {"max_usd": use, "spent_usd": spent, "left_usd": max(0.0, left), "closed": left <= 0 or (stopped and not changed),
+    left = left if left > NOTHING_LEFT_USD else 0.0
+    return {"max_usd": use, "spent_usd": spent, "left_usd": left, "closed": left <= 0 or (stopped and not changed),
             "changed": changed, "was": was}
 
 

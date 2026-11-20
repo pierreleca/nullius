@@ -323,7 +323,8 @@ def job_cap_change(job_id):
     if not 0 < cap < float("inf"):
         return jsonify(ok=False, error="The spending cap is an amount in USD above zero."), 400
     now = rerun.budget(j.dir, cap=cap)
-    if now["left_usd"] <= 0:
+    # nothing left (float noise included), or a cap that reads as the spend the page shows
+    if now["left_usd"] <= 0 or ledger.usd(cap) == ledger.usd(now["spent_usd"]):
         return jsonify(ok=False, error=f"The cap must be above what this run has spent, {ledger.usd(now['spent_usd'])} USD."), 400
     with ex._turn:
         caps = {k: v for k, v in (ex.plan.caps or {}).items() if k != job_id}
