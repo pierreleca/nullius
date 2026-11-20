@@ -79,7 +79,8 @@ class PartRunPage(unittest.TestCase):
         self.open(d.parent)
         html = self.page("/job/r1?view=results")
         menu = re.search(r'<details class="pop plan-sets" id="plan-sets">.*?</details>', html, re.S)[0]
-        self.assertEqual(re.findall(r'data-pick="([^"]*)">([^<]*)<b>(\d+)</b>', menu), [("t-4__u0004", "late, revision 1", "1")])
+        self.assertEqual(re.findall(r'data-pick="([^"]*)">([^<]*)<b>(\d+)</b>', menu), [("t-4__u0004", "late", "1")])
+        self.assertNotIn("revision", menu)
         self.assertEqual(text(html, r'<summary class="btn sm ghost" aria-haspopup="true">.*?</summary>'), "Run a set")
         # what a set's or the rest's click ticks is posted as Run selected posts it: the path a re-run takes
         r = self.post("r1", {"trials": ["t-4__u0004"]})

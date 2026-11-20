@@ -13,7 +13,7 @@
     {% if job.agent_label %}<span>{{ job.agent_label }}{% if job.agent_version %} <span class="mono faint" title="Resolved agent version, recorded in the trial's agent_info">v{{ job.agent_version }}</span>{% endif %}</span>{% endif %}
     <span class="mono">{{ job.model_name }}</span>
     <span title="{{ job.dataset }}">{{ job.dataset|dsname }}</span>
-    {% if job.task_set %}<span class="run-set" title="The task set this run ran: {{ job.task_set.units }} {{ 'task' if job.task_set.units == 1 else 'tasks' }}">task set {% if set_link.link %}<a href="{{ set_link.link }}">{{ set_link.name }}</a>{% else %}<b>{{ set_link.name }}</b>{% endif %}{% if job.task_set.revision %}, revision {{ job.task_set.revision }}{% endif %}</span>{% endif %}
+    {% if job.task_set %}<span class="run-set" title="The task set this run ran: {{ job.task_set.units }} {{ 'task' if job.task_set.units == 1 else 'tasks' }}">task set {% if set_link.link %}<a href="{{ set_link.link }}">{{ set_link.name }}</a>{% else %}<b>{{ set_link.name }}</b>{% endif %}</span>{% endif %}
     {% if control %}<span class="chip-control" title="Harbor control: never calls a model">control</span>
     <span class="control-verdict {{ control.state }}" id="control-verdict" data-state="{{ control.state }}"
       title="{{ control.control }} must be {{ control.expected }} on every task; this is a check on the tasks, not a score">{{ control.label }}</span>{% endif %}
@@ -421,7 +421,7 @@
       {%- if rest %}
       {%- if plan_sets %}
       <details class="pop plan-sets" id="plan-sets"><summary class="btn sm ghost" aria-haspopup="true">Run a set</summary>
-        <div class="popm" role="group" aria-label="Run the tasks of a set not yet run">{% for s in plan_sets %}<button class="plain" type="button" data-pick="{{ s.trials|join(' ') }}">{{ s.name }}, revision {{ s.revision }}<b>{{ s.tasks }}</b></button>{% endfor %}</div></details>
+        <div class="popm" role="group" aria-label="Run the tasks of a set not yet run">{% for s in plan_sets %}<button class="plain" type="button" data-pick="{{ s.trials|join(' ') }}">{{ s.name }}<b>{{ s.tasks }}</b></button>{% endfor %}</div></details>
       {%- endif %}
       <button class="btn sm ghost" id="pick-rest" type="button" aria-haspopup="dialog" data-pick="{{ rest|map(attribute='trial')|join(' ') }}">Run the rest · {{ rest|map(attribute='unit')|unique|list|length }}</button>
       {%- endif %}

@@ -15,7 +15,7 @@ nullius standard run <benchmark>[@version] <other> [--model M] [--dataset D] [--
 nullius standard run humaneval reference --model gpt-5-mini --limit 2 --unsandboxed
 nullius standard run humaneval oracle --limit 6
 nullius standard run humaneval oracle --units tasks.txt
-nullius standard run humaneval oracle --set first-ten@2
+nullius standard run humaneval oracle --set first-ten
 nullius standard run humaneval oracle --start-with 10
 nullius standard run locomo original --model gpt-3.5-turbo-4k
 nullius standard run locomo model --model gpt-4o-mini

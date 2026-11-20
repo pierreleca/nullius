@@ -188,8 +188,8 @@ class PartTest(unittest.TestCase):
         # a set naming a task the job did not plan: a plan cut by --limit
         limited = self.plan(name="limited", start_with={"count": 1}, limit=3)
         with self.assertRaises(run.Refused) as e:
-            self.again(limited, [], task_set=self.a_set("beyond", ["t2", "t4"]))
-        self.assertIn("the task set beyond@1 names 1 task limited did not plan: t4", str(e.exception))
+            self.again(limited, [], task_set=self.a_set("Beyond the plan", ["t2", "t4"]))
+        self.assertIn("the task set Beyond the plan names 1 task limited did not plan: t4", str(e.exception))
 
     def test_the_command_line_names_the_part_four_ways(self):
         b = definitions.get("benchmark", "fakebench", self.catalogue())

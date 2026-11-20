@@ -321,7 +321,7 @@ def more(job_dir: str, plan: List[tuple], empty: Dict[str, dict], *, count: Opti
         planned_units = {u for _, u in plan}
         outside = [u for u in rec["units"] if u not in planned_units]
         if outside:
-            raise run.Refused(f"the task set {rec['name']}@{rec['revision']} names {len(outside)} {many(len(outside))} "
+            raise run.Refused(f"the task set {rec.get('label') or rec['name']} names {len(outside)} {many(len(outside))} "
                               f"{os.path.basename(job_dir)} did not plan: " + ", ".join(outside[:5])
                               + (", ..." if len(outside) > 5 else ""))
         wanted = set(rec["units"])

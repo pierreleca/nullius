@@ -997,7 +997,7 @@ RERUN_EPILOG = """examples:
   nullius standard rerun jobs_standard/JOB --units again.txt --max-usd 2
   nullius standard rerun jobs_standard/JOB --unfinished --max-usd 5
   nullius standard rerun jobs_standard/JOB --next 20
-  nullius standard rerun jobs_standard/JOB --set chrome-tabs@2
+  nullius standard rerun jobs_standard/JOB --set chrome-tabs
 
 exit codes:
   0  the tasks ran, or --unfinished or --set found none to run (a refusal on stderr otherwise)
