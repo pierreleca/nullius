@@ -490,6 +490,7 @@ The upstream's dependencies go in `driver.install` (a capability's `install` is 
 | `indexes` | Packages from another index |
 | `wheels` | A wheel served by URL only (a model package such as spaCy's `en_core_web_sm`), `{url, sha256}`: refused unless the file matches, resolved with `pip` |
 | `project` | The upstream itself, from its clone; `locked: true` installs it at its own lock file's pins (`uv export --frozen`), `pip` resolved beside them |
+| `virtual` | With `locked`: the lock's pins without the project itself, as `uv sync` leaves a project with no build system; the driver imports the upstream from its clone |
 | `extras`, `prefetch` | The project's extras; what to download ahead |
 
 #### Benchmark options
@@ -545,6 +546,8 @@ An agent or a capability may keep several versions in its one file: an older rel
 | Naming | `KEY@VERSION` in `cli run`, `cli prove`, `cli fit` and the recipe's `benchmark` |
 | In jobs | `…__KEY-VERSION__…` in the name; `standard.benchmark_version` and `standard.benchmark_ref` in `config.json` |
 | A fork is a version | `versions.<name>.upstream = {repository, tag, tested}`, never a patch of ours; cloned at its commit (`upstreams/<key>/<commit>/`), its datasets checked by their own `sha256`; a private repository uses the machine's git credentials. It proves its own controls (`cli prove KEY@NAME`) |
+| A release is the default | An earlier untagged pin stays as a version with `upstream.branch` (`main`): shown as `main (044bc33)` |
+| Its page | `benchmark.json` `versions.<name>`: whole `good_to_know`, `upstream_limitations`, `limitations`, and `datasets.<key>` `tasks`, `notes`, `verifier`; the page and builder switch all of it with the version |
 
 ### Options
 
@@ -636,10 +639,37 @@ already accepts arbitrary models needs only the `original` method.
 | `units` | A setup may count its own units; `units` is sent `setup` |
 | `answer` | Runs the upstream's answerer through the unit's relay; `score` is sent `setup` too. Local processes or the Original setup driver container |
 | `comparable` | `false` when no model of `models` is the paper's, so its runs compare with each other only; or the list of those models whose runs compare with the paper's (`paper`), when the setup runs several agents and only some are the paper's: the builder offers those alone as Like the paper, the others as Any of your choice |
-| Recorded | `standard.setup` in the config and each trial: its name, the model `asked` and `sent`, `comparable_with_paper` |
+| Recorded | `standard.setup` in the config and each trial: its name, the model `asked` and `sent`, `comparable_with_paper`, and the benchmark's own agent that ran (`agent`), whose key is also the job's agent (`agent_info.name`) |
 | Attempts | `cli run --attempts K` runs each unit K times; `result.json` carries [`pass_hat_k`](field-guide.md#attempts) |
 | Retries | `cli run --retries N` runs a failed attempt again: [which failures](cli/run.md#retries) |
 | Run again by hand | `cli rerun JOB_DIR --unit ID` runs chosen tasks of an ended job again in it, each a further try; `--unfinished` runs the tasks an interrupted job has no result for: [Run tasks again](cli/rerun.md) |
+
+### A benchmark's own agents
+
+A benchmark whose upstream ships several agent scripts (OSWorld's) keeps them in
+`agents.json` beside its `standard.json`. Each entry of its `agents` is an agent
+definition (`nullius.agent/v1`) that starts with `start.driver`: the upstream's
+own name for it (`agent`) and what the driver runs in the Original setup
+(`script`, `argv`, `env`, and whatever else the driver reads), with the `models`
+it is published with. It speaks no port, so it has no `offers` or `proven`.
+`common` and `aws` beside `agents` stay driver data.
+
+```json title="agents.json · one entry"
+"openai-cua": {
+  "key": "openai-cua", "label": "OpenAI CUA", "summary": "...",
+  "models": ["computer-use-preview"],
+  "start": {"driver": {"agent": "openai_cua", "script": "scripts/python/run_multienv_openaicua.py", "argv": ["..."], "env": {"...": "..."}}}
+}
+```
+
+| Rule | Detail |
+| --- | --- |
+| Named | `<benchmark>:<key>`, e.g. `osworld1:openai-cua`; the key follows the key rule (lower case, digits, dashes) |
+| Derived, never written | Where it comes from (`from`: `benchmark`; a catalogue agent's is `bundled` or `yours`) and `only_for`, its benchmark. A written `only_for` names that benchmark alone |
+| `options.agent` | `standard.json` writes its `label`, `summary` and `setups`; the loader rebuilds `values` (each entry's `start.driver.agent`, in order), `names`, `about` and `default` (the first), so `when`, `by`, `--bench-option agent=...` and `NULLIUS_OPTION_AGENT` read as before |
+| Checked | Each entry's `models` are among `setups.original.models`; each upstream name once |
+| Offered | On the Agents page behind its From filter, and shown whenever Runs on chooses its benchmark (Runs on lists each benchmark's agents, as the builder enables them), and in the builder beside the catalogue's agents; another benchmark greys it with the reason |
+| Run | As the Original setup, its upstream name as the agent option: `nullius standard run osworld1 original --bench-option agent=openai_cua`. Its jobs name it by its key (`openai-cua`); an older job, recorded as `original`, is read the same way from its agent option |
 
 ### Every setting, inventoried
 

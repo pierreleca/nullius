@@ -1243,11 +1243,11 @@ class Run:
         first = work if part is None else [(i, u, r) for i, u, r in work if u in begun]
         self.n_units = len(first)                # what the progress counts: every run of every unit
         self.feed = live_feed.Writer(os.path.join(self.job_dir, live_feed.FEED), self.name)
-        self.feed.emit("job.start", n_total=len(work), n_concurrent=self.concurrency, agents=[self.other["key"]], tasks=units,
+        self.feed.emit("job.start", n_total=len(work), n_concurrent=self.concurrency, agents=[job.agent_name(self.other)], tasks=units,
                        **({"budget": {k: v for k, v in (("max_usd", self.max_usd), ("unit_max_usd", self.unit_max_usd)) if v is not None}}
                           if self.ledger is not None else {}))   # the live board says the cap
         for pos, (i, u, r) in enumerate(work):
-            self.feed.emit("trial.queued", self.trial_name(i, u, r), agent=self.other["key"], position=pos)
+            self.feed.emit("trial.queued", self.trial_name(i, u, r), agent=job.agent_name(self.other), position=pos)
         results, budget, u0 = self.run_units(first, lambda results, budget: job.write_result(
             self.job_dir, self.name, t0, time.time(), results, len(work), budget=budget,
             served=job.served(self.benchmark_calls(), getattr(self, "serving", None))))

@@ -125,6 +125,23 @@ class Macros(unittest.TestCase):
         self.assertEqual(html.count('data-dropdown'), 2)
 
 
+    def test_a_pick_card_is_a_toggle_and_a_disabled_one_says_why(self):
+        cols = [dict(key='title', label='Name', card='title'), dict(key='why', label='Why not', card='alert')]
+        html = self.render(cols, [{'title': {'text': 'Alpha', 'title': 'What it is'}, 'pick': {'value': 'a'}},
+                                  {'title': 'Beta', 'pick': {'value': 'b', 'on': True}},
+                                  {'title': 'Gamma', 'pick': {'value': 'g', 'disabled': True}, 'why': {'text': 'Lacks tools', 'title': 'needs agent.tools/v1'}}])
+        self.assertIn('<button type="button" class="card-link" data-pick="a" aria-pressed="false" title="What it is">Alpha</button>', html)
+        self.assertIn('<button type="button" class="card-link" data-pick="b" aria-pressed="true">Beta</button>', html)
+        self.assertIn('<button type="button" class="card-link" data-pick="g" aria-pressed="false" disabled>Gamma</button></div>'
+                      '<div class="bench-card-blocker" title="needs agent.tools/v1">Lacks tools</div>', html)
+        self.assertNotIn('<a ', html)
+
+    def test_a_single_choice_is_marked_on_its_card(self):   # and a radio in its table: test_builder_benchmarks
+        cols = [dict(key='title', label='Name', card='title')]
+        items = [{'title': 'Alpha', 'pick': {'value': 'a', 'one': True}}, {'title': 'Beta', 'pick': {'value': 'b', 'on': True, 'one': True}}]
+        self.assertIn('<button type="button" class="card-link" data-pick="b" data-pick-one aria-pressed="true">Beta</button>', self.render(cols, items))
+
+
 class Script(unittest.TestCase):
     def test_search_and_filter_hide_cards_and_their_empty_groups(self):
         got = node(r'''
@@ -205,6 +222,109 @@ process.stdout.write(JSON.stringify(out));
             self.assertEqual(got[k], [0, ["/a _blank noopener"]], k)
         for k in ("right", "box", "button", "label", "selecting"):
             self.assertEqual(got[k], [0, []], k)
+
+    def test_a_pick_flips_and_says_so_and_a_disabled_one_stays(self):
+        got = node(r"""
+global.CustomEvent = class { constructor(type, o) { this.type = type; this.detail = o.detail; } };
+const picks = [], card = v => el('article', {'data-card': ''}, el('div', {}, el('button', {class: 'card-link', 'data-pick': v, 'aria-pressed': 'false'}, v)), el('span', {title: 't'}, 'pill'));
+const root = el('div', {id: 'c', 'data-cards': ''}, card('a'), card('g'));
+root.querySelectorAll('[data-pick]').forEach(b => { b.dispatchEvent = ev => b.dispatch(ev.type, {detail: ev.detail}); });
+root.querySelector('[data-pick="g"]').disabled = true;
+document.appendChild(el('main', {}, el('div', {id: 'c-tools'}), root, el('p', {'data-empty': 'c', hidden: true}), el('span', {'data-live': 'c', 'data-noun': 'cards'})));
+global.getSelection = () => ({isCollapsed: true});
+T.cards(root);
+root.addEventListener('nullius-pick', e => picks.push([e.detail.value, e.detail.pressed]));
+const a = root.querySelector('[data-pick="a"]'), g = root.querySelector('[data-pick="g"]');
+a.click(); root.querySelectorAll('[title="t"]')[0].dispatch('click', {button: 0}); a.click(); g.click();
+process.stdout.write(JSON.stringify([picks, a.getAttribute('aria-pressed'), g.getAttribute('aria-pressed')]));
+""")
+        self.assertEqual(got, [[["a", True], ["a", False], ["a", True]], "true", "false"])   # its pill too: the card is the toggle
+
+    def test_a_single_choice_lets_the_others_go_and_stays_chosen(self):
+        got = node(r"""
+global.CustomEvent = class { constructor(type, o) { this.type = type; this.detail = o.detail; } };
+const picks = [], card = v => el('article', {'data-card': ''}, el('div', {}, el('button', {class: 'card-link', 'data-pick': v, 'data-pick-one': '', 'aria-pressed': 'false'}, v)));
+const root = el('div', {id: 'c', 'data-cards': ''}, card('a'), card('b'));
+root.querySelectorAll('[data-pick]').forEach(b => { b.dispatchEvent = ev => b.dispatch(ev.type, {detail: ev.detail}); });
+document.appendChild(el('main', {}, el('div', {id: 'c-tools'}), root, el('p', {'data-empty': 'c', hidden: true}), el('span', {'data-live': 'c', 'data-noun': 'cards'})));
+global.getSelection = () => ({isCollapsed: true});
+T.cards(root);
+root.addEventListener('nullius-pick', e => picks.push([e.detail.value, e.detail.pressed]));
+const a = root.querySelector('[data-pick="a"]'), b = root.querySelector('[data-pick="b"]'), state = () => [a, b].map(x => x.getAttribute('aria-pressed')).join(' ');
+const out = [];
+a.click(); out.push(state()); b.click(); out.push(state()); b.click(); out.push(state());
+process.stdout.write(JSON.stringify([picks, out]));
+""")
+        self.assertEqual(got, [[["a", True], ["b", True], ["b", True]], ["true false", "false true", "false true"]])
+
+    def test_a_row_click_chooses_its_radio(self):
+        got = node(r"""
+global.CustomEvent = class { constructor(type, o) { this.type = type; this.detail = o.detail; } };
+global.getSelection = () => ({isCollapsed: true});
+const row = v => el('tr', {}, el('td', {}, el('input', {type: 'radio', name: 'c-pick', 'data-pick': v})), el('td', {}, v));
+const table = el('table', {}, row('a'), row('b'));
+table.querySelectorAll('[data-pick]').forEach(b => { b.dispatchEvent = ev => b.dispatch(ev.type, {detail: ev.detail}); b.type = 'radio'; });
+document.appendChild(table);
+const picks = [];
+T.picks(table, 'tr');
+table.addEventListener('nullius-pick', e => picks.push([e.detail.value, e.detail.pressed]));
+const tds = table.querySelectorAll('td'), checked = () => table.querySelectorAll('[data-pick]').filter(b => b.checked).map(b => b.dataset.pick).join('');
+tds[1].dispatch('click', {button: 0}); const first = checked(); tds[3].dispatch('click', {button: 0}); tds[3].dispatch('click', {button: 0});
+process.stdout.write(JSON.stringify([picks, first, checked()]));
+""")
+        self.assertEqual(got, [[["a", True], ["b", True], ["b", True]], "a", "b"])
+
+    def test_a_card_passes_a_filter_its_unless_column_narrows_to(self):
+        got = node(r"""
+const card = (id, from, runs, unless) => el('article', Object.assign({'data-card': '', id, 'data-f-from': from + '\n', 'data-f-runs': runs + '\n'}, unless ? {'data-unless-from': 'runs'} : {}), id);
+const menu = (col, values, on) => el('fieldset', {'data-filter-menu': col}, ...values.map(v => el('input', Object.assign({type: 'checkbox', 'data-value': v}, on.includes(v) ? {checked: true} : {}))));
+const tools = el('div', {id: 'c-tools'}, menu('from', ['bundled', 'benchmark'], ['bundled']), menu('runs', ['os', 'gsm'], ['os', 'gsm']));
+tools.querySelectorAll('input').forEach(i => { i.checked = i.hasAttribute('checked'); });
+const root = el('div', {id: 'c', 'data-cards': ''}, card('codex', 'bundled', 'os'), card('m3', 'benchmark', 'os', true), card('other', 'benchmark', 'gsm', true));
+document.appendChild(el('main', {}, tools, root, el('p', {'data-empty': 'c', hidden: true}), el('span', {'data-live': 'c', 'data-noun': 'cards'})));
+T.cards(root);
+const shown = () => root.querySelectorAll('[data-card]').filter(c => !c.hidden).map(c => c.id).join(' ');
+const out = [shown()];
+tools.querySelector('[data-value="gsm"]').click(); out.push(shown());
+process.stdout.write(JSON.stringify(out));
+""")
+        self.assertEqual(got, ["codex", "codex m3"])     # Runs on everything narrows nothing: From's default holds
+
+    def test_a_row_click_flips_its_pick_but_not_a_disabled_one(self):
+        got = node(r"""
+global.CustomEvent = class { constructor(type, o) { this.type = type; this.detail = o.detail; } };
+global.getSelection = () => ({isCollapsed: true});
+const row = (v, off) => el('tr', {}, el('td', {}, el('input', {type: 'checkbox', 'data-pick': v})), el('td', {}, v));
+const table = el('table', {}, row('a'), row('g', true));
+table.querySelectorAll('[data-pick]').forEach(b => {
+  b.dispatchEvent = ev => b.dispatch(ev.type, {detail: ev.detail}); b.type = 'checkbox'; b.disabled = b.dataset.pick === 'g';
+  b.click = () => { if (!b.disabled) { b.checked = !b.checked; b.dispatch('click', {button: 0}); } };   // a box ticks itself, then says so
+});
+document.appendChild(table);
+const picks = [];
+T.picks(table, 'tr');
+table.addEventListener('nullius-pick', e => picks.push([e.detail.value, e.detail.pressed]));
+const tds = table.querySelectorAll('td'); tds[1].dispatch('click', {button: 0}); tds[3].dispatch('click', {button: 0}); const a = table.querySelector('[data-pick="a"]'), before = T.chosen(table); a.click();
+process.stdout.write(JSON.stringify([picks, before, T.chosen(table)]));
+""")
+        self.assertEqual(got, [[["a", True], ["a", False]], True, False])     # a box: its own tick is the state
+
+    def test_a_chosen_card_shows_whatever_the_filters_say(self):
+        got = node(r"""
+const card = (id, from, on) => el('article', {'data-card': '', id, 'data-f-from': from + '\n', 'data-search': id},
+  el('div', {}, el('button', {class: 'card-link', 'data-pick': id, 'aria-pressed': String(on)}, id)));
+const tools = el('div', {id: 'c-tools'}, el('input', {'data-search': ''}),
+  el('fieldset', {'data-filter-menu': 'from'}, ...['bundled', 'benchmark'].map(v => el('input', {type: 'checkbox', 'data-value': v}))));
+tools.querySelectorAll('[data-value]').forEach(i => { i.checked = i.dataset.value === 'bundled'; });
+const root = el('div', {id: 'c', 'data-cards': ''}, card('codex', 'bundled', false), card('m3', 'benchmark', true), card('cua', 'benchmark', false));
+document.appendChild(el('main', {}, tools, root, el('p', {'data-empty': 'c', hidden: true}), el('span', {'data-live': 'c', 'data-noun': 'cards'})));
+T.cards(root);
+const shown = () => root.querySelectorAll('[data-card]').filter(c => !c.hidden).map(c => c.id).join(' ');
+const out = [shown()];
+const q = tools.querySelector('[data-search]'); q.value = 'codex'; q.dispatch('input'); out.push(shown());
+process.stdout.write(JSON.stringify(out));
+""")
+        self.assertEqual(got, ["codex m3", "codex m3"])  # m3 is chosen: neither From nor the search hides it
 
 
 if __name__ == "__main__":

@@ -387,6 +387,15 @@ class ReopenAtStart(unittest.TestCase):
         self.root.rmdir()
         self.assertEqual(self.restart().roots, [str(self.root)])
 
+    def test_a_second_server_on_the_runs_folder_stops_with_one_line(self):
+        refused = execution.Followed("another Nullius follows the runs in /r: stop it before starting this one")
+        with patch.object(execution, "restore", side_effect=refused), self.assertRaises(SystemExit) as end:
+            self.restart()
+        self.assertEqual(end.exception.code, f"nullius: {refused}")
+        with patch.object(execution, "restore") as restore:
+            self.restart(["--debug"])                          # the reloader's watcher: the server it starts follows the runs
+        restore.assert_not_called()
+
     def test_job_paths_given_win(self):
         workspace.create(self.home, ["/elsewhere"], label="witty pelican")
         self.assertEqual(self.restart([str(self.root)]).roots, [str(self.root)])
@@ -446,6 +455,31 @@ class ResumeIntoWorkspace(unittest.TestCase):
         self.assertIn(self.jobs, workspace.load(self.home, self.ws.name).roots)
         self.assertNotIn(self.jobs, workspace.load(self.home, other.name).roots)
         self.assertEqual(json.loads(self.record.read_text())["workspace"], self.ws.name)
+
+    def test_a_rename_refiles_the_run_and_a_restart_puts_it_back_in_the_renamed_workspace(self):
+        rec = json.loads(self.record.read_text())
+        ex = execution.Execution(execution.Plan.from_dict(rec["plan"]), root=str(self.tmp / "runs"), record=rec)
+        execution.EXECUTIONS[ex.id] = ex                                                     # the run as the page holds it
+        r = self.client.post("/workspaces/rename", data={"name": self.ws.name, "label": "sharp lemur", "csrf": self.csrf},
+                             headers={"Origin": "http://localhost"}); self.addCleanup(r.close)
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(json.loads(self.record.read_text())["workspace"], "sharp-lemur")
+        execution.EXECUTIONS.clear()
+        renamed = workspace.load(self.home, "sharp-lemur"); renamed.opened = "2000-01-01T00:00:00+00:00"; workspace.save(renamed)
+        other = workspace.create(self.home, [str(self.tmp / "a")], label="quiet otter")
+        web.shared.open_workspace(other)
+        self.assertEqual(self.restart().name, other.name)
+        self.assertIn(self.jobs, workspace.load(self.home, "sharp-lemur").roots)
+        self.assertNotIn(self.jobs, workspace.load(self.home, other.name).roots)
+
+    def test_a_run_filed_under_a_name_no_workspace_has_stays_out_of_the_open_one(self):
+        workspace.rename(self.home, self.ws, "sharp lemur")                                    # its record not refiled: the name is gone
+        self.ws.opened = "2000-01-01T00:00:00+00:00"; workspace.save(self.ws)
+        other = workspace.create(self.home, [str(self.tmp / "a")], label="quiet otter")
+        web.shared.open_workspace(other)
+        self.assertEqual(self.restart().name, other.name)                                  # the open one stays open
+        self.assertEqual(workspace.load(self.home, other.name).roots, [str(self.tmp / "a")])
+        self.assertIn(self.jobs, workspace.load(self.home, "sharp-lemur").roots)
 
     def test_a_restart_leaves_a_closed_workspace_closed(self):
         r = self.client.post("/change-source", data={"csrf": self.csrf}); self.addCleanup(r.close)

@@ -93,14 +93,6 @@
   const schema = JSON.parse(document.getElementById('nb-schema').textContent);
   const C = window.NulliusRecipe(schema), $ = s => root.querySelector(s);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const agentMarks = JSON.parse(root.dataset.agentMarks || '{}');
-  const agentMark = (key, label) => {
-    const source = agentMarks[String(key).split('@')[0]];
-    if (!source) return esc(label[0]);
-    return source.includes('#')
-      ? `<svg class="agent-logo" aria-hidden="true"><use href="/static/${esc(source)}"/></svg>`
-      : `<img class="agent-logo" src="/static/${esc(source)}" alt="" aria-hidden="true">`;
-  };
   const steps = C.STEPS, S = C.STEP, REVIEW = S.review;
   const query = Object.fromEntries(new URLSearchParams(location.search));
   let recipe = C.prefill(query);
@@ -117,6 +109,8 @@
   // An unsupported draft opens nothing; its rejection is shown as a toast.
   else { let d = null; try { d = C.unpackDraft(localStorage.getItem(draftKey), query); } catch {} if (d && d.recipe) { recipe = d.recipe; step = d.step; tab = d.tab; savedId = d.saved; } else if (d && d.gone) opened = d.gone; }
   const saveDraft = () => { try { localStorage.setItem(draftKey, C.packDraft({recipe, step, tab, saved: savedId})); } catch {} };
+  // Settings closed: reload from the draft to read what changed
+  document.addEventListener('close', e => { if (e.target.id === 'settings-modal') { saveDraft(); location.replace(location.pathname); } }, true);
   let compiled, pendingDirs, dirsSequence = 0;
   const r = () => recipe;
   const store = recipeStore({request: (...a) => nulliusFetch(...a), csrf: schema.csrf, storage: (() => { try { return localStorage; } catch { return {length: 0}; } })()});
@@ -211,28 +205,23 @@
   // Nullius's own mark for the standard; Harbor's for Harbor
   const runnerMark = x => x.standard ? '<span class="brand-mark nb-nullius-mark" aria-hidden="true"></span>'
     : '<svg aria-hidden="true"><use href="/static/brand/marks.svg#harbor"/></svg>';
-  // Two cards: Harbor, and Nullius (the standard) - a benchmark's own scripts run there, as its Original setup.
+  // A card per runner that runs the benchmark, alone when only one does: Harbor, and Nullius (the standard) - a benchmark's own scripts run there, as its Original setup.
   const runnerCard = (x, on, label, summary, mark) => tile({attr: 'runner', key: x.key, on, mark, title: label, tip: summary || ''});
   const runnerStep = rec => {
     const has = C.runnersOf(C.benchKey(rec)), list = C.runners().filter(x => x.builtin && has.includes(x.key));
-    const cards = list.length > 1 ? `<div class="nb-pick-grid">` + list.map(x => runnerCard(x, x.key === rec.harness, x.label, x.summary, runnerMark(x))).join('') + '</div>'
+    const cards = list.length ? `<div class="nb-pick-grid">` + list.map(x => runnerCard(x, x.key === rec.harness, x.label, x.summary, runnerMark(x))).join('') + '</div>'
       : `<label class="nb-field ui-field-row"><span class="ui-field-copy">Runner</span><span class="nb-fixed">${esc((C.runners().find(x => x.key === rec.harness) || {}).label || rec.harness)}</span></label>`;
     return `<div class="nb-sectionhead"><h2>What runs it?</h2></div>` + cards + (rec.harness === 'harbor' ? harborPanel(rec) : '');
   };
-  // Every benchmark of both runners in one list; picking one sets the runner that runs it (Nullius when both do).
+  // the version a standard recipe names (``key@version``), '' for the default
+  const versionOf = rec => C.isStandard(rec) && String(rec.benchmark || '').includes('@') ? String(rec.benchmark).split('@')[1] : '';
+  // Every benchmark of both runners in one list, the Benchmarks page's (placeGrid, /new-run/benchmarks); picking one
+  // sets the runner that runs it (Nullius when both do).
   const benchmarkStep = rec => {
-    const st = C.standard(), sb = C.standardBench(rec), on = C.benchKey(rec), seen = new Set(), tiles = [];
-    const add = (key, title, fam, kind, summary) => { if (seen.has(key)) return; seen.add(key); const c = catOf(key);
-      tiles.push({attr: 'bench', key, on: key === on, title: c.title || title,
-        mark: `<svg aria-hidden="true"><use href="/static/catalogue/marks.svg#bm-${esc(key)}"/></svg>`, cat: c.category, origin: c.origin,
-        fam, famLabel: fam === 'agent' ? 'Agents' : 'Capabilities · ' + kind, tip: c.domain || summary || '', meta: tasksOf(key),
-        find: [c.title || title, key, c.category, c.domain, kind].join(' ')}); };
-    st.benchmarks.forEach(x => add(x.key, x.label, x.family, x.kind, x.summary));
-    C.benchmarks().forEach(x => add(x.key, x.title, 'agent', '', x.domain));
-    tiles.sort((a, b) => a.title.localeCompare(b.title, 'en', {sensitivity: 'base'}));
+    const sb = C.standardBase(rec);
     const versions = C.isStandard(rec) && sb && (sb.versions || []).length > 1
-      ? `<label class="nb-field">Version of ${esc(sb.label)}<select data-std-version>${sb.versions.map(v => `<option value="${esc(v.ref)}" ${v.ref === rec.benchmark || (v.default && rec.benchmark === sb.key) ? 'selected' : ''}>${esc(v.version)}${v.default ? ' (the default)' : ''}</option>`).join('')}</select><small>Each version pins its own upstream, datasets and proofs.</small></label>` : '';
-    return `<div class="nb-sectionhead"><h2>Choose a benchmark.</h2></div>` + picker(tiles, [['agent', 'Agents'], ['capability', 'Capabilities']]) + versions;
+      ? `<label class="nb-field">Version of ${esc(sb.label)}<select data-std-version>${sb.versions.map(v => `<option value="${esc(v.ref)}" ${v.ref === rec.benchmark || (v.default && rec.benchmark === sb.key) ? 'selected' : ''}>${esc(v.label || v.version)}${v.default ? ' (the default)' : ''}</option>`).join('')}</select><small>Each version pins its own upstream, datasets and proofs.</small></label>` : '';
+    return `<div class="nb-sectionhead"><h2>Choose a benchmark.</h2></div><div id="nb-bench-grid"></div>` + versions;
   };
   // Put the recipe on a runner, keeping the one each runner had: the benchmark follows.
   const toRunner = (target, key) => {
@@ -427,8 +416,8 @@
   // ones that have not proved the ports it needs shown greyed, with the reasons - a model and a scope. The server
   // compiles the choices (POST /new-run/runner, nullius/standard/recipe.py).
   // what a unit is: the benchmark's, or a setup's own when only setups run (a conversation, where the paper batches its questions)
-  const unitsOf = rec => { const b = C.standardBench(rec) || {}, own = (b.setups || []).filter(x => C.chosenOf(rec).includes(x.key));
-    return own.length && own.length === C.chosenOf(rec).length ? own[0].units : b.units || {noun: 'unit', nouns: 'units'}; };
+  const unitsOf = rec => { const b = C.standardBench(rec) || {}, runs = C.runsOf(rec), own = (b.setups || []).filter(x => runs.includes(x.key));
+    return own.length && own.length === runs.length ? own[0].units : b.units || {noun: 'unit', nouns: 'units'}; };
   // the first clause of a long description, for a line; the whole goes in its title
   // settings as sub-tabs, one a chosen way of running that has any: [key, label, html]; the open one kept while it is there
   let setTab = '';
@@ -488,9 +477,6 @@
     const web = agentRun && Object.values((b || {}).environments || {}).some(e => e.network);   // an agent's public web proxy
     // a VM benchmark's provider of one value goes on the fixed line; several are its cards (benchOptions)
     const provider = vms && Object.values(b.options || {}).find(o => o.step === 'where' && o.values && o.values.length === 1 && Object.values(o.needs || {}).some(n => n && n.vm));
-    // what a sandbox cannot run (recipe.py): a setup or a check runs on a machine; the computer port's socket is on this one
-    // a benchmark booting VMs of its own runs each unit whole in a VM, with a relay container in each VM (boat_units)
-    const outside = !sandboxes ? [] : selected.filter(o => !vms && (o.setup || o.control || ((b.needs || []).some(p => p.startsWith('agent.computer/')) && b.family === 'agent'))).map(o => o.label);
     let sizes = '';
     if (sandboxes && !here.boat) {
       const offered = boatSizes(rec, b), fit = offered.find(z => !z.why);
@@ -501,8 +487,8 @@
           disabled: !!z.why, why: z.why, note: z.note || z.spec, title: z.label})).join('')}</div>`;
     }
     return '<div class="nb-sectionhead"><h2>Where does it run?</h2></div>'
-      + `<div class="std-machines" role="group" aria-label="Machines">${kind('hosts', 'Hosts')}${kind('boat', 'Sandboxes', here.boat || '')}</div>`
-      + (sandboxes ? `<div class="std-boat-card"><strong>Boat</strong><span>One VM per ${esc(noun)}</span>${here.boatSlots ? `<span class="std-boat-slots">${here.boatSlots} at once on this account</span>` : ''}${here.boat ? `<span class="nb-error">${esc(here.boat)}</span>` : ''}</div>` + sizes
+      + `<div class="std-machines" role="group" aria-label="Machines">${kind('hosts', 'Hosts')}${kind('boat', 'Sandboxes', here.boatKey ? here.boat || '' : '')}</div>`
+      + (sandboxes ? `<div class="std-boat-card${here.boat ? ' off' : ''}"><strong><img class="std-boat-logo on-light-bg" src="/static/brand/boat.svg" alt="" aria-hidden="true"><img class="std-boat-logo on-dark-bg" src="/static/brand/boat-dark.svg" alt="" aria-hidden="true">Boat</strong>${here.boat ? (here.boatKey ? `<span class="nb-error">${esc(here.boat)}</span>` : button('Add API Key', 'data-href="/settings#sandbox-boat-key"', 'nb-inlinebutton std-boat-key')) : ''}</div>` + sizes
         : `<div class="nb-pick-grid nb-where std-hosts">${machine('local', 'This machine', 'Runs here')}${H.map(h => machine(h.entry, h.label, 'Over SSH')).join('')}</div>`
         + (list.some(w => w !== 'local') ? button('Test connection', 'id="nb-test-host"') + ' <span id="nb-hosttest" class="nb-note"></span>' : ''))
       + '<div class="nb-sectionhead std-wherehead"><h3>Isolation</h3></div>'
@@ -514,7 +500,6 @@
             : 'Sandboxed: each unit in a container whose only way out is its relay.', containerWhy) + '</div>')
       + (b ? benchOptions(rec, b, 'where') : '')
       + (agentRun && backend === 'local' ? consentBox(rec) : '')
-      + (outside.length ? `<p class="nb-note nb-error">${esc(outside.join(', '))} cannot run in a Boat VM yet: choose Hosts.</p>` : '')
       + (dockerOnly.length && backend !== 'container' && agentRun ? `<p class="nb-note nb-error">${esc(dockerOnly.join(', '))}: ${dockerOnly.length > 1 ? 'these environments need' : 'this environment needs'} a container - ${sandboxes ? 'in a Boat VM' : 'on local processes'} their units are recorded as not run.</p>` : '')
       + (sandboxes ? '' : hostSetup(rec));
   }
@@ -576,14 +561,19 @@
   // A benchmark's own options (a search, a mode), for the chosen datasets they apply to, and what a value needs of this
   // machine. Those an agent's or capability's run takes ('yours') on the Agent step, with the agents; those only a setup
   // takes (a retriever, a top-k of the paper's pipeline) in that setup's tab, once it is chosen.
-  function benchOptions(rec, b, scope = 'yours') {
+  // A benchmark with agents of its own: its agent option is each one's own choice, and an option whose `when` names
+  // agents is in the tab of each of them (scope 'own', `agent` the one); else the options of `scope`.
+  function benchOptions(rec, b, scope = 'yours', agent = null) {
     const local = ((schema.standardHere || {}).host || {})[b.key] || {};
-    const chosen = C.chosenOf(rec);
+    const chosen = C.runsOf(rec), owned = C.ownAgentsOf(b).length > 0;
+    const given = {...(rec.bench_options || {}), ...(agent ? {agent: agent.agent} : {})};
     return Object.entries(b.options || {}).filter(([, o]) => !o.limit && o.step === (['where', 'dataset'].includes(scope) ? scope : ''))   // a bound of the upstream's own is with the limits
+      .filter(([n, o]) => !owned || (n !== 'agent' && (scope === 'own') === !!(o.when || {}).agent))
       .filter(([, o]) => !o.datasets.length || C.datasetsOf(rec).some(id => o.datasets.includes(id)))
       // one that applies only under another's values (a top-k, only with a retrieval) is left out otherwise
-      .filter(([, o]) => Object.entries(o.when || {}).every(([k, vs]) => vs.includes((rec.bench_options || {})[k] ?? (b.options[k] || {}).default)))
+      .filter(([, o]) => Object.entries(o.when || {}).every(([k, vs]) => vs.includes(given[k] ?? (b.options[k] || {}).default)))
       .filter(([, o]) => {
+        if (scope === 'own') return true;
         const on = o.setups || ['yours'];
         if (o.step) return on.some(s => s === 'yours' ? chosen.some(k => !(b.setups || []).some(x => x.key === k)) : chosen.includes(s));
         const shared = on.includes('yours') && on.includes('original');
@@ -631,45 +621,78 @@
       return `<p class="nb-note nb-error">${state ? `Replace the expired ${what}` : `Add ${provider ? 'a ' : ''}${what}`} in ${settings}${required ? '' : ' (some tasks may need it)'}.</p>`;
     }).join('');
   }
-  // The benchmark step, both ways (Harbor's catalogue, the standard's benchmarks): a search, filter chips and a grid
-  // of tiles, as the Benchmarks page draws them. The filter hides tiles in place (applyPick), so typing keeps focus.
-  const picks = {}, pickOf = () => (picks[step] ||= {q: '', cat: '', fam: ''});   // each step its own search and filters
-  const catOf = key => (schema.benchmarks || []).find(b => b.key === key) || {};
-  const tasksOf = key => { const total = catOf(key).task_count;
-    if (Number.isInteger(total) && total > 0) return `${total.toLocaleString('en-US')} tasks`;
-    const t = schema.datasets.filter(d => d.benchmark === key && d.tasks).map(d => d.tasks);
-    return !t.length ? '' : t.every(n => n === t[0]) && t.length > 1 ? `${t[0]} tasks each` : `${t.reduce((a, n) => a + n, 0)} tasks`; };
-  const pickChip = (attr, v, label, on) => `<button type="button" class="nb-pick-chip" data-${attr}="${esc(v)}" aria-pressed="${on}">${esc(label)}</button>`;
-  // one tile: {attr, key, on, title, mark, cat, origin, line, meta, foot, find, fam, data (more attributes), tip (its title)}
-  const tile = t => `<button class="nb-tile${t.disabled ? ' nb-tile-unfit' : ''}" data-${t.attr}="${esc(t.key)}" aria-pressed="${t.on}"${t.data || ''}${t.disabled ? ` disabled aria-disabled="true" title="${esc(t.why || '')}"` : t.tip ? ` title="${esc(t.tip)}"` : ''} data-cat="${esc(t.cat || '')}" data-fam="${esc(t.fam || '')}" data-find="${esc((t.find || t.title).toLowerCase())}">`
+  // one tile: {attr, key, on, title, mark, line, note, meta, foot, data (more attributes), tip (its title)}
+  const tile = t => `<button class="nb-tile${t.disabled ? ' nb-tile-unfit' : ''}" data-${t.attr}="${esc(t.key)}" aria-pressed="${t.on}"${t.data || ''}${t.disabled ? ` disabled aria-disabled="true" title="${esc(t.why || '')}"` : t.tip ? ` title="${esc(t.tip)}"` : ''}>`
     + `<span class="nb-tile-head">${t.mark ? `<span class="nb-mark">${t.mark}</span>` : ''}<strong>${esc(t.title)}</strong><span class="nb-tile-check" aria-hidden="true">${t.on ? '✓' : ''}</span></span>`
-    + (t.cat || t.origin || t.fam ? `<span class="nb-tile-tags">${t.cat ? `<span class="nb-tile-cat">${esc(t.cat)}</span>` : ''}${t.origin === 'community' ? '<span class="nb-tile-community">Community</span>' : ''}${t.famLabel ? `<span class="nb-tile-fam">${esc(t.famLabel)}</span>` : ''}</span>` : '')
     + (t.line ? `<span class="nb-tile-line">${esc(t.line)}</span>` : '') + (t.note ? `<span class="nb-tile-note">${esc(t.note)}</span>` : '')
     + (t.meta || t.foot ? `<span class="nb-tile-foot">${t.meta ? `<span>${esc(t.meta)}</span>` : ''}${t.foot || ''}</span>` : '') + '</button>';
   // a machine to run on: this one or a host, its connection state filled in by Test connection
   const icon = name => `<svg class="ic" aria-hidden="true"><use href="#i-${name}"/></svg>`;
   const machineTile = (attr, v, t, sub, on) => tile({attr, key: v, on, mark: icon(v === 'local' ? 'machine' : 'network'), title: t, tip: sub,
     foot: v !== 'local' ? `<span class="nb-state nb-hoststate" data-host-state="${esc(v)}"></span>` : ''});
-  const picker = (tiles, fams, noun = 'benchmark') => {
-    const pick = pickOf(), cats = [...new Set(tiles.map(t => t.cat).filter(Boolean))].sort();
-    return `<div class="nb-pick"><div class="nb-pick-bar">`
-      + `<label class="nb-pick-find"><svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg><input type="search" data-pick-find value="${esc(pick.q)}" placeholder="Search ${noun === 'capability' ? 'capabilities' : noun + 's'}" aria-label="Search ${noun === 'capability' ? 'capabilities' : noun + 's'}" autocomplete="off"></label>`
-      + (cats.length > 1 ? `<div class="nb-pick-chips" role="group" aria-label="Category">${pickChip('pick-cat', '', 'All', !pick.cat)}${cats.map(c => pickChip('pick-cat', c, c, pick.cat === c)).join('')}</div>` : '')
-      + (fams ? `<div class="nb-pick-chips" role="group" aria-label="Runs">${pickChip('pick-fam', '', 'Any', !pick.fam)}${fams.map(([v, l]) => pickChip('pick-fam', v, l, pick.fam === v)).join('')}</div>` : '')
-      + `</div><div class="nb-pick-grid">${tiles.map(tile).join('')}</div><p class="nb-pick-none" hidden>No ${noun} matches.</p></div>`;
-  };
-  function applyPick() {
-    const box = root.querySelector('.nb-pick'), pick = pickOf(); if (!box) return;
-    const words = pick.q.toLowerCase().split(/\s+/).filter(Boolean);
-    let shown = 0;
-    box.querySelectorAll('.nb-tile').forEach(t => {
-      const on = t.getAttribute('aria-pressed') === 'true';
-      const fits = (!pick.cat || t.dataset.cat === pick.cat) && (!pick.fam || t.dataset.fam === pick.fam) && words.every(w => t.dataset.find.includes(w));
-      t.hidden = !fits && !on; if (!t.hidden) shown++;
+  // The grids drawn by the server and run by the card toolkit (tables.js): the Benchmark step's (/new-run/benchmarks,
+  // one choice) and the standard's Agent step's for its benchmark (/new-run/agents, from the Agents page's entries).
+  // Each is kept while what it draws is the same, so a search or a filter survives each render, and its cards are
+  // pressed as the recipe chooses (nullius-pick changes the recipe). Its view, cards or a table, is the viewer's:
+  // the toggle switches it in place, never leaving the page.
+  const grids = [
+    {slot: 'nb-bench-grid', store: 'nb-bench-view', url: () => '/new-run/benchmarks?', chosen: rec => [C.benchKey(rec)], after: benchTasks},
+    {slot: 'nb-agent-grid', store: 'nb-agent-view', url: rec => '/new-run/agents?' + new URLSearchParams({benchmark: rec.benchmark}) + '&', chosen: rec => C.chosenOf(rec)},
+  ];
+  grids.forEach(g => { g.view = 'cards'; g.ref = ''; g.node = null; try { g.view = localStorage.getItem(g.store) === 'table' ? 'table' : 'cards'; } catch {} });
+  const placeGrids = () => grids.forEach(placeGrid);
+  function placeGrid(g) {
+    const slot = $('#' + g.slot), rec = r();
+    if (!slot) return;
+    const ref = g.url(rec) + (g.view === 'table' ? 'view=table' : '');
+    if (g.ref !== ref) { g.ref = ref; g.node = null; loadGrid(g, ref); }
+    if (!g.node) { slot.setAttribute('aria-busy', 'true'); slot.innerHTML = '<div class="page-skeleton" aria-hidden="true">' + '<div class="skel skel-block"></div>'.repeat(3) + '</div>'; return; }
+    slot.replaceWith(g.node);
+    const chosen = g.chosen(rec);
+    g.node.querySelectorAll('[data-pick]').forEach(b => {   // a card's toggle, or a row's box
+      const on = !b.disabled && chosen.includes(b.dataset.pick);
+      if (b.type === 'checkbox' || b.type === 'radio') b.checked = on; else b.setAttribute('aria-pressed', String(on));
     });
-    box.querySelectorAll('[data-pick-cat]').forEach(b => b.setAttribute('aria-pressed', b.dataset.pickCat === pick.cat));
-    box.querySelectorAll('[data-pick-fam]').forEach(b => b.setAttribute('aria-pressed', b.dataset.pickFam === pick.fam));
-    box.querySelector('.nb-pick-none').hidden = shown > 0;
+    // a choice made elsewhere (a recipe loaded) that the filters hide: the toolkit draws again, and it shows
+    if (g.node.dataset.wired && [...g.node.querySelectorAll('[data-pick]')].some(b => b.matches('[aria-pressed="true"], :checked') && b.closest('[data-card], tr').hidden))
+      g.node.querySelector('[data-search]')?.dispatchEvent(new Event('input'));
+    g.after?.();
+    if (!g.node.dataset.wired) {
+      g.node.dataset.wired = '1';
+      const cards = g.node.querySelector('[data-cards]'), table = g.node.querySelector('table[data-table]');
+      if (cards) NulliusTable.cards(cards);
+      if (table) { NulliusTable.sticky(table); NulliusTable.wire(table); }
+      g.node.querySelectorAll('.seg-toggle a').forEach(a => a.addEventListener('click', e => {
+        e.preventDefault();
+        g.view = new URL(a.href).searchParams.get('view') === 'table' ? 'table' : 'cards';
+        try { localStorage.setItem(g.store, g.view); } catch {}
+        placeGrid(g);
+      }));
+    }
+  }
+  // the Tasks of a benchmark with versions (its data-tasks, {version: {text, label}}, the default's under ''): the
+  // chosen benchmark's as the version the recipe names reads, any other's its default's
+  function benchTasks() {
+    const rec = r(), on = C.benchKey(rec), v = versionOf(rec);
+    root.querySelectorAll('#nb-bench-grid [data-tasks]').forEach(el => {
+      const by = JSON.parse(el.dataset.tasks), t = by[el.querySelector('[data-pick]')?.dataset.pick === on && by[v] ? v : ''];
+      const dd = el.querySelector('.bench-stats dd'), dt = el.querySelector('.bench-stats dt'), td = el.querySelector('td[data-col="tasks"] > span');
+      if (dd) { dd.textContent = t.text; dt.textContent = t.label; }
+      if (td) td.textContent = t.text;
+    });
+  }
+  async function loadGrid(g, ref) {
+    const res = await nulliusFetch(ref).catch(() => null);
+    const html = res && res.ok ? await res.text().catch(() => null) : null;
+    if (g.ref !== ref) return;   // another benchmark or view was chosen while it loaded
+    if (html === null) {         // said once; the next render asks again
+      g.ref = '';
+      const slot = $('#' + g.slot);
+      if (slot) { slot.removeAttribute('aria-busy'); slot.innerHTML = '<p class="nb-note nb-error">Could not load the list. Change step and come back to try again.</p>'; }
+      return;
+    }
+    g.node = Object.assign(document.createElement('div'), {id: g.slot, innerHTML: html});
+    placeGrid(g);
   }
   function modelChoiceCards(rec) {
     const hasPaper = C.paperOffered(rec), on = rec.model_choice || 'any';
@@ -727,22 +750,11 @@
         + b.datasets.filter(x => C.datasetsOf(rec).includes(x.id)).map(x => taskSetChoice(rec, b, x, u) + startChoice(rec, b, x, u)).join('')
         + benchOptions(rec, b, 'dataset') + credentialWarnings(b, b.datasets.filter(x => C.datasetsOf(rec).includes(x.id)));
     if (step === S.agent) {
-      const agent = b.family === 'agent', all = C.standardOthers(rec), others = all.filter(o => !o.control && !o.setup);
-      const setups = all.filter(o => o.setup), controls = all.filter(o => o.control);
+      const agent = b.family === 'agent', all = C.standardOthers(rec), others = all.filter(o => !o.control && (!o.setup || o.own));
+      const setups = all.filter(o => o.setup && !o.own), controls = all.filter(o => o.control);
       const ds = b.datasets.find(x => C.datasetsOf(rec).includes(x.id)) || b.datasets[0];
-      // an agent or a capability as a tile: its name, a skill it failed or a fidelity that differs as a tick; one that has not
-      // proved a port the benchmark needs greyed, the ports it lacks named (the reasons whole in its title)
-      const tileOf = o => {
-        const ok = !o.why.length, lacks = b.needs.filter(p => !o.proven[p]);
-        const skills = b.needs.flatMap(p => o.proven[p] ? o.proven[p].skills || [] : []).filter(s => !s.shown).map(s => `<span class="nb-tick no" title="${esc(s.says)}">${esc(s.id)} ✗</span>`).join('');
-        const fid = o.fidelity && o.fidelity.verdict !== 'same' ? `<span class="nb-tick ${o.fidelity.verdict === 'same' ? 'ok' : 'no'}" title="ACP ${o.fidelity.verdict === 'same' ? 'gives its model the same requests as its own CLI' : 'differs from its own CLI: ' + esc(o.fidelity.verdict)}">ACP ${o.fidelity.verdict === 'same' ? '= CLI ✓' : '≠ CLI'}</span>` : '';
-        const older = b.needs.some(p => o.proven[p] && o.proven[p].older) ? '<span class="nb-tick no" title="proven on an older kit: worth running again">older kit</span>' : '';
-        return {attr: 'std-other', key: o.key, on: ok && C.chosenOf(rec).includes(o.key), disabled: !ok, why: o.why.join('; '), title: o.label + (o.version && !o.label.includes(o.version) ? ' ' + o.version : ''),
-          mark: agent ? agentMark(o.key, o.label) : esc(o.label[0]), cat: o.protocol, fam: ok ? 'fit' : 'unfit', tip: o.summary, note: ok ? '' : 'Lacks ' + (lacks.map(p => p.replace(/^[^.]+\./, '').replace(/\/v\d+$/, '').replace(/[-_]/g, ' ')).join(', ') || 'a port it needs'),
-          foot: fid + skills + older, find: [o.label, o.key, o.version, o.protocol, o.summary].join(' ')};
-      };
       // each chosen agent's options, at its vendor's default unless changed: {ref: {name: word}}
-      const chosen = others.filter(o => C.chosenOf(rec).includes(o.key) && !o.why.length);
+      const chosen = others.filter(o => C.chosenOf(rec).includes(o.key) && !o.why.length), mine = chosen.filter(o => !o.own);
       const optionsOf = o => { const mine = (rec.options || {})[o.key] || {}, opts = Object.entries(o.options || {});
         return !opts.length ? '' : `<div class="std-options">` + opts.map(([n, x]) => {
           const cur = mine[n] ?? x.default;
@@ -752,23 +764,20 @@
         }).join('') + '</div>'; };
       // the chosen ones' settings, one tab each: the benchmark's own way, the benchmark's settings every agent takes, each one's own
       const yoursWord = agent ? 'agent' : (b.kind || 'capability');
-      // the benchmark's own way of running it (its reference, as published) is one more choice beside yours
-      const setupTile = o => ({attr: 'std-other', key: o.key, on: C.chosenOf(rec).includes(o.key), mark: o.key === 'original' ? '◆' : '◇',
-        title: o.reference_agent || (agent ? 'No agent · Original' : 'Original ' + (b.kind || 'capability')), cat: 'reference', fam: 'fit', tip: o.summary, find: [b.label, o.label, 'reference'].join(' ')});
       const ds2 = ds;
       const controlTile = o => { const c = ((ds2 || {}).controls || []).find(x => x.key === o.key) || {...o, from: o.summary};
         return tile({attr: 'std-other', key: o.key, on: C.chosenOf(rec).includes(o.key), mark: o.key === 'nop' ? '∅' : '≡', title: o.label,
           tip: o.summary + (b.judged ? ' The judge still runs.' : ''), foot: controlChip(c)}); };
       const setupsNamed = ls => ls.filter(l => !ls.some(m => m !== l && l.startsWith(m))).join(' and ');
-      const onSetups = setups.filter(o => C.chosenOf(rec).includes(o.key));
+      const onSetups = setups.filter(o => C.chosenOf(rec).includes(o.key)).concat(chosen.some(o => o.own) ? [{label: 'Original'}] : []);
       return `<div class="nb-sectionhead"><h2>Who runs it?</h2></div>`
-        + picker([...setups.map(setupTile), ...others.map(tileOf)], [['fit', 'Can run it'], ['unfit', 'Cannot']], agent ? 'agent' : 'capability')
+        + '<div id="nb-agent-grid"></div>'
         + (others.length || setups.length ? '' : note('None yet', 'Bring one in with the /import-standard skill, or by hand: docs/standard.md.'))
         + settingsTabs([
             ...(chosen.length || onSetups.length ? [['shared', 'Every ' + yoursWord, benchOptions(rec, b, 'shared')]] : []),
             ...(onSetups.length ? [['setup', b.label + ' · ' + setupsNamed(onSetups.map(o => o.label)), benchOptions(rec, b, 'setup')]] : []),
-            ...(chosen.length ? [['yours', agent ? 'Selected agents' : 'Selected capabilities', benchOptions(rec, b)]] : []),
-            ...chosen.map(o => [o.key, o.label, optionsOf(o)])])
+            ...(mine.length ? [['yours', agent ? 'Selected agents' : 'Selected capabilities', benchOptions(rec, b)]] : []),
+            ...chosen.map(o => [o.key, o.label, o.own ? benchOptions(rec, b, 'own', o) : optionsOf(o)])])
         + (controls.length ? `<div class="nb-sectionhead std-controlshead std-sethead"><h3>Checks</h3></div><div class="nb-pick-grid">${controls.map(controlTile).join('')}</div>` : '')
         ;
     }
@@ -817,8 +826,10 @@
   // of the benchmark's name after the run's scope and its time limits: those the chosen datasets and participants
   // take, each empty at its default, shown greyed - an agent's own under ``by`` (OSWorld's agents' steps).
   function benchLimits(rec, b) {
-    const chosen = C.chosenOf(rec), yours = chosen.some(k => !['original', 'model'].includes(k) && !(b.controls || []).some(x => x.key === k));
-    const given = rec.bench_options || {}, of = k => given[k] ?? (b.options[k] || {}).default;
+    const chosen = C.runsOf(rec), yours = chosen.some(k => !['original', 'model'].includes(k) && !(b.controls || []).some(x => x.key === k));
+    // a default by agent: the chosen own agents' one when they share it
+    const own = [...new Set(C.ownChosen(rec).map(a => a.agent))], given = rec.bench_options || {};
+    const of = k => k === 'agent' && own.length ? (own.length === 1 ? own[0] : '') : given[k] ?? (b.options[k] || {}).default;
     const rows = Object.entries(b.options || {}).filter(([, o]) => o.limit).sort(([, x], [, y]) => x.label.localeCompare(y.label))
       .filter(([, o]) => !o.datasets.length || C.datasetsOf(rec).some(id => o.datasets.includes(id)))
       .filter(([, o]) => (o.setups || ['yours']).some(s => s === 'yours' ? yours : chosen.includes(s)))
@@ -839,7 +850,7 @@
   function agentDefault(rec, b) {
     const d = b.timeouts || {}, m = s => String(+(s / 60).toFixed(2)), benchwide = (d.catalogue || []).includes('agent');
     const ofOne = k => { const s = (b.setups || []).find(x => x.key === k); return s && s.turn_seconds ? [s.turn_seconds, true] : [d.agent, benchwide]; };
-    const each = C.chosenOf(rec).filter(k => !(b.controls || []).some(x => x.key === k)).map(ofOne);
+    const each = C.runsOf(rec).filter(k => !(b.controls || []).some(x => x.key === k)).map(ofOne);
     const all = each.length ? each : [[d.agent, benchwide]];
     if (all.some(x => x[0] !== all[0][0])) return ['per setup', true];
     return [m(all[0][0]), all[0][1]];
@@ -851,7 +862,7 @@
     // each field shows, greyed, the value used while it is empty; a task that declares its own keeps it
     const m = s => String(+(s / 60).toFixed(2));
     // [placeholder, declared]: the benchmark's or the agent's own reads as a value, Nullius's default stays grey
-    const setupSeconds = C.chosenOf(rec).map(k => !['original', 'model'].includes(k) && !(b.controls || []).some(x => x.key === k) && b.family === 'agent' ? (d.setup_agent || d.setup) : d.setup);
+    const setupSeconds = C.runsOf(rec).map(k => !['original', 'model'].includes(k) && !(b.controls || []).some(x => x.key === k) && b.family === 'agent' ? (d.setup_agent || d.setup) : d.setup);
     const setup = setupSeconds.length && setupSeconds.some(s => s !== setupSeconds[0]) ? ['per setup', true]
       : [m(setupSeconds[0] || d.setup), (setupSeconds[0] || d.setup) !== d.setup];
     const def = {setup, image: [m(d.image), false], agent: agentDefault(rec, b), verify: ['per task', true], score: [m(d.score), (d.catalogue || []).includes('score')]};
@@ -967,7 +978,7 @@
       const rows=own?[...((runnerOut&&runnerOut.review)||[]),...(C.isStandard(rec)?[]:[[S.where,'Where',C.whereLabel(rec)]])]:C.review(rec);
       html='<div class="nb-sectionhead"><h2>Review the experiment.</h2></div>'+rows.map(([i,t,v])=>`<div class="nb-reviewrow"><div><small>${t}</small><strong>${esc(v)}</strong></div>${button('Edit',`data-step="${i}"`)}</div>`).join('')+'<div id="nb-errors" class="nb-errorlist" hidden></div><div id="nb-reviewnotes"></div>'+(schema.local?'<section id="nb-prereq" class="nb-prereq" aria-live="polite"></section>':'')+runPanel();
     }
-    $('#nb-form').innerHTML=html+'<p id="nb-localerrors" class="nb-error" role="status"></p>';applyPick();
+    $('#nb-form').innerHTML=html+'<p id="nb-localerrors" class="nb-error" role="status"></p>';placeGrids();
     if(step===REVIEW&&schema.local){drawPrereq();checkPrereq();}
     $('#nb-back').hidden=step===S.benchmark;
     $('#nb-next').textContent=step===REVIEW?'Export recipe JSON':stepName(steps[nextShown(step,1)],nextShown(step,1))+' →';
@@ -980,7 +991,7 @@
       const out=runnerOut||{errors:[],notes:[]};
       compiled={errors:out.errors||[],notes:out.notes||[]};
     }else{compiled=C.compile(rec);}
-    $('#nb-localerrors').textContent=compiled.errors.filter(e=>e.step===step).map(e=>e.message).join(' ');
+    $('#nb-localerrors').textContent=compiled.errors.filter(e=>e.step===step&&!e.shown).map(e=>e.message).join(' ');
     const errors=$('#nb-errors');
     if(errors){
       errors.hidden=!compiled.errors.length;
@@ -998,14 +1009,20 @@
     return i===S.agent&&b?(b.family==='agent'?'Agent':(b.kind||'capability').replace(/^./,c=>c.toUpperCase())):t;}
   // Next and Back skip a step no recipe shows (Setup, its number kept for saved drafts)
   const nextShown=(i,dir)=>{let j=i+dir;while(j>S.benchmark&&j<REVIEW&&!C.stepShown(r(),j))j+=dir;return Math.max(S.benchmark,Math.min(REVIEW,j));};
-  function render(focus=false) {
+  // draw again where the reader is: every scrolled box the builder sits in keeps its offset (a pick redraws the step)
+  function inPlace(draw){
+    const boxes=[];for(let e=root;e;e=e.parentElement)if(e.scrollTop)boxes.push([e,e.scrollTop]);
+    const page=document.scrollingElement,y=page?page.scrollTop:0;
+    draw();boxes.forEach(([e,t])=>{e.scrollTop=t;});if(page)page.scrollTop=y;
+  }
+  function render(focus=false,form=true) {
     const nav=$('.nb-steps');
     if(!nav.querySelector('.nb-stepbar'))nav.innerHTML='<span class="nb-stepbar" aria-hidden="true"></span>';
     nav.querySelectorAll('.nb-step').forEach(b=>b.remove());
     if(!C.stepShown(r(),step))step=nextShown(step,step>S.setup?-1:1);
     const shown=steps.map((t,i)=>i).filter(i=>C.stepShown(r(),i));
     nav.insertAdjacentHTML('afterbegin',shown.map((i,n)=>button(`<em>0${n+1}</em>${stepName(steps[i],i)}`,`data-step="${i}" aria-pressed="${step===i}"`,'nb-step')).join(''));
-    renderForm();refreshPlan();moveUnderline();saveDraft();harborFollow();
+    if(form)renderForm();refreshPlan();moveUnderline();saveDraft();harborFollow();
     if(focus){const heading=$('#nb-form h2');if(heading){heading.tabIndex=-1;heading.focus({preventScroll:true});heading.scrollIntoView({block:'nearest'});}}
   }
   async function loadSaved(){try{saved=await store.list();}catch(e){status('Saved recipes cannot be read: '+e.message);}if($('#nb-saved').open)renderSaved();}
@@ -1123,10 +1140,8 @@
     if(d.hostreqCheck!==undefined){hostReq(d.hostreqCheck,'check',d.hostreqName);return;}
     if(d.hostreqInstall!==undefined){hostReq(d.hostreqInstall,'install',d.hostreqName);return;}
     if(d.copyCode!==undefined){const t=b.closest('.std-code').querySelector('code').textContent;try{await navigator.clipboard.writeText(t);b.textContent='Copied';}catch{b.textContent='Select it';}setTimeout(()=>{b.textContent='Copy';},1500);return;}
-    if(d.pickCat!==undefined){pickOf().cat=d.pickCat;applyPick();return;}
-    if(d.pickFam!==undefined){pickOf().fam=d.pickFam;applyPick();return;}
     if(d.agent){const on=r().agents.includes(d.agent);r().agents=on?r().agents.filter(id=>id!==d.agent):[...r().agents,d.agent];renderForm();refreshPlan();return;}
-    else if(d.href){location.href=d.href;return;}
+    else if(d.href){if(!window.nulliusOpenSettings?.(d.href,b))location.href=d.href;return;}
     else if(b.id==='nb-add-custom-agent'){r().customAgents.push('');r().agents.push('custom-'+(r().customAgents.length-1));renderForm();refreshPlan();root.querySelector('[data-custom-agent="'+(r().customAgents.length-1)+'"]')?.focus();return;}
     else if(d.removeCustomAgent!==undefined){const i=Number(d.removeCustomAgent),rec=r(),kept=rec.agents.filter(id=>id.startsWith('custom-')&&id!=='custom-'+i).map(id=>Number(id.slice(7)));rec.customAgents.splice(i,1);rec.agents=rec.agents.filter(id=>!id.startsWith('custom-')).concat(kept.map(k=>'custom-'+(k>i?k-1:k)));renderForm();refreshPlan();return;}
     // The Harbor panel (Runner step): a release or a repository, a ref of it, installed and asked for its agents.
@@ -1135,12 +1150,11 @@
     else if(d.harborScan!==undefined){askScan(true);return;}
     else if(d.harborRefsFresh!==undefined){loadRefs(C.harborRepoUrl(r().harbor.repo),true);return;}
     else if(d.runner){toRunner(d.runner,C.benchKey(r()));}
-    else if(d.bench){toRunner(C.runnerFor(r(),d.bench),d.bench);}
     else if(d.stdBench){C.setStandardBenchmark(r(),d.stdBench);}
+    else if(d.stdOther){const rec=r(),c=C.chosenOf(rec);rec.others=c.includes(d.stdOther)?c.filter(k=>k!==d.stdOther):[...c,d.stdOther];delete rec.other;if(rec.options)delete rec.options[d.stdOther];}   // a check
     else if(d.stdDataset){const rec=r(),c=C.datasetsOf(rec);rec.datasets=c.includes(d.stdDataset)?(c.length>1?c.filter(k=>k!==d.stdDataset):c):[...c,d.stdDataset];delete rec.dataset;C.keepTaskSets(rec);C.keepStartWith(rec);}
     else if(d.stdTaskset!==undefined){C.setTaskSet(r(),d.of,d.stdTaskset);}
     else if(d.stdStart!==undefined){C.setStartWith(r(),d.of,d.stdStart);}
-    else if(d.stdOther){const rec=r(),c=C.chosenOf(rec);rec.others=c.includes(d.stdOther)?c.filter(k=>k!==d.stdOther):[...c,d.stdOther];delete rec.other;if(rec.options)delete rec.options[d.stdOther];}
     // the standard's machines: each a toggle, one at least; several split the run into shards
     else if(d.stdWhere){const rec=r(),list=C.whereList(rec),on=list.includes(d.stdWhere),next=on?list.filter(w=>w!==d.stdWhere):[...list,d.stdWhere];if(!next.length)return;rec.where=next.length>1?next:next[0];}
     // hosts or Boat sandboxes: a sandbox run starts from this machine alone
@@ -1178,10 +1192,12 @@
     else return;
     render(d.step!==undefined||['nb-next','nb-back'].includes(b.id));
   });
+  // a benchmark chosen on the Benchmark step's grid, or an agent, a capability or the setup picked or let go on the
+  // Agent step's; the page stays where it is and the focus on its card
+  root.addEventListener('nullius-pick',event=>{const k=event.detail.value;if(event.target.closest('#nb-bench-grid')){toRunner(C.runnerFor(r(),k),k);}else{const rec=r(),c=C.chosenOf(rec);rec.others=c.includes(k)?c.filter(x=>x!==k):[...c,k];delete rec.other;if(rec.options)delete rec.options[k];}inPlace(()=>render());event.target.focus({preventScroll:true});});
   root.addEventListener('input',event=>{
     const el=event.target,d=el.dataset,rec=r();
     if(el.id==='nb-recipe-title'){updateSavePreview();return;}
-    if(d.pickFind!==undefined){pickOf().q=el.value;applyPick();return;}
     if(d.servedBy!==undefined)return;   // what is typed in a Served by filters its menu: a pick, or Enter, adds it (nb-pick)
     if(d.providerModel && rec.modelFormat !== 'provider-id'){for(const key of ['model','userModel','evalModel'])if(typeof rec[key]==='string')rec[key]=C.bareModel(rec[key]);rec.modelFormat='provider-id';}
     if(d.field){const p=d.field.startsWith('param:')?C.parameters().find(p=>p.key===d.field.slice(6)):null;
@@ -1218,7 +1234,8 @@
     const el=event.target,d=el.dataset;
     if(d.custom?.endsWith(':type')){$('#nb-parameters').innerHTML=customRows(!['common','extra'].includes(tab)?tab:'');}
     else if(d.stdUnsandboxed!==undefined){r().unsandboxed=el.checked;refreshPlan();}
-    else if(d.stdVersion!==undefined){C.setStandardBenchmark(r(),el.value);render();}
+    else if(d.stdVersion!==undefined){   // in place: only the card's count changes on this step, so nothing else is drawn again
+      C.setStandardBenchmark(r(),el.value);benchTasks();render(false,false);}
     else if(d.stdTasksetSelect!==undefined){C.setTaskSet(r(),d.stdTasksetSelect,el.value);renderForm();refreshPlan();}
     else if(d.stdStartSelect!==undefined){C.setStartWith(r(),d.stdStartSelect,el.value);renderForm();refreshPlan();}
     // an option at its default is left out: the recipe names only what was changed. A select's value can show or hide

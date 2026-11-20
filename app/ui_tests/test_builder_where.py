@@ -22,7 +22,7 @@ class StandardWhere(CompilerCase):
                                                            "boatSizes": self.SIZES, "boatSlots": slots})
         program = ("const schema=" + json.dumps(schema) + ";const C=require(" + json.dumps(str(APP / "static/builder/command-builder-core.js")) + ")(schema);\n"
                    + line("esc") + line("button") + cut("  const unitsOf = ", "  // the first clause") + line("words")
-                   + cut("  const tile = t =>", "  const picker = ")
+                   + cut("  const tile = t =>", "  // The grids drawn by the server")
                    + cut("  const consentBox = ", "  async function hostReq(") + cut("  function benchOptions(", "  // Only credentials")
                    + "const out={};for(const b of C.standard().benchmarks)for(const backend of " + json.dumps(list(backends)) + "){"
                    + "const r=C.createStandard(b.key);r.backend=backend;" + edit
@@ -39,7 +39,7 @@ class StandardWhere(CompilerCase):
                 self.assertIn('aria-pressed="true"', card(html, "boat"))
                 self.assertIn('aria-pressed="false"', card(html, "hosts"))
                 self.assertIn(">Sandboxes</button>", html)
-                self.assertIn("2 at once on this account", html)                     # the account's VMs at once, from its API
+                self.assertNotIn("at once", html)
                 self.assertNotIn("data-std-where", html)                       # no host to add to a sandbox run
                 self.assertNotIn("data-std-backend", html)                     # nothing to choose: the VM is the sandbox
                 self.assertNotIn("not sandboxed", html.lower())
@@ -54,11 +54,18 @@ class StandardWhere(CompilerCase):
         self.assertIn("The agent alone in each problem's VM", ordinary)
         self.assertIn("Answers and keys stay on this machine", ordinary)
         self.assertIn('class="std-boat-card"', ordinary)
+        self.assertIn('class="std-boat-card off"', self.draw(None, backends=("boat",), boat="no Boat API key")["gsm8k boat"])
+        self.assertIn('src="/static/brand/boat.svg"', ordinary)
+        self.assertIn('src="/static/brand/boat-dark.svg"', ordinary)
         self.assertNotIn("shards, merged", ordinary)
-        self.assertNotIn("at once", self.draw(None, backends=("boat",), slots=None)["gsm8k boat"])   # the API said nothing: no number
         gone = self.draw(None, backends=("boat",), boat="no Boat API key: set it in Settings → Sandbox")["gsm8k boat"]
-        self.assertIn('disabled aria-disabled="true" title="no Boat API key: set it in Settings → Sandbox"', card(gone, "boat"))
+        self.assertNotIn("disabled", card(gone, "boat"))
         self.assertNotIn("data-std-boat-size", gone)
+        self.assertIn('class="nb-inlinebutton std-boat-key" data-href="/settings#sandbox-boat-key">Add API Key</button>', gone)
+        missing = self.draw(None, "schema.standardHere.boatKey=true;", backends=("boat",), boat="missing on this machine: ssh")["gsm8k boat"]
+        self.assertIn('<span class="nb-error">missing on this machine: ssh</span>', missing)
+        self.assertNotIn("std-boat-key", missing)
+        self.assertIn('disabled aria-disabled="true" title="missing on this machine: ssh"', card(missing, "boat"))
 
     def test_a_benchmark_booting_its_own_vms_asks_no_isolation_and_refuses_a_size_too_small_for_its_vm(self):
         for key in ("osworld1", "osworld2"):
@@ -136,7 +143,7 @@ class StandardWhere(CompilerCase):
         line = lambda name: re.search(r"^  const %s = .*$" % name, page, re.M).group(0) + "\n"
         schema = dict(self.schema, hosts=[], standardHere={"docker": None, "licences": {}, "host": {"osworld2": {"docker": ["missing"]}}})
         program = ("const schema=" + json.dumps(schema) + ";const C=require(" + json.dumps(str(APP / "static/builder/command-builder-core.js")) + ")(schema);\n"
-                   + line("esc") + line("button") + cut("  const tile = t =>", "  const picker = ") + cut("  function benchOptions(", "  // Only credentials")
+                   + line("esc") + line("button") + cut("  const tile = t =>", "  // The grids drawn by the server") + cut("  function benchOptions(", "  // Only credentials")
                    + "const out={};for(const k of ['osworld2','gsm8k']){const r=C.createStandard(k);out[k]=benchOptions(r,C.standardBench(r),'shared')+benchOptions(r,C.standardBench(r),'setup')+benchOptions(r,C.standardBench(r));}"
                    + "const r=C.createStandard('osworld2'),b=C.standardBench(r);r.datasets=['offline36'];out.offline=benchOptions(r,b,'dataset');r.datasets=['test_v2'];out.all=benchOptions(r,b,'dataset');"
                    + "process.stdout.write(JSON.stringify(out));")
@@ -144,6 +151,23 @@ class StandardWhere(CompilerCase):
         self.assertIn('title="Disk write limit for each VM. e.g. 16"', html["osworld2"])
         self.assertIn('placeholder="Provider default"', html["gsm8k"])
         self.assertEqual(("Website host suffix" in html["offline"], "Website host suffix" in html["all"]), (False, True))
+
+    def test_an_own_agents_settings_are_in_its_tab_and_the_agent_is_no_option(self):
+        page = (APP / "static/builder/command-builder.js").read_text(encoding="utf-8")
+        cut = lambda start, end: page[page.index(start):page.index(end, page.index(start))]
+        line = lambda name: re.search(r"^  const %s = .*$" % name, page, re.M).group(0) + "\n"
+        schema = dict(self.schema, hosts=[], standardHere={"docker": None, "licences": {}, "host": {}})
+        program = ("const schema=" + json.dumps(schema) + ";const C=require(" + json.dumps(str(APP / "static/builder/command-builder-core.js")) + ")(schema);\n"
+                   + line("esc") + line("button") + cut("  const tile = t =>", "  // The grids drawn by the server") + cut("  function benchOptions(", "  // Only credentials")
+                   + "const r=C.createStandard('osworld1'),b=C.standardBench(r);r.others=['osworld1:m3','osworld1:claude'];"
+                   + "const own=k=>benchOptions(r,b,'own',C.ownAgentsOf(b).find(a=>a.key===k));"
+                   + "process.stdout.write(JSON.stringify({m3:own('osworld1:m3'),claude:own('osworld1:claude'),"
+                   + "rest:['shared','setup','yours','where'].map(s=>benchOptions(r,b,s)).join('')}));")
+        html = json.loads(subprocess.run([self.node, "-"], input=program, check=True, capture_output=True, text=True).stdout)
+        self.assertIn('data-bench-opt="thinking"', html["m3"])
+        self.assertEqual(html["claude"], "")
+        self.assertNotIn("thinking", html["rest"])
+        self.assertNotIn('"agent"', html["rest"])                                  # no agent select: the agents are tiles
 
 
 if __name__ == "__main__":
