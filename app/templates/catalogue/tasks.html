@@ -53,8 +53,6 @@
     <div><span>In commands</span><b class="mono">{{ entry.name }}</b></div>
     {% if rev.note %}<div><span>Note</span><b class="tasks-note">{{ rev.note }}</b></div>{% endif %}
   </div>
-  {% elif version_label %}
-  <div class="bench-facts tasks-facts"><div><span>Version</span><b>{{ version_label }}</b></div></div>
   {% endif %}
 
   <p class="bench-blocked tasks-state" id="tasks-state" role="status" hidden></p>

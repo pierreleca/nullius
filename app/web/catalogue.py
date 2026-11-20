@@ -183,11 +183,9 @@ def benchmark_tasks(key, dataset):
         if entry is not None and entry.get("version") and not version and standard_definitions.get("benchmark", f"{key}@{entry['version']}"):
             version = entry["version"]            # its tasks as listed at the version it was made at
     bench, ds = _std_dataset(key, dataset, version)
-    versioned = standard_definitions.version_of(bench) is not None
     return render_template("catalogue/tasks.html", bench=bench, title=standard_definitions.title(bench),
                            ds=ds, entry=entry, rev=sets.latest(entry) if entry else None, problem=problem,
                            label=sets.label_of(entry) if entry else "", version=standard_definitions.version_of(bench) or "",
-                           version_label=sets.version_label(bench, bench["_version"]) if versioned else "",
                            made_at=sets.version_label(bench, entry["version"]) if entry and entry.get("version") else "",
                            broken=broken, nouns=(bench.get("units") or {}).get("nouns", "units"),
                            noun=(bench.get("units") or {}).get("noun", "unit"), csrf=shared._csrf_token(),
