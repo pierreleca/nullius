@@ -330,7 +330,10 @@ class Definition(unittest.TestCase):
                 self.assertIn(said, definitions.problems(dict(bench, driver=dict(HEAVY, list_command=words)), "benchmark"))
         with open(os.path.join(OSWORLD1, "standard.json"), encoding="utf-8") as f:
             osworld1 = json.load(f)
-        self.assertEqual(definitions.problems(osworld1, "benchmark"), [])
+        # its agent option is filled from its agents.json on loading: each version is checked as the loader reads it
+        for ref in ("osworld1", "osworld1@044bc33"):
+            with self.subTest(ref=ref):
+                self.assertEqual(definitions.problems(definitions.get("benchmark", ref, root=definitions.CATALOGUE), "benchmark"), [])
         self.assertEqual(osworld1["driver"]["list_command"][1:], osworld1["driver"]["command"][1:])
         for v, block in osworld1["versions"].items():        # a version's driver replaces the shared one whole
             driver = block.get("driver") or osworld1["driver"]
