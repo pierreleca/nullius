@@ -291,6 +291,14 @@ class Saving(Case):
         self.assertIn("Revision 1 is read only.", visible(html))
         self.assertNotIn('id="tasks-revise"', html)
 
+    def test_a_new_selection_says_to_tick_then_save_and_a_set_opened_does_not(self):
+        how = "Tick the tasks to keep, then save them as a task set."
+        self.assertIn(how, visible(self.get("/benchmarks/described/tasks/all").get_data(as_text=True)))
+        self.save({"name": "dev", "units": ["t001"]})
+        self.assertNotIn(how, visible(self.get("/benchmarks/described/tasks/all?set=dev").get_data(as_text=True)))
+        r = self.client.get("/benchmarks/described/tasks/all", headers={"X-Forwarded-For": "192.0.2.4"}); self.addCleanup(r.close)
+        self.assertNotIn(how, visible(r.get_data(as_text=True)))
+
     def test_saving_needs_the_form_token_and_a_tick(self):
         r = self.client.post("/benchmarks/described/tasks/all/save", data=json.dumps({"name": "x", "units": ["t001"]}),
                              content_type="application/json"); self.addCleanup(r.close)
@@ -445,6 +453,19 @@ class TheBenchmarksSection(Case):
         for d in osw["datasets"]:
             self.assertIn(f'href="/benchmarks/osworld1/tasks/{d["id"]}"', part)
         self.assertNotIn("<table", part)
+
+    def test_new_task_set_in_the_sections_head_opens_the_tasks_of_a_dataset(self):
+        osw = _GET("benchmark", "osworld1")
+        head = re.search(r'<div class="bench-section-head">(.*?)</div>\s*</details>', self.section("osworld1"), re.S).group(1)
+        self.assertIn('<summary class="btn sm" aria-haspopup="true">New task set</summary>', head)
+        for d in osw["datasets"]:                     # several datasets: a choice of them, each its tasks' page
+            self.assertIn(f'<a href="/benchmarks/osworld1/tasks/{d["id"]}">{d.get("label") or d["id"]}<small>', head)
+        [only] = _GET("benchmark", "humaneval")["datasets"]
+        one = self.section("humaneval")              # one dataset: the button is its link
+        self.assertIn(f'<a class="btn sm" href="/benchmarks/humaneval/tasks/{only["id"]}">New task set</a>', one)
+        self.assertNotIn("bench-newset", one)
+        r = self.client.get("/benchmarks/humaneval", headers={"X-Forwarded-For": "192.0.2.4"}); self.addCleanup(r.close)
+        self.assertNotIn("New task set", r.get_data(as_text=True))       # saving is a browser's on the application host
 
     def test_it_lists_the_benchmarks_sets_and_each_datasets_link(self):
         osw = _GET("benchmark", "osworld1")

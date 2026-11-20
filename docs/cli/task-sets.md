@@ -81,7 +81,7 @@ Exit codes: 0 done, 2 a usage error or a refusal, 3 no such benchmark, set, revi
 
 | Page | What it does |
 | --- | --- |
-| A benchmark's page, **Task sets** | Its sets (name, dataset, number of tasks, latest revision, date) and a link to each dataset's tasks |
+| A benchmark's page, **Task sets** | Its sets (name, dataset, number of tasks, latest revision, date), **New task set** in its head (the dataset's tasks, or a choice of datasets when it has several), and a link to each dataset's tasks |
 | A dataset's tasks | A search over id, title and text, each category's values with their counts, 100 tasks a page, under the benchmark's default options. Tick a task, select every match, show the selected, paste ids. **Save as task set** keeps the ticked ids under a name and a description |
 | A set's page | The same page with its members ticked: **Save as a new revision**, with a note, adds a revision only when the membership changed. An earlier revision is read only. **Rename** and **Delete** ask in place; the delete names the set, its number of tasks and its revisions |
 | A first listing | Never made inside a request. In the cache: shown at once. One that [`driver.list_command`](../standard.md#driver-ops) makes lightly: started by the page, which says what it fetches. One that needs the driver's own environment: not started, the page says what it needs; ids can still be pasted |

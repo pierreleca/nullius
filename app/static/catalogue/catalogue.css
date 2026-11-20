@@ -436,6 +436,14 @@ a.std-need { font-size: .78rem; color: var(--text-dim); text-decoration: underli
 .bench-sets td, .bench-sets th { vertical-align: top; }
 .bench-sets small { display: block; color: var(--text-faint); font-size: 12px; }
 .bench-setlinks { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.bench-newset { position: relative; }
+.bench-newset > summary { list-style: none; }
+.bench-newset > summary::-webkit-details-marker { display: none; }
+.bench-newset-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 5; display: flex; flex-direction: column; min-width: 220px; max-width: calc(100vw - 32px);
+  padding: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 12px 32px #0005; }
+.bench-newset-menu a { display: flex; justify-content: space-between; gap: 14px; padding: 8px 10px; border-radius: 6px; color: var(--text); text-decoration: none; font-size: 14px; }
+.bench-newset-menu a:hover, .bench-newset-menu a:focus-visible { background: var(--surface-2); color: var(--accent); }
+.bench-newset-menu small { color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .tasks-page { display: flex; flex-direction: column; gap: 20px; }
 .tasks-page .bench-blocked { margin: 0; }
 .tasks-page .tasks-warn { border-color: color-mix(in srgb, var(--patch_failed_tests) 45%, var(--border)); }

@@ -40,6 +40,7 @@
   {% endset %}
   {{ page_head(entry.name if entry else ds.label or ds.id, sub=tags, actions=actions, mark=mark) }}
   {% if entry and entry.description %}<p class="bench-domain">{{ entry.description }}</p>{% endif %}
+  {% if writable and not entry and not broken %}<p class="bench-domain tasks-how">Tick the {{ nouns }} to keep, then save them as a task set.</p>{% endif %}
   {% if problem %}<p class="bench-blocked" role="note">{{ problem }}</p>{% endif %}
 
   {% if entry %}
