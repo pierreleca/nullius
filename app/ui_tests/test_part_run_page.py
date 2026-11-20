@@ -288,7 +288,7 @@ process.stdout.write(JSON.stringify(out));
         rows = {re.search(r'data-trial="([^"]+)"', row)[1]: text(row, r".*")
                 for row in re.findall(r'<tr class="lb-row.*?</tr>', out["flight"], re.S)}
         self.assertEqual(sorted(rows), [name(k) for k in range(5)])               # t-5 is outside the part: no row
-        self.assertEqual(rows[name(4)], "u0004 Queued —")
+        self.assertEqual(rows[name(4)], "t-4 Queued —")                          # its name, less the runner's tag
         self.assertIn('class="lb-row lb-queued"', out["flight"])
         self.assertTrue(rows[name(3)].startswith("t-3 agent run"), rows[name(3)])
         self.assertEqual(text(out["stats"], r".*").split(" Rate")[0], "Done 3 /6 Running 1 Queued 1 Not run 1")

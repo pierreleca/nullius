@@ -226,9 +226,10 @@
         ${has.tokens ? `<td class="num${tok == null ? ' na' : ''}">${count(tok)}</td>` : ''}
         ${has.line ? `<td><span class="lb-line${line ? '' : ' na'}" title="${esc(line || '')}">${line ? redacted(line) : '—'}</span></td>` : ''}<td class="lb-go"></td></tr>`;
     }).join('') + queuedRows.map(t => {
-      const dim = opts.filter ? ' dim' : '', none = '<td class="num na">—</td>';
+      // a trial never begun may have no task named yet: its name less the runner's tag (__u0042, __u0042r2)
+      const dim = opts.filter ? ' dim' : '', none = '<td class="num na">—</td>', named = t.task ? t : {trial: String(t.trial).replace(/__u\d{4,}(?:r\d+)?$/, '')};
       return `<tr class="lb-row lb-queued${dim}" data-trial="${esc(t.trial)}" tabindex="0" aria-current="${opts.selected === t.trial}">
-        <td><span class="task" title="${esc(t.task || t.trial)}">${esc(shortTask(t))}</span>${agents.length > 1 ? `<small>${esc(t.agent || '')}</small>` : ''}</td>
+        <td><span class="task" title="${esc(t.task || t.trial)}">${esc(shortTask(named))}</span>${agents.length > 1 ? `<small>${esc(t.agent || '')}</small>` : ''}</td>
         <td><span class="lb-phase">Queued</span></td><td class="na">—</td>
         ${has.steps ? none : ''}${has.calls ? none : ''}${has.tokens ? none : ''}${has.line ? '<td class="na">—</td>' : ''}<td class="lb-go"></td></tr>`;
     }).join('') + doneRows.map(t => {
