@@ -832,12 +832,12 @@ class TheDatasetStep(BuilderCase):
 const assert = require('node:assert/strict'), timers = [], notices = [];
 const rec = C.createStandard('fakebench'), r = () => rec;
 const S = {model: 3, dataset: 2}, REVIEW = 6, step = S.dataset;
-const unitsOf = () => ({nouns: 'tasks'}), window = {nulliusNotify: text => notices.push(text)};
+const unitsOf = () => ({noun: 'task', nouns: 'tasks'}), window = {nulliusNotify: text => notices.push(text)};
 let runnerKey = '', runnerOut, runnerTimer, runnerServed, result;
 const setTimeout = f => { timers.push(f); return timers.length; }, clearTimeout = () => {};
 const refreshPlan = () => {}, renderForm = () => {};
 const acceptCompile = (rec, served, out, key, current) => ({served, current: key === current && key === JSON.stringify(rec)});
-const nulliusFetch = async (url, args) => {
+let nulliusFetch = async (url, args) => {
   assert.equal(JSON.parse(args.body).recipe.limit, rec.limit);
   return {json: async () => result};
 };
@@ -865,9 +865,41 @@ globalThis.nulliusTasks = (p, options) => { picked = options; };
     assert.equal(runnerOut.errors[0].message, 'Checking the tasks ticked.');
     await timers.shift()();
     assert.deepEqual(rec.start_with.all, ['good']);
-    assert.equal(notices.at(-1), 'Removed tasks outside the current plan: wrong.');
+    assert.equal(notices.at(-1), 'Unticked 1 task no longer in the plan: wrong.');
   }
+  assert.equal(notices.length, 2);
+  // the recipe the drop changed compiles again: Review waits for that answer alone, and no notice repeats
+  const clean = {errors: [], notes: [], review: [[6, 'Scope', '1 first, nothing later']]};
+  result = clean;
+  compileRunner();
+  assert.equal(runnerOut.errors[0].message, 'Checking the tasks ticked.');
+  await timers.shift()();
+  assert.equal(runnerOut, clean);
+  assert.equal(notices.length, 2);
+  // an answer for an older recipe leaves the wait to the latest one, which ends it
+  rec.limit = 2; compileRunner();
+  const older = timers.shift();
+  rec.limit = 3; compileRunner();
+  await older();
+  assert.equal(runnerOut.errors[0].message, 'Checking the tasks ticked.');
+  await timers.shift()();
+  assert.equal(runnerOut, clean);
+  // a failed request ends the wait too, with its own error
+  rec.limit = 4; compileRunner();
+  const fetched = nulliusFetch;
+  nulliusFetch = async () => { throw new Error('offline'); };
+  await timers.shift()();
+  nulliusFetch = fetched;
+  assert.match(runnerOut.errors[0].message, /^The recipe could not be compiled here: /);
+  // with the ticked ids named once each, even when the answer names an id no longer ticked
+  rec.limit = 1; C.setStartWith(rec, 'all', ['good', 'wrong', 'slow']);
+  result = {errors: [{dataset: 'all', dropped: ['wrong', 'slow', 'model'], message: 'Outside the plan.'}]};
+  compileRunner(); await timers.shift()();
+  assert.deepEqual(rec.start_with.all, ['good']);
+  assert.equal(notices.at(-1), 'Unticked 2 tasks no longer in the plan: wrong, slow.');
+  assert.equal(notices.length, 3);
   C.setStartWith(rec, 'all', ['wrong']);
+  result = {errors: [{dataset: 'all', dropped: ['wrong'], message: 'Outside the plan.'}]};
   compileRunner(); await timers.shift()();
   assert.deepEqual(rec.start_with.all, []);
 })().catch(e => { console.error(e); process.exitCode = 1; });

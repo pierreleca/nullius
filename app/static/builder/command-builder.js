@@ -790,15 +790,16 @@
     dialog.oncancel = e => { e.preventDefault(); close(); };
     dialog.showModal();
   }
+  // the tasks ticked that the plan no longer holds (a lower number, another option): unticked, said once
   function dropStartTasks(rec, errors) {
     let changed = false;
     for (const e of errors || []) {
       const chosen = (rec.start_with || {})[e.dataset];
       if (!e.dropped || !Array.isArray(chosen)) continue;
-      const kept = chosen.filter(id => !e.dropped.includes(id));
-      if (kept.length === chosen.length) continue;
-      C.setStartWith(rec, e.dataset, kept);
-      window.nulliusNotify?.('Removed tasks outside the current plan: ' + e.dropped.join(', ') + '.');
+      const gone = chosen.filter(id => e.dropped.includes(id)), u = unitsOf(rec);
+      if (!gone.length) continue;
+      C.setStartWith(rec, e.dataset, chosen.filter(id => !e.dropped.includes(id)));
+      window.nulliusNotify?.(`Unticked ${gone.length} ${gone.length === 1 ? u.noun : u.nouns} no longer in the plan: ${gone.join(', ')}.`);
       changed = true;
     }
     return changed;
