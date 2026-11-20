@@ -4,7 +4,7 @@ Chosen tasks of an ended job run again in that job; the new result takes the tas
 A job its cap, a stop or a kill interrupted is finished the same way: its tasks with no result run in it.
 
 ```bash title="Run tasks again"
-nullius standard rerun JOB_DIR (--unit ID ... | --units FILE | --unfinished | --next N | --set NAME[@REV]) [--reason TEXT] [-j N] [--retries N] [--max-usd USD]
+nullius standard rerun JOB_DIR (--unit ID ... | --units FILE | --unfinished | --next N | --set NAME) [--reason TEXT] [-j N] [--retries N] [--max-usd USD]
 ```
 
 | Flag | Does |
@@ -13,7 +13,7 @@ nullius standard rerun JOB_DIR (--unit ID ... | --units FILE | --unfinished | --
 | `--units FILE` | The ids a file lists, one a line, as [a run's list](run.md#a-list-of-units) |
 | `--unfinished` | Planned trials with no result, cut off by the run's spending cap, or ended by a Stop; prints each count before starting; none: says so, exit 0 |
 | `--next N` | The next N planned tasks with no result, in the plan's order, each with all its attempts |
-| `--set NAME[@REV]` | The planned tasks with no result a [task set](task-sets.md) of the job's dataset names; none: says so, exit 0 |
+| `--set NAME` | The planned tasks with no result a [task set](task-sets.md) of the job's dataset names; none: says so, exit 0 |
 | `--reason TEXT` | Why, kept in the job's record |
 | `-j N` | Units at once; the job's by default |
 | `--retries N` | Automatic retries of each try, as [a run's](run.md#retries); 0 by default |

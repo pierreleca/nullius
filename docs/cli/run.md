@@ -3,7 +3,7 @@
 One benchmark and one agent, capability, control or setup, into a job.
 
 ```bash title="Run"
-nullius standard run <benchmark>[@version] <other> [--model M] [--dataset D] [--units FILE | --set NAME[@REV]] [--limit N] [--start-with N|FILE|set:NAME[@REV]] [-j N] \
+nullius standard run <benchmark>[@version] <other> [--model M] [--dataset D] [--units FILE | --set NAME] [--limit N] [--start-with N|FILE|set:NAME] [-j N] \
     [--unsandboxed | --backend container|boat] [--option NAME=VALUE]... [--bench-option NAME=VALUE]... \
     [--price MODEL=INPUT,OUTPUT[,CACHED,WRITE,WRITE_1H]]... [--max-usd USD] [--max-usd-per-unit USD] [--timeout PHASE=SECONDS]... [--max-turns N] [--max-calls N] \
     [--constraint KEY=VALUE]... \
@@ -29,8 +29,8 @@ nullius standard run locomo model --model gpt-4o-mini
 | `--provider` | `anthropic`, `custom`, `openai` or `openrouter` |
 | `--dataset`, `--limit`, `-j` | One dataset, the first N units, N at a time |
 | `--units FILE` | Only the units the file lists: [below](#a-list-of-units) |
-| `--set NAME[@REV]` | Only the units of a [task set](task-sets.md), its latest revision or `REV`; its dataset is the run's, the options the run's own |
-| `--start-with N\|FILE\|set:NAME[@REV]` | Plan the whole, begin with a part: [below](#plan-the-whole-begin-with-a-part) |
+| `--set NAME` | Only the units of a [task set](task-sets.md); its dataset is the run's, the options the run's own |
+| `--start-with N\|FILE\|set:NAME` | Plan the whole, begin with a part: [below](#plan-the-whole-begin-with-a-part) |
 | `--unsandboxed` | An agent runs as you; else `--backend container` |
 | `--backend` | `local` (default); `container`, each unit in a container with its relay; or [`boat`](../standard.md#the-boat-backend), a VM per unit |
 | `--boat-size` | Boat's VM size: `small` (default), `default`, `large`, `xlarge` |
@@ -178,7 +178,7 @@ HumanEval/12
 | The record | `config.json`: `standard.units_file`, the file's name, its sha256 and its units |
 | Where it is read | On the machine the command runs on, from the directory it starts in, with `--from-run` or without |
 | The builder | A recipe has no field for a list |
-| A named list | A [task set](task-sets.md) keeps one with its revisions: `--set NAME[@REV]` |
+| A named list | A [task set](task-sets.md) keeps one, frozen: `--set NAME` |
 
 ## Plan the whole, begin with a part
 
@@ -188,7 +188,7 @@ HumanEval/12
 | --- | --- |
 | `N` | The plan's first N units, in its order |
 | `FILE` | The units a file lists, as [a list of units](#a-list-of-units) |
-| `set:NAME[@REV]` | The units of a [task set](task-sets.md) of the run's dataset |
+| `set:NAME` | The units of a [task set](task-sets.md) of the run's dataset |
 
 | Rule | Detail |
 | --- | --- |
