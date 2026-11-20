@@ -411,7 +411,7 @@ class RerunTest(unittest.TestCase):
         b = self.read(job_dir, "result.json")["budget"]                      # the job had none: it has this one from now on
         self.assertEqual((b["max_usd"], b["spent_total_usd"], b["closed"]), (CALL + 0.00001, CALL, True))
         self.assertEqual([(c["max_usd"], c["was"]) for c in b["changes"]], [(CALL + 0.00001, None)])
-        self.assertEqual(self.read(job_dir, ".work", "rerun-1", "ledger", "ledger.json")["max_usd"], round(0.00001, 6))
+        self.assertEqual(self.read(job_dir, ".work", "rerun-1", "ledger", "ledger.json")["max_usd"], CALL + 0.00001 - CALL)
 
 
 class OneBudget(unittest.TestCase):
