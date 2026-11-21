@@ -64,6 +64,10 @@ class TrialDetail(unittest.TestCase):
         self.assertIn("checks ✓ kept × applied measures · pointer: not taken", said)
         self.assertRegex(html, r'<span class="ok">✓</span> kept')
         self.assertRegex(html, r'<span class="bad">×</span> applied')
+        lists = re.findall(r"<ul[^>]*>", html)
+        self.assertEqual(len(lists), 2)
+        for ul in lists:                                     # each flag's mark is its only one: no bullet before it
+            self.assertIn("list-style:none", ul)
 
     def test_a_long_value_is_cut_with_its_whole_text_behind_a_disclosure(self):
         long = "word " * 60
