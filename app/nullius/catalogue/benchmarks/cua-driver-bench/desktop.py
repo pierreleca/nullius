@@ -691,9 +691,11 @@ class Desktop:
     def collect(self, dest: str, *, max_bytes: int = COLLECT_BYTES) -> List[str]:
         """The trial's folder copied into ``dest`` on this machine: plain files alone, no link followed, nothing
         written outside ``dest``, at most ``max_bytes`` in all (a file that does not fit is left out). The names
-        kept, relative to the trial's folder."""
-        root = os.path.abspath(dest)
+        kept, relative to the trial's folder. ``dest`` is taken as given, a link on its own path included; a link
+        under it is not followed."""
         try:
+            os.makedirs(dest, exist_ok=True)
+            root = os.path.realpath(dest)
             with _directory(root):
                 pass
         except OSError as e:

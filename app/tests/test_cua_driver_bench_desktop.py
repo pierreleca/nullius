@@ -787,17 +787,22 @@ class Collect(unittest.TestCase):
         self.assertEqual(os.listdir(outside), [])
         self.assertEqual(os.listdir(os.path.join(dest, "real")), [])
 
-    def test_destination_ancestors_are_checked_before_creating_children(self):
+    def test_a_destination_reached_through_a_link_is_taken_as_given_and_links_under_it_are_refused(self):
         e = Engine(self)
         d = started(self, e)
-        outside = os.path.join(e.root, "outside")
-        os.mkdir(outside)
-        alias = os.path.join(e.root, "alias")
-        os.symlink(outside, alias)
-        self.archive(e, "row.json")
-        with self.assertRaises(desktop.DesktopError):
-            d.collect(os.path.join(alias, "new", "deep"))
-        self.assertEqual(os.listdir(outside), [])
+        disk, other = os.path.join(e.root, "disk"), os.path.join(e.root, "other")
+        os.mkdir(disk)
+        os.mkdir(other)
+        alias = os.path.join(e.root, "alias")                 # a home or data folder moved by a link
+        os.symlink(disk, alias)
+        dest = os.path.join(alias, "new", "deep")
+        os.makedirs(dest)
+        os.symlink(other, os.path.join(dest, "escape"))
+        self.archive(e, "row.json", "escape/file")
+        self.assertEqual(d.collect(dest), ["row.json"])
+        with open(os.path.join(disk, "new", "deep", "row.json"), "rb") as f:
+            self.assertEqual(f.read(), b"replacement")
+        self.assertEqual(os.listdir(other), [])
 
     def test_plain_files_alone_within_the_size_and_nothing_outside_dest(self):
         e = Engine(self)
