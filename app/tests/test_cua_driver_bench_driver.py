@@ -559,6 +559,21 @@ class Driver(unittest.TestCase):
             self.unit()
         self.assertEqual(len(self.stand.made), 1)                    # refused before any desktop
 
+    def test_the_pause_follows_each_action_and_each_wait(self):
+        os.environ["NULLIUS_OPTION_PAUSE"] = "0.3"
+        ws, s = self.unit()
+        c = Client(s["mcp"][0]["args"][1])
+        t0 = time.monotonic()
+        failed, said = c.call("step", {"actions": ["pyautogui.click(1, 1)", "WAIT", "pyautogui.click(2, 2)"]})
+        took = time.monotonic() - t0
+        c.close()
+        driver.score("foreground__MB-09", ws, [], "")
+        self.assertFalse(failed, said)
+        with open(self.verifier(ws, "computer-actions.jsonl")) as f:
+            first, second = [json.loads(line) for line in f]
+        self.assertGreaterEqual(second["start"] - first["end"], 0.59)      # the first click's pause, then the wait's
+        self.assertGreaterEqual(took, 0.89)                                # and the pause after the last click
+
     # -- how a trial ends -------------------------------------------------------------------------------------------
     def end_by(self, calls, **kw):
         ws, s = self.unit(**kw)
