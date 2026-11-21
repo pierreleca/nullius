@@ -133,7 +133,7 @@ class StandIn:
         os.makedirs(self.home)                                       # where the desktop's code runs
         with open(os.path.join(self.stub, "pyautogui.py"), "w") as f:
             f.write(STUB)
-        self.made, self.images, self.launched, self.benches, self.clients = [], [], [], [], []
+        self.made, self.images, self.launched, self.benches, self.clients, self.collected = [], [], [], [], [], []
         self.fail, self.ended, self.brief = {}, threading.Event(), BRIEF
         self.rows = lambda task, run_index, condition: row(task, run_index, condition)
         m = self.module = types.ModuleType("cdb_desktop_stand_in")
@@ -233,12 +233,25 @@ class StandIn:
                 return self.row
 
             def collect(self, dest, *, max_bytes=64 * 2 ** 20):
+                """As the module's: plain files alone, no link followed in the trial's folder or written through in
+                ``dest``, a file that does not fit in ``max_bytes`` left out."""
+                stand.collected.append(max_bytes)
                 stand.raise_if("collect")
                 os.makedirs(dest, exist_ok=True)
-                names = sorted(os.listdir(self.folder))
-                for name in names:
-                    shutil.copyfile(os.path.join(self.folder, name), os.path.join(dest, name))
-                return names
+                kept, total = [], 0
+                for name in sorted(os.listdir(self.folder)):
+                    src = os.path.join(self.folder, name)
+                    if os.path.islink(src) or not os.path.isfile(src) or total + os.path.getsize(src) > max_bytes:
+                        continue
+                    try:
+                        fd = os.open(os.path.join(dest, name), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
+                    except OSError:
+                        continue
+                    with os.fdopen(fd, "wb") as out, open(src, "rb") as f:
+                        shutil.copyfileobj(f, out)
+                    kept.append(name)
+                    total += os.path.getsize(src)
+                return kept
 
             def remove(self):
                 self.removes += 1
@@ -492,6 +505,7 @@ class Driver(unittest.TestCase):
         self.assertEqual((d["checker_passed"], d["checks"], d["violations"], d["score"]), (True, {"first": True, "second": True}, [], 1.0))
         self.assertEqual(set(d["criteria"]), set(CRITERIA))
         self.assertEqual(d["kept"], ["brief.md", "row.json"])
+        self.assertEqual(self.stand.collected, [64 * 2 ** 20])        # the trial's folder within 64 MiB
         with open(self.verifier(ws, os.path.join("cdb", "row.json"))) as f:
             self.assertEqual(json.load(f)["task"], "MB-09")
         with open(self.verifier(ws, "computer-actions.jsonl")) as f:
@@ -707,6 +721,27 @@ class Driver(unittest.TestCase):
         ws, _ = self.unit()
         got = driver.score("foreground__MB-09", ws, [], "")
         self.assertEqual((got["passed"], got["detail"]["kept"]), (True, None))
+
+    def test_the_evidence_is_copied_within_the_drivers_bound_and_no_link_is_followed(self):
+        self.assertEqual(driver.EVIDENCE_BYTES, 64 * 2 ** 20)
+        ws, _ = self.unit()
+        trial = self.stand.made[-1].folder
+        outside = os.path.join(self.tmp, "outside")
+        os.makedirs(outside)
+        with open(os.path.join(outside, "elsewhere.txt"), "w") as f:
+            f.write("not of the trial")
+        os.symlink(os.path.join(outside, "elsewhere.txt"), os.path.join(trial, "link.txt"))
+        with open(os.path.join(trial, "large.log"), "wb") as f:
+            f.write(b"x" * 8192)
+        dest = self.verifier(ws, "cdb")
+        os.makedirs(dest)
+        os.symlink(os.path.join(outside, "written.txt"), os.path.join(dest, "row.json"))
+        with mock.patch.object(driver, "EVIDENCE_BYTES", 4096):
+            got = driver.score("foreground__MB-09", ws, [], "")
+        self.assertEqual(self.stand.collected, [4096])
+        self.assertEqual(got["detail"]["kept"], ["brief.md"])           # the large file left out, the links not used
+        self.assertEqual(sorted(os.listdir(outside)), ["elsewhere.txt"])
+        self.assertFalse(os.path.lexists(os.path.join(dest, "link.txt")))
 
     def test_a_removal_that_fails_fails_the_score(self):
         self.stand.fail["remove"] = self.stand.module.DesktopError("the container is still there")
