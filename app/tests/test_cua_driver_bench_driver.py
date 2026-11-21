@@ -725,6 +725,14 @@ class Driver(unittest.TestCase):
         self.assertEqual((said["condition"], said["seed"], said["score"]), ("background", seed("IR-02", 0), 1.0))
         self.assertEqual((said["passed"], said["failed"]), (["first", "second"] + [f"measure:{c}" for c in CRITERIA], []))
 
+    def test_the_background_verdict_uses_a22_and_preserves_a15(self):
+        r = bg_row("IR-02", 0, checker=True, disturbed=["pointer"])
+        r["a15"]["background_completion"] = True
+        got, _ = self.background(lambda task, i, c: r, participant="control")
+        self.assertEqual((got["reward"], got["passed"]), (0.0, False))
+        self.assertFalse(got["detail"]["background_completion"])
+        self.assertEqual(got["detail"]["a15"], r["a15"])
+
     def test_each_measure_that_does_not_hold_fails_a_passed_check(self):
         for m in CRITERIA:
             with self.subTest(measure=m):
