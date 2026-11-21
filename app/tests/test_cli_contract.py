@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -405,6 +406,16 @@ class TaskSetCommands(Scratch):
         self.assertFalse(os.path.exists(cat))
         out = self.sh("standard.cli", "set", "list", "--json", env=env)
         self.assertEqual((out.returncode, json.loads(out.stdout), out.stderr), (0, [], ""))
+
+    def test_the_index_of_commands_names_each_set_command_there_is_and_no_other(self):
+        """The commands' index (docs/cli/README.md) names the set commands one by one: the ones ``set`` takes."""
+        out = self.sh("standard.cli", "set", "--help", env={"NULLIUS_HOME": os.path.join(self.tmp, "profile")})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        taken = set(re.findall(r"^    ([a-z]+) ", out.stdout, re.M))                  # the help's list of commands
+        row = next(line for line in (APP.parent / "docs" / "cli" / "README.md").read_text(encoding="utf-8").splitlines()
+                   if line.startswith("| [Task sets]"))
+        listed = row[row.index("`set create`"):].split(";")[0]
+        self.assertEqual({name.removeprefix("set ") for name in re.findall(r"`([^`]+)`", listed)}, taken)
 
 
 # ── import.md ───────────────────────────────────────────────────────────────
