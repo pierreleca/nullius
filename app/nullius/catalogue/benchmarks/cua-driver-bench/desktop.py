@@ -839,14 +839,14 @@ def _inside(name: str, top: str) -> Optional[str]:
 @contextlib.contextmanager
 def _directory(path: str):
     """Open each ancestor without following links before making its child."""
-    fd = os.open(os.sep, os.O_RDONLY | os.O_DIRECTORY)
+    fd = os.open(os.sep, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         for part in os.path.abspath(path).split(os.sep)[1:]:
             if not part:
                 continue
             with contextlib.suppress(FileExistsError):
                 os.mkdir(part, dir_fd=fd)
-            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            child = os.open(part, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
             os.close(fd)
             fd = child
         yield fd

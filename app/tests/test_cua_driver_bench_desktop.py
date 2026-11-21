@@ -834,6 +834,27 @@ class Collect(unittest.TestCase):
                 archive.addfile(info, io.BytesIO(b"replacement"))
         engine.behave(cp_archive=path)
 
+    def test_collection_accepts_a_traversal_only_ancestor(self):
+        e = Engine(self)
+        d = started(self, e)
+        ancestor = os.path.join(e.root, "traversal-only")
+        dest = os.path.join(ancestor, "dest")
+        os.makedirs(dest)
+        self.archive(e, "row.json", "nested/detail.json")
+        os.chmod(ancestor, 0o111)
+        try:
+            path = os.path.join(dest, "row.json")
+            with open(path, "wb") as f:
+                f.write(b"original")
+            with open(path, "rb") as f:
+                self.assertEqual(f.read(), b"original")
+            self.assertEqual(d.collect(dest), ["row.json", "nested/detail.json"])
+            for name in ("row.json", "nested/detail.json"):
+                with open(os.path.join(dest, name), "rb") as f:
+                    self.assertEqual(f.read(), b"replacement")
+        finally:
+            os.chmod(ancestor, 0o755)
+
     def test_an_existing_hardlink_is_replaced_without_changing_its_other_name(self):
         e = Engine(self)
         d = started(self, e)
