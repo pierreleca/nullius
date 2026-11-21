@@ -481,11 +481,15 @@ class Desktop:
             d.env = {k: v for k, v in said["env"].items() if k not in NOT_SESSION}
             _left(end)
         except BaseException:                           # an error or an interrupt: what this start made goes
-            with contextlib.suppress(OSError, DesktopError, subprocess.TimeoutExpired):
+            made = ""
+            with contextlib.suppress(OSError):
                 with open(cidfile) as f:
                     made = f.read().strip()
+            with contextlib.suppress(DesktopError, subprocess.TimeoutExpired):
                 if made:
                     cls(made).remove()
+                elif name is None:                      # a run cut before it wrote the id: the name is this start's
+                    d.remove()
             raise
         finally:
             identity.cleanup()

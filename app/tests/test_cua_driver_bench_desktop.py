@@ -63,6 +63,8 @@ elif cmd == "run":
     cid = hashlib.sha256(name.encode()).hexdigest()
     with open(os.path.join(boxes, name, "id"), "w") as f:
         f.write(cid)
+    if how.get("run") == "created_before_id":
+        time.sleep(60)
     if "--cidfile" in argv:
         with open(argv[argv.index("--cidfile") + 1], "x") as f:
             f.write(cid)
@@ -352,6 +354,18 @@ class Start(unittest.TestCase):
         self.assertFalse(e.running("unfinished"))
         removal = next(c for c in e.calls() if c[0] == "rm")
         self.assertRegex(removal[-1], r"^[0-9a-f]{64}$")
+
+    def test_a_run_cut_before_it_wrote_the_id_removes_the_container_by_the_name_the_start_gave(self):
+        e = Engine(self)
+        e.behave(run="created_before_id")
+        with mock.patch.object(desktop, "RUN_SECONDS", 1):
+            with self.assertRaises(desktop.DesktopError):
+                desktop.Desktop.start("bench:image", job="job-1")
+        run = next(c for c in e.calls() if c[0] == "run")
+        made = run[run.index("--name") + 1]
+        self.assertRegex(made, r"^nullius-cdb-[0-9a-f]{8}$")
+        self.assertFalse(e.running(made))
+        self.assertIn(["rm", "-f", made], e.calls())
 
     def test_an_interrupted_start_removes_what_it_made(self):
         e = Engine(self)
