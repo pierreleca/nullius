@@ -11,7 +11,7 @@ Ten desktop tasks on Linux: three across several applications, three of pointer 
 <tr><th>Origin</th><td><a href="https://github.com/trycua/cua/blob/main/CITATION.cff">Official</a></td></tr>
 <tr><th>Runs on</th><td>Nullius</td></tr>
 <tr><th>Tasks</th><td>10</td></tr>
-<tr><th>Paper</th><td><a href="https://github.com/trycua/cua">Cua</a>, 2025</td></tr>
+<tr><th>Paper</th><td><a href="https://github.com/trycua/cua">Cua</a>, GitHub repository · 2025</td></tr>
 <tr><th>Needs, ports proven</th><td><code>agent.<wbr>computer/<wbr>v1</code></td></tr>
 </tbody></table>
 
@@ -80,10 +80,13 @@ Ten desktop tasks on Linux: three across several applications, three of pointer 
 ??? citation "BibTeX"
 
     ```bibtex
-    @software{Cua,
+    @misc{Cua,
       title = {Cua},
-      author = {{Cua AI, Inc.}},
+      author = {{Cua AI}},
       year = {2025},
+      publisher = {GitHub},
+      journal = {GitHub repository},
+      howpublished = {\url{https://github.com/trycua/cua}},
       url = {https://github.com/trycua/cua}
     }
     ```

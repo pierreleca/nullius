@@ -50,8 +50,8 @@ import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-# driver.py DESKTOP_PY [DOCKERFILE REQUIREMENTS]: the definition's command names the files, so that a host's snapshot
-# carries them; the desktop module finds the other two beside itself
+# driver.py [DESKTOP_PY [DOCKERFILE REQUIREMENTS]]: the definition's command may name the files, so that a host's snapshot
+# takes them; the desktop module finds the other two beside itself
 DESKTOP_FILE = (sys.argv[1] if len(sys.argv) > 1 and os.path.basename(sys.argv[1]) == "desktop.py"
                 else os.path.join(HERE, "desktop.py"))
 

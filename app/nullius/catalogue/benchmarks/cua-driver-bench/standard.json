@@ -17,10 +17,7 @@
   "driver": {
     "command": [
       "python3",
-      "{here}/driver.py",
-      "{here}/desktop.py",
-      "{here}/desktop.Dockerfile",
-      "{here}/desktop-requirements.txt"
+      "{here}/driver.py"
     ],
     "participant": true,
     "unit_end": true,

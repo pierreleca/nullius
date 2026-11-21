@@ -313,8 +313,12 @@ class Declarations(unittest.TestCase):
         drv = DEFINITION["driver"]
         self.assertTrue(drv["participant"] and drv["unit_end"] and drv["describe"] and drv["task_given"])
         self.assertNotIn("install", drv)                             # the standard library and the nullius package
-        self.assertEqual(drv["command"], ["python3", "{here}/driver.py", "{here}/desktop.py", "{here}/desktop.Dockerfile",
-                                          "{here}/desktop-requirements.txt"])
+        # the command names the files a host's snapshot takes: each of them in the entry's folder, the driver first,
+        # then the desktop module, which the driver takes from its first argument
+        self.assertEqual(drv["command"][:2], ["python3", "{here}/driver.py"])
+        named = [w[len("{here}/"):] for w in drv["command"][2:]]
+        self.assertTrue(all(os.path.isfile(os.path.join(ENTRY, n)) for n in named), named)
+        self.assertEqual(named[:1], ["desktop.py"] if named else [])
         self.assertEqual(DEFINITION["mcp_servers"]["computer"]["command"], ["python3"])
         self.assertEqual(DEFINITION["limits"]["scored_cuts"], ["time", "calls", "end"])
         self.assertTrue(DEFINITION["limits"]["attempts"])
@@ -627,7 +631,7 @@ class Driver(unittest.TestCase):
         ws, _ = self.unit()
         with self.assertRaises(RuntimeError) as got:
             driver.score("foreground__MB-09", ws, [], "")
-        said = f"RuntimeError: {got.exception}"                      # as the driver's reply carries it
+        said = f"RuntimeError: {got.exception}"                      # as the driver's reply gives it
         self.assertTrue(str(got.exception).startswith("EnvironmentSetupError: "))
         self.assertIn("evaluator_no_result", said)
         self.assertEqual(standard_run._kind(Exception(said), "VerifierError"), "EnvironmentSetupError")

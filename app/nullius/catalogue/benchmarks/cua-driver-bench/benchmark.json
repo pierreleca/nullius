@@ -48,6 +48,6 @@
       "notes": "10 tasks: 3 multi-app, 3 precision, 4 interruptions. FSL-1.1-MIT."
     }
   ],
-  "citation": "@software{Cua,\n  title = {Cua},\n  author = {{Cua AI, Inc.}},\n  year = {2025},\n  url = {https://github.com/trycua/cua}\n}",
+  "citation": "@misc{Cua,\n  title = {Cua},\n  author = {{Cua AI}},\n  year = {2025},\n  publisher = {GitHub},\n  journal = {GitHub repository},\n  howpublished = {\\url{https://github.com/trycua/cua}},\n  url = {https://github.com/trycua/cua}\n}",
   "citation_source": "https://github.com/trycua/cua/blob/main/CITATION.cff"
 }
