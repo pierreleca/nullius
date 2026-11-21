@@ -419,10 +419,13 @@ class Desktop:
         d = cls(name or f"nullius-cdb-{secrets.token_hex(4)}")
         label = ["--label", f"{container.LABEL}={job}"] if job else []
         end = time.monotonic() + seconds
+        identity = tempfile.TemporaryDirectory(prefix="nullius-cdb-start-")
+        cidfile = os.path.join(identity.name, "cid")
         try:
             try:
                 r = _engine(["run", "-d", "--name", d.name, "--network", "none", "-e", "CUA_RESOLUTION=1920x1080",
-                             *label, *container.capped(), reference], timeout=min(RUN_SECONDS, seconds))
+                             *label, "--cidfile", cidfile, *container.capped(), reference],
+                            timeout=min(RUN_SECONDS, seconds))
             except subprocess.TimeoutExpired:
                 raise DesktopError(f"starting the desktop {d.name}: {container.DOCKER} run did not answer in time")
             if r.returncode != 0:
@@ -450,9 +453,14 @@ class Desktop:
                                    f"(build this entry's {DOCKERFILE}, or its last stage on that image)")
             d.env = {k: v for k, v in said["env"].items() if k not in NOT_SESSION}
         except BaseException:                           # an error or an interrupt: what this start made goes
-            with contextlib.suppress(DesktopError, subprocess.TimeoutExpired):
-                d.remove()
+            with contextlib.suppress(OSError, DesktopError, subprocess.TimeoutExpired):
+                with open(cidfile) as f:
+                    made = f.read().strip()
+                if made:
+                    cls(made).remove()
             raise
+        finally:
+            identity.cleanup()
         return d
 
     def _exec(self, argv: List[str], *, input: Optional[bytes] = None, timeout: float,

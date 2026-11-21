@@ -34,7 +34,7 @@ spec.loader.exec_module(desktop)
 # with the -e values as its environment and -w as its folder; `cp NAME:PATH -` writes a tar of PATH, or the archive
 # that BEHAVIOUR names. BEHAVIOUR (a JSON file) says how run, rm, image inspect and build answer.
 FAKE = r'''#!{python}
-import json, os, shutil, sys, tarfile, time
+import hashlib, json, os, shutil, sys, tarfile, time
 STATE = {state!r}
 argv = sys.argv[1:]
 with open(os.path.join(STATE, "calls.jsonl"), "a") as f:
@@ -60,7 +60,17 @@ elif cmd == "run":
         sys.exit(125)
     name = argv[argv.index("--name") + 1]
     os.makedirs(os.path.join(boxes, name))
-    print("0123456789ab" * 5 + "cdef")
+    cid = hashlib.sha256(name.encode()).hexdigest()
+    with open(os.path.join(boxes, name, "id"), "w") as f:
+        f.write(cid)
+    if "--cidfile" in argv:
+        with open(argv[argv.index("--cidfile") + 1], "x") as f:
+            f.write(cid)
+    if how.get("run") == "created_fail":
+        sys.exit(125)
+    if how.get("run") == "created_hang":
+        time.sleep(60)
+    print(cid)
 elif cmd == "exec":
     rest, env, cwd = argv[1:], {{"PATH": os.environ.get("PATH", "/usr/bin:/bin")}}, None
     while rest[0].startswith("-"):
@@ -92,6 +102,11 @@ elif cmd == "cp":
             t.add(path, arcname=os.path.basename(path))
 elif cmd == "rm":
     name = argv[-1]
+    for box in os.listdir(boxes):
+        identity = os.path.join(boxes, box, "id")
+        if os.path.isfile(identity) and open(identity).read() == name:
+            name = box
+            break
     if how.get("rm") == "fail":
         sys.stderr.write("Error response from daemon: removal in progress\n")
         sys.exit(1)
@@ -100,6 +115,11 @@ elif cmd == "rm":
     print(name)
 elif cmd == "container" and argv[1] == "inspect":
     name = argv[-1]
+    for box in os.listdir(boxes):
+        identity = os.path.join(boxes, box, "id")
+        if os.path.isfile(identity) and open(identity).read() == name:
+            name = box
+            break
     if not os.path.isdir(os.path.join(boxes, name)):
         gone(name)
     print("abc")
@@ -275,7 +295,7 @@ class Start(unittest.TestCase):
         e.behave(run="fail")
         with self.assertRaises(desktop.DesktopError):
             desktop.Desktop.start("bench:image", name="cdb-test-1")
-        self.assertIn(["rm", "-f", "cdb-test-1"], e.calls())
+        self.assertFalse([c for c in e.calls() if c[0] == "rm"])
         e.behave()
         with self.assertRaises(desktop.DesktopError) as caught:   # no window manager within the bound
             desktop.Desktop.start("bench:image", name="cdb-test-2", seconds=1.5)
@@ -289,13 +309,37 @@ class Start(unittest.TestCase):
 
     def test_a_start_that_does_not_answer_is_bounded_and_removed(self):
         e = Engine(self)
-        e.behave(run="hang")
+        e.behave(run="created_hang")
         t = time.monotonic()
         with mock.patch.object(desktop, "RUN_SECONDS", 1):
             with self.assertRaises(desktop.DesktopError):
                 desktop.Desktop.start("bench:image", name="cdb-test-1")
         self.assertLess(time.monotonic() - t, 15)
-        self.assertIn(["rm", "-f", "cdb-test-1"], e.calls())
+        self.assertTrue([c for c in e.calls() if c[0] == "rm"])
+        self.assertFalse(e.running("cdb-test-1"))
+
+    def test_a_name_collision_does_not_remove_the_existing_container(self):
+        e = Engine(self)
+        existing = os.path.join(e.state, "containers", "existing")
+        os.makedirs(existing)
+        record = os.path.join(existing, "record")
+        with open(record, "w") as f:
+            f.write("earlier trial")
+        with self.assertRaises(desktop.DesktopError):
+            desktop.Desktop.start("bench:image", name="existing")
+        self.assertTrue(e.running("existing"))
+        with open(record) as f:
+            self.assertEqual(f.read(), "earlier trial")
+        self.assertFalse([c for c in e.calls() if c[0] == "rm"])
+
+    def test_a_failed_run_removes_the_container_it_created_by_id(self):
+        e = Engine(self)
+        e.behave(run="created_fail")
+        with self.assertRaises(desktop.DesktopError):
+            desktop.Desktop.start("bench:image", name="unfinished")
+        self.assertFalse(e.running("unfinished"))
+        removal = next(c for c in e.calls() if c[0] == "rm")
+        self.assertRegex(removal[-1], r"^[0-9a-f]{64}$")
 
     def test_an_interrupted_start_removes_what_it_made(self):
         e = Engine(self)
