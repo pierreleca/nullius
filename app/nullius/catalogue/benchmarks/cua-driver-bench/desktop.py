@@ -38,6 +38,7 @@ import os
 import posixpath
 import secrets
 import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -210,10 +211,10 @@ _CLIENTS_LOCK = threading.Lock()
 _CLIENTS_CLOSED = False
 
 
-def _spawn(args: List[str], **kw) -> subprocess.Popen:
+def _spawn(args: List[str], *, cleanup: bool = False, **kw) -> subprocess.Popen:
     """One client of the engine started and counted, for :func:`end_clients`."""
     with _CLIENTS_LOCK:
-        if _CLIENTS_CLOSED:
+        if _CLIENTS_CLOSED and not cleanup:
             raise DesktopError("the desktop's engine clients have been closed")
         try:
             p = subprocess.Popen([container.DOCKER, *args], env=container.client_env(), **kw)
@@ -228,10 +229,11 @@ def _done(p: subprocess.Popen) -> None:
         _CLIENTS.discard(p)
 
 
-def _engine(args: List[str], *, input: Optional[bytes] = None, timeout: float) -> subprocess.CompletedProcess:
+def _engine(args: List[str], *, input: Optional[bytes] = None, timeout: float,
+            cleanup: bool = False) -> subprocess.CompletedProcess:
     """One call of the engine's program, its stdin the request's bytes or nothing, killed past ``timeout``
     (``subprocess.TimeoutExpired``, as ``subprocess.run`` raises it)."""
-    p = _spawn(args, stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL, stdout=subprocess.PIPE,
+    p = _spawn(args, cleanup=cleanup, stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL, stdout=subprocess.PIPE,
                stderr=subprocess.PIPE)
     try:
         try:
@@ -270,6 +272,23 @@ def _absent(r: subprocess.CompletedProcess) -> bool:
     return "no such container" in (r.stderr or b"").decode("utf-8", "replace").lower()
 
 
+def _left(end: float) -> float:
+    left = end - time.monotonic()
+    if left <= 0:
+        raise DesktopError("the desktop operation exceeded its deadline")
+    return left
+
+
+@contextlib.contextmanager
+def _locked_until(lock, end: float):
+    if not lock.acquire(timeout=_left(end)):
+        raise DesktopError("the desktop operation exceeded its deadline waiting for its lock")
+    try:
+        yield
+    finally:
+        lock.release()
+
+
 # -- the image ----------------------------------------------------------------------------------------------------
 def bench_folder(upstream: str) -> str:
     """The bench's folder: ``upstream`` itself when it holds the launcher, else its ``libs/cua-driver-bench``."""
@@ -282,10 +301,18 @@ def bench_folder(upstream: str) -> str:
 def _bench_files(folder: str) -> List[Tuple[str, str]]:
     """The bench's folder as ``(relative path, path)`` in a fixed order, without :data:`SKIP`'s folders."""
     out = []
+    if not stat.S_ISDIR(os.lstat(folder).st_mode):
+        raise DesktopError(f"the bench's folder is not a plain directory: {folder}")
     for root, dirs, files in os.walk(folder):
         dirs[:] = sorted(d for d in dirs if d not in SKIP)
+        for name in dirs:
+            path = os.path.join(root, name)
+            if not stat.S_ISDIR(os.lstat(path).st_mode):
+                raise DesktopError(f"the bench's folder contains a directory link: {path}")
         for name in sorted(files):
             path = os.path.join(root, name)
+            if not stat.S_ISREG(os.lstat(path).st_mode):
+                raise DesktopError(f"the bench's folder contains a file that is not plain: {path}")
             out.append((os.path.relpath(path, folder).replace(os.sep, "/"), path))
     return out
 
@@ -416,21 +443,24 @@ class Desktop:
         """Start a desktop of ``reference`` and wait until its window manager runs, at most ``seconds``. ``job``
         labels the container as a unit's are, so a sweep of the job removes it. A failed or interrupted start
         removes what it made."""
+        end = time.monotonic() + seconds
         d = cls(name or f"nullius-cdb-{secrets.token_hex(4)}")
         label = ["--label", f"{container.LABEL}={job}"] if job else []
-        end = time.monotonic() + seconds
+        identity = tempfile.TemporaryDirectory(prefix="nullius-cdb-start-")
+        cidfile = os.path.join(identity.name, "cid")
         try:
             try:
                 r = _engine(["run", "-d", "--name", d.name, "--network", "none", "-e", "CUA_RESOLUTION=1920x1080",
-                             *label, *container.capped(), reference], timeout=min(RUN_SECONDS, seconds))
+                             *label, "--cidfile", cidfile, *container.capped(), reference],
+                            timeout=min(RUN_SECONDS, _left(end)))
             except subprocess.TimeoutExpired:
                 raise DesktopError(f"starting the desktop {d.name}: {container.DOCKER} run did not answer in time")
             if r.returncode != 0:
                 raise DesktopError(f"starting the desktop {d.name}: {_said(r)}")
-            left = max(1.0, end - time.monotonic())
+            left = _left(end)
             try:
                 r = _engine(["exec", "-u", USER, d.name, "python3", "-I", "-c", _SESSION, WINDOW_MANAGER, PORT_PYTHON,
-                             str(left)], timeout=left + ENGINE_GRACE)
+                             str(left)], timeout=left)
             except subprocess.TimeoutExpired:
                 r = None
             said = None
@@ -441,7 +471,7 @@ class Desktop:
                     said = None
             if not isinstance(said, dict) or not isinstance(said.get("env"), dict):
                 try:
-                    log = _said(_engine(["logs", "--tail", "20", d.name], timeout=30))
+                    log = _said(_engine(["logs", "--tail", "20", d.name], timeout=min(30, _left(end))))
                 except (subprocess.TimeoutExpired, DesktopError):
                     log = "its log could not be read"
                 raise DesktopError(f"the desktop {d.name} had no {WINDOW_MANAGER} in {seconds:.0f} s: {log}")
@@ -449,10 +479,16 @@ class Desktop:
                 raise DesktopError(f"the image {reference} has no {PORT_PYTHON}: it lacks the port's layer "
                                    f"(build this entry's {DOCKERFILE}, or its last stage on that image)")
             d.env = {k: v for k, v in said["env"].items() if k not in NOT_SESSION}
+            _left(end)
         except BaseException:                           # an error or an interrupt: what this start made goes
-            with contextlib.suppress(DesktopError, subprocess.TimeoutExpired):
-                d.remove()
+            with contextlib.suppress(OSError, DesktopError, subprocess.TimeoutExpired):
+                with open(cidfile) as f:
+                    made = f.read().strip()
+                if made:
+                    cls(made).remove()
             raise
+        finally:
+            identity.cleanup()
         return d
 
     def _exec(self, argv: List[str], *, input: Optional[bytes] = None, timeout: float,
@@ -489,11 +525,11 @@ class Desktop:
         file exists. :class:`HarnessError` when the launcher ended first with a ``harness_error``; a
         :class:`DesktopError` when it ended first without one, or past ``seconds``."""
         end = time.monotonic() + seconds
-        with self._lock:
+        with _locked_until(self._lock, end):
             if self._launcher is not None:
                 raise DesktopError(f"the launcher was started already in {self.name}")
             try:
-                r = self._exec(["rm", "-rf", OUT, GATE], timeout=min(60, seconds))
+                r = self._exec(["rm", "-rf", OUT, GATE], timeout=min(60, _left(end)))
             except subprocess.TimeoutExpired:
                 raise DesktopError(f"the desktop {self.name} did not answer in time")
             if r.returncode != 0:
@@ -508,7 +544,8 @@ class Desktop:
                                     stdin=subprocess.PIPE, stdout=self._said, stderr=subprocess.STDOUT)
         while True:
             if self._launcher.poll() is not None:
-                row = self._read_row()
+                row = self._read_row(timeout=_left(end))
+                _left(end)
                 if isinstance(row, dict) and row.get("harness_error"):
                     raise HarnessError(f"the launcher ended before the agent's slot: {row['harness_error']}", row)
                 raise DesktopError(f"the launcher ended before the agent's slot (exit {self._launcher.returncode}): "
@@ -517,13 +554,14 @@ class Desktop:
             if left <= 0:
                 raise DesktopError(f"the gate did not start in {seconds:.0f} s")
             try:
-                r = self._exec(["test", "-e", GATE], timeout=min(left, 30) + ENGINE_GRACE)
+                r = self._exec(["test", "-e", GATE], timeout=min(left, 30))
             except subprocess.TimeoutExpired:
                 raise DesktopError(f"the desktop {self.name} did not answer in time")
             if r.returncode == 0:
                 break
             time.sleep(min(POLL, max(0.0, end - time.monotonic())))
-        brief = self.read(f"{OUT}/brief.md")
+        brief = self._read(f"{OUT}/brief.md", timeout=_left(end))
+        _left(end)
         if brief is None:
             raise DesktopError(f"the launcher wrote no brief.md in {self.name}")
         return brief.decode("utf-8", "replace")
@@ -579,11 +617,14 @@ class Desktop:
     def read(self, path: str) -> Optional[bytes]:
         """The bytes of ``path`` as the desktop's user reads them, or None when it cannot open it. A path that is no
         regular file, or a file past :data:`READ_LIMIT`, is :class:`Refused`."""
+        return self._read(path, timeout=FILE_SECONDS)
+
+    def _read(self, path: str, *, timeout: float) -> Optional[bytes]:
         try:
-            r = self._exec(["python3", "-I", "-c", _READ, path, str(READ_LIMIT)], timeout=FILE_SECONDS,
+            r = self._exec(["python3", "-I", "-c", _READ, path, str(READ_LIMIT)], timeout=timeout,
                            env={"HOME": HOME})
         except subprocess.TimeoutExpired:
-            raise DesktopError(f"read of {path}: no answer in {FILE_SECONDS} s")
+            raise DesktopError(f"read of {path}: no answer in {timeout} s")
         if r.returncode == 3:
             return None
         if r.returncode == 4:
@@ -604,9 +645,9 @@ class Desktop:
             raise DesktopError(f"the capture: {_said(r)}")
         return r.stdout
 
-    def _read_row(self) -> Optional[dict]:
+    def _read_row(self, *, timeout: float = FILE_SECONDS) -> Optional[dict]:
         try:
-            data = self.read(f"{OUT}/row.json")
+            data = self._read(f"{OUT}/row.json", timeout=timeout)
         except (DesktopError, Refused):
             return None
         try:
@@ -625,7 +666,8 @@ class Desktop:
         """Close the gate's pipe, wait for the launcher's exit (its check and ``row.json``), and answer the row; a
         second call answers the same row. A :class:`DesktopError` when the launcher does not end in ``seconds`` or
         wrote no row."""
-        with self._lock:
+        end = time.monotonic() + seconds
+        with _locked_until(self._lock, end):
             if self._row is not None:
                 return self._row
             p = self._launcher
@@ -633,16 +675,16 @@ class Desktop:
                 raise DesktopError(f"no launcher was started in {self.name}")
             self._close_pipe()
         try:
-            p.wait(timeout=seconds)
+            p.wait(timeout=_left(end))
         except subprocess.TimeoutExpired:
             raise DesktopError(f"the launcher did not end in {seconds:.0f} s after its gate was closed")
         finally:
             if p.poll() is not None:
                 _done(p)
-        row = self._read_row()
+        row = self._read_row(timeout=_left(end))
         if row is None:
             raise DesktopError(f"the launcher wrote no row.json (exit {p.returncode}): {self.launcher_output()[-300:]}")
-        with self._lock:
+        with _locked_until(self._lock, end):
             self._row = self._row or row
             return self._row
 
@@ -650,8 +692,12 @@ class Desktop:
         """The trial's folder copied into ``dest`` on this machine: plain files alone, no link followed, nothing
         written outside ``dest``, at most ``max_bytes`` in all (a file that does not fit is left out). The names
         kept, relative to the trial's folder."""
-        os.makedirs(dest, exist_ok=True)
-        root = os.path.realpath(dest)
+        root = os.path.abspath(dest)
+        try:
+            with _directory(root):
+                pass
+        except OSError as e:
+            raise DesktopError(f"the collection destination could not be opened: {e}")
         top = posixpath.basename(OUT)
         errors = tempfile.TemporaryFile()
         p = _spawn(["cp", f"{self.name}:{OUT}", "-"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=errors)
@@ -718,14 +764,15 @@ class Desktop:
                 with contextlib.suppress(OSError):
                     self._said.close()
         try:
-            r = _engine(["rm", "-f", self.name], timeout=REMOVE_SECONDS)
+            r = _engine(["rm", "-f", self.name], timeout=REMOVE_SECONDS, cleanup=True)
         except subprocess.TimeoutExpired:
             raise DesktopError(f"removing the desktop {self.name}: {container.DOCKER} rm did not answer in "
                                f"{REMOVE_SECONDS} s")
         if r.returncode != 0 and not _absent(r):
             raise DesktopError(f"removing the desktop {self.name}: {_said(r)}")
         try:
-            r = _engine(["container", "inspect", "--format", "{{.Id}}", self.name], timeout=INSPECT_SECONDS)
+            r = _engine(["container", "inspect", "--format", "{{.Id}}", self.name], timeout=INSPECT_SECONDS,
+                        cleanup=True)
         except subprocess.TimeoutExpired:
             raise DesktopError(f"the desktop {self.name}'s removal could not be checked")
         if r.returncode == 0 or not _absent(r):
@@ -743,22 +790,42 @@ def _inside(name: str, top: str) -> Optional[str]:
     return "/".join(parts)
 
 
+@contextlib.contextmanager
+def _directory(path: str):
+    """Open each ancestor without following links before making its child."""
+    fd = os.open(os.sep, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in os.path.abspath(path).split(os.sep)[1:]:
+            if not part:
+                continue
+            with contextlib.suppress(FileExistsError):
+                os.mkdir(part, dir_fd=fd)
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        yield fd
+    finally:
+        os.close(fd)
+
+
 def _write_under(root: str, rel: str, src) -> bool:
-    """``src`` written to ``root/rel``, its folders made under ``root``; False, and nothing written, where a folder or
-    the file would not be under ``root`` or is a link."""
+    """Replace ``root/rel`` with a fresh file. Refuse linked ancestors and entries that cannot be replaced."""
     path = os.path.join(root, *rel.split("/"))
-    parent = os.path.dirname(path)
-    try:
-        os.makedirs(parent, exist_ok=True)
-    except OSError:
-        return False
-    real = os.path.realpath(parent)
-    if real != root and not real.startswith(root + os.sep):
-        return False
-    try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o644)
-    except OSError:
-        return False
-    with os.fdopen(fd, "wb") as f:
-        shutil.copyfileobj(src, f, 1 << 20)
+    with contextlib.ExitStack() as stack:
+        try:
+            parent = stack.enter_context(_directory(os.path.dirname(path)))
+            temporary = f".collect-{secrets.token_hex(8)}"
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644, dir_fd=parent)
+        except OSError:
+            return False
+        try:
+            with os.fdopen(fd, "wb") as f:
+                shutil.copyfileobj(src, f, 1 << 20)
+            try:
+                os.replace(temporary, os.path.basename(path), src_dir_fd=parent, dst_dir_fd=parent)
+            except OSError:
+                return False
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temporary, dir_fd=parent)
     return True

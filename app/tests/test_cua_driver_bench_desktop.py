@@ -34,7 +34,7 @@ spec.loader.exec_module(desktop)
 # with the -e values as its environment and -w as its folder; `cp NAME:PATH -` writes a tar of PATH, or the archive
 # that BEHAVIOUR names. BEHAVIOUR (a JSON file) says how run, rm, image inspect and build answer.
 FAKE = r'''#!{python}
-import json, os, shutil, sys, tarfile, time
+import hashlib, json, os, shutil, sys, tarfile, time
 STATE = {state!r}
 argv = sys.argv[1:]
 with open(os.path.join(STATE, "calls.jsonl"), "a") as f:
@@ -60,7 +60,17 @@ elif cmd == "run":
         sys.exit(125)
     name = argv[argv.index("--name") + 1]
     os.makedirs(os.path.join(boxes, name))
-    print("0123456789ab" * 5 + "cdef")
+    cid = hashlib.sha256(name.encode()).hexdigest()
+    with open(os.path.join(boxes, name, "id"), "w") as f:
+        f.write(cid)
+    if "--cidfile" in argv:
+        with open(argv[argv.index("--cidfile") + 1], "x") as f:
+            f.write(cid)
+    if how.get("run") == "created_fail":
+        sys.exit(125)
+    if how.get("run") == "created_hang":
+        time.sleep(60)
+    print(cid)
 elif cmd == "exec":
     rest, env, cwd = argv[1:], {{"PATH": os.environ.get("PATH", "/usr/bin:/bin")}}, None
     while rest[0].startswith("-"):
@@ -92,6 +102,11 @@ elif cmd == "cp":
             t.add(path, arcname=os.path.basename(path))
 elif cmd == "rm":
     name = argv[-1]
+    for box in os.listdir(boxes):
+        identity = os.path.join(boxes, box, "id")
+        if os.path.isfile(identity) and open(identity).read() == name:
+            name = box
+            break
     if how.get("rm") == "fail":
         sys.stderr.write("Error response from daemon: removal in progress\n")
         sys.exit(1)
@@ -100,6 +115,11 @@ elif cmd == "rm":
     print(name)
 elif cmd == "container" and argv[1] == "inspect":
     name = argv[-1]
+    for box in os.listdir(boxes):
+        identity = os.path.join(boxes, box, "id")
+        if os.path.isfile(identity) and open(identity).read() == name:
+            name = box
+            break
     if not os.path.isdir(os.path.join(boxes, name)):
         gone(name)
     print("abc")
@@ -132,6 +152,7 @@ else:
 # until it ends ("normal"); then it writes row.json and exits.
 LAUNCHER = r'''
 import argparse, json, os, subprocess, sys, time
+print("launcher diagnostic", flush=True)
 split = sys.argv.index("--")
 ap = argparse.ArgumentParser()
 for a in ("--task", "--condition", "--out", "--label"):
@@ -256,6 +277,17 @@ def started(test, engine, **kw):
 
 
 class Start(unittest.TestCase):
+    def test_session_read_shares_the_start_deadline(self):
+        e = Engine(self)
+        session = "import json, time; time.sleep(0.6); print(json.dumps({'env': {}, 'port': True}))"
+        self.addCleanup(desktop.Desktop("late-session").remove)
+        with mock.patch.object(desktop, "_SESSION", session):
+            before = time.monotonic()
+            with self.assertRaises(desktop.DesktopError):
+                desktop.Desktop.start("bench:image", name="late-session", seconds=0.15)
+        self.assertLess(time.monotonic() - before, 0.6)
+        self.assertFalse(e.running("late-session"))
+
     def test_a_desktop_starts_with_the_readme_flags_and_reads_the_session_from_the_window_manager(self):
         e = Engine(self)
         out = io.StringIO()
@@ -275,7 +307,7 @@ class Start(unittest.TestCase):
         e.behave(run="fail")
         with self.assertRaises(desktop.DesktopError):
             desktop.Desktop.start("bench:image", name="cdb-test-1")
-        self.assertIn(["rm", "-f", "cdb-test-1"], e.calls())
+        self.assertFalse([c for c in e.calls() if c[0] == "rm"])
         e.behave()
         with self.assertRaises(desktop.DesktopError) as caught:   # no window manager within the bound
             desktop.Desktop.start("bench:image", name="cdb-test-2", seconds=1.5)
@@ -289,13 +321,37 @@ class Start(unittest.TestCase):
 
     def test_a_start_that_does_not_answer_is_bounded_and_removed(self):
         e = Engine(self)
-        e.behave(run="hang")
+        e.behave(run="created_hang")
         t = time.monotonic()
         with mock.patch.object(desktop, "RUN_SECONDS", 1):
             with self.assertRaises(desktop.DesktopError):
                 desktop.Desktop.start("bench:image", name="cdb-test-1")
         self.assertLess(time.monotonic() - t, 15)
-        self.assertIn(["rm", "-f", "cdb-test-1"], e.calls())
+        self.assertTrue([c for c in e.calls() if c[0] == "rm"])
+        self.assertFalse(e.running("cdb-test-1"))
+
+    def test_a_name_collision_does_not_remove_the_existing_container(self):
+        e = Engine(self)
+        existing = os.path.join(e.state, "containers", "existing")
+        os.makedirs(existing)
+        record = os.path.join(existing, "record")
+        with open(record, "w") as f:
+            f.write("earlier trial")
+        with self.assertRaises(desktop.DesktopError):
+            desktop.Desktop.start("bench:image", name="existing")
+        self.assertTrue(e.running("existing"))
+        with open(record) as f:
+            self.assertEqual(f.read(), "earlier trial")
+        self.assertFalse([c for c in e.calls() if c[0] == "rm"])
+
+    def test_a_failed_run_removes_the_container_it_created_by_id(self):
+        e = Engine(self)
+        e.behave(run="created_fail")
+        with self.assertRaises(desktop.DesktopError):
+            desktop.Desktop.start("bench:image", name="unfinished")
+        self.assertFalse(e.running("unfinished"))
+        removal = next(c for c in e.calls() if c[0] == "rm")
+        self.assertRegex(removal[-1], r"^[0-9a-f]{64}$")
 
     def test_an_interrupted_start_removes_what_it_made(self):
         e = Engine(self)
@@ -310,8 +366,54 @@ class Start(unittest.TestCase):
                 desktop.Desktop.start("bench:image", name="cdb-test-1")
         self.assertFalse(e.running("cdb-test-1"))
 
+    def test_shutdown_during_start_still_removes_what_it_made(self):
+        e = Engine(self)
+        real = desktop._engine
+
+        def shutdown(args, **kw):
+            if args[0] == "exec":
+                desktop.end_clients()
+                raise KeyboardInterrupt
+            return real(args, **kw)
+        with mock.patch.object(desktop, "_CLIENTS_CLOSED", False), mock.patch.object(desktop, "_engine", shutdown):
+            with self.assertRaises(KeyboardInterrupt):
+                desktop.Desktop.start("bench:image", name="unfinished")
+            self.assertFalse(e.running("unfinished"))
+            self.assertEqual([c[0] for c in e.calls()], ["run", "rm", "container"])
+            with self.assertRaises(desktop.DesktopError):
+                real(["logs", "unfinished"], timeout=1)
+
 
 class Bench(unittest.TestCase):
+    def test_links_and_special_files_are_refused_before_hashing_or_copying(self):
+        e = Engine(self)
+        up = e.bench()
+        bench = desktop.bench_folder(up)
+        outside = os.path.join(e.root, "outside")
+        with open(outside, "wb") as f:
+            f.write(b"private fixture bytes")
+        bad = os.path.join(bench, "bad")
+        real_open = open
+
+        def checked_open(path, *args, **kw):
+            self.assertNotEqual(os.fspath(path), bad, "unsafe benchmark input was opened")
+            return real_open(path, *args, **kw)
+
+        for kind in ("file link", "directory link", "fifo"):
+            if kind == "fifo":
+                os.mkfifo(bad)
+            else:
+                os.symlink(outside if kind == "file link" else e.root, bad)
+            try:
+                for operation in (lambda: desktop.tag(up),
+                                  lambda: desktop._build("fixture:image", bench, None, time.monotonic() + 5)):
+                    with self.subTest(kind=kind, operation=operation), mock.patch("builtins.open", checked_open):
+                        with self.assertRaises(desktop.DesktopError):
+                            operation()
+            finally:
+                os.unlink(bad)
+        self.assertFalse([c for c in e.calls() if c[0] == "build"])
+
     def test_the_pin_goes_over_the_checkout_and_its_node_modules_stay(self):
         e = Engine(self)
         d = started(self, e)
@@ -339,6 +441,25 @@ class Bench(unittest.TestCase):
         up = e.bench()
         first = desktop.tag(up)
         self.assertRegex(first, r"^nullius/env-cua-driver-bench-desktop:[0-9a-f]{12}$")
+        recipe = os.path.join(e.root, "recipe")
+        for rel in (desktop.DOCKERFILE, desktop.REQUIREMENTS):
+            os.makedirs(os.path.dirname(os.path.join(recipe, rel)), exist_ok=True)
+            shutil.copyfile(os.path.join(desktop.HERE, rel), os.path.join(recipe, rel))
+        with mock.patch.object(desktop, "HERE", recipe):
+            self.assertEqual(desktop.tag(up), first)
+            for rel in (desktop.DOCKERFILE, desktop.REQUIREMENTS):
+                with self.subTest(recipe=rel):
+                    path = os.path.join(recipe, rel)
+                    with open(path, "rb") as f:
+                        original = f.read()
+                    with open(path, "ab") as f:
+                        f.write(b"\n# changed recipe input\n")
+                    try:
+                        self.assertNotEqual(desktop.tag(up), first)
+                    finally:
+                        with open(path, "wb") as f:
+                            f.write(original)
+                    self.assertEqual(desktop.tag(up), first)
         os.makedirs(os.path.join(up, desktop.BENCH_DIR, "node_modules"))
         with open(os.path.join(up, desktop.BENCH_DIR, "node_modules", "x"), "w") as f:
             f.write("not the pin")
@@ -361,7 +482,18 @@ class Image(unittest.TestCase):
         e = Engine(self)
         up = e.bench()
         logs = os.path.join(e.root, "logs")
-        with mock.patch.dict(os.environ, {"TMPDIR": e.root}):
+        real = desktop._spawn
+
+        def checked_build(args, **kw):
+            if args[0] == "build":
+                for rel, source in desktop._bench_files(desktop.bench_folder(up)):
+                    copied = os.path.join(args[-1], "bench", rel)
+                    with open(source, "rb") as src, open(copied, "rb") as dst:
+                        self.assertEqual(dst.read(), src.read(), rel)
+                    self.assertEqual(os.stat(copied).st_mode & 0o111, os.stat(source).st_mode & 0o111, rel)
+            return real(args, **kw)
+
+        with mock.patch.dict(os.environ, {"TMPDIR": e.root}), mock.patch.object(desktop, "_spawn", checked_build):
             tempfile.tempdir = None
             try:
                 ref, found = desktop.image("build", up, logs)
@@ -390,11 +522,68 @@ class Trial(unittest.TestCase):
         d.put_bench(e.bench(mode))
         return e, d
 
+    def test_brief_read_shares_the_launch_deadline(self):
+        e, d = self.launched()
+        mark = os.path.join(e.root, "reading")
+        read = f"import time; open({mark!r}, 'w').close(); time.sleep(0.8)\n" + desktop._READ
+        with mock.patch.object(desktop, "_READ", read), mock.patch.object(desktop, "POLL", 0.01):
+            before = time.monotonic()
+            with self.assertRaises(desktop.DesktopError):
+                d.launch("IR-02", 0, "foreground", seconds=0.4)
+        self.assertTrue(os.path.isfile(mark))
+        self.assertLess(time.monotonic() - before, 0.8)
+
+    def test_row_read_shares_the_finish_deadline(self):
+        e, d = self.launched()
+        d.launch("IR-02", 0, "foreground")
+        read = "import time; time.sleep(0.6)\n" + desktop._READ
+        with mock.patch.object(desktop, "_READ", read):
+            before = time.monotonic()
+            with self.assertRaises(desktop.DesktopError):
+                d.finish(seconds=0.15)
+        self.assertLess(time.monotonic() - before, 0.6)
+
+    def test_waiting_for_the_lock_shares_the_launch_and_finish_deadlines(self):
+        e, d = self.launched()
+        for operation in (lambda: d.launch("IR-02", 0, "foreground", seconds=0.05),
+                          lambda: d.finish(seconds=0.05)):
+            errors = []
+
+            def invoke():
+                try:
+                    operation()
+                except Exception as error:
+                    errors.append(error)
+            with self.subTest(operation=operation):
+                d._lock.acquire()
+                worker = threading.Thread(target=invoke)
+                worker.start()
+                try:
+                    worker.join(0.3)
+                    blocked = worker.is_alive()
+                finally:
+                    d._lock.release()
+                    worker.join(3)
+                self.assertFalse(worker.is_alive())
+                self.assertFalse(blocked)
+                self.assertEqual(len(errors), 1)
+                self.assertIsInstance(errors[0], desktop.DesktopError)
+
     def test_a_trial_from_the_gate_to_the_row(self):
         e, d = self.launched()
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            brief = d.launch("IR-02", 3, "foreground")
+        with tempfile.TemporaryFile() as out:
+            saved = os.dup(1)
+            try:
+                sys.stdout.flush()
+                os.dup2(out.fileno(), 1)
+                brief = d.launch("IR-02", 3, "foreground")
+            finally:
+                sys.stdout.flush()
+                os.dup2(saved, 1)
+                os.close(saved)
+            out.seek(0)
+            self.assertEqual(out.read(), b"")
+        self.assertIn("launcher diagnostic", d.launcher_output())
         self.assertEqual(brief, "Do IR-02.\n")
         self.assertTrue(os.path.exists(desktop.GATE))
         self.assertFalse(d.launcher_ended())
@@ -410,13 +599,13 @@ class Trial(unittest.TestCase):
         self.assertEqual(row["cwd"], os.path.join(desktop.BENCH_IN, desktop.HARNESS))
         self.assertIs(d.finish(), row)
         self.assertTrue(d.launcher_ended())
-        self.assertEqual(out.getvalue(), "")
         d.remove()
         self.assertFalse(e.running("cdb-test-1"))
 
     def test_the_ports_operations_as_the_desktops_user(self):
         e, d = self.launched()
         d.launch("IR-02", 0, "foreground")
+        before = len(e.calls())
         r = d.python("import os, sys; print(os.environ['DISPLAY'], os.environ['XAUTHORITY'], os.getcwd()); "
                      "sys.stderr.write('e'); sys.exit(4)")
         self.assertEqual(r, {"status": "success", "output": f":7 {desktop.PORT_XAUTHORITY} {desktop.HOME}\n",
@@ -442,6 +631,11 @@ class Trial(unittest.TestCase):
         with mock.patch.object(desktop, "_CAPTURE", "print('no picture')"):
             with self.assertRaises(desktop.DesktopError):
                 d.capture()
+        calls = e.calls()[before:]
+        self.assertEqual(len(calls), 9)
+        for call in calls:
+            self.assertEqual(call[0], "exec")
+            self.assertEqual(call[call.index("-u") + 1], desktop.USER)
         d.finish()
 
     def test_code_past_its_bound_is_none_and_its_group_is_killed(self):
@@ -533,6 +727,78 @@ class Trial(unittest.TestCase):
 
 
 class Collect(unittest.TestCase):
+    def archive(self, engine, *names):
+        path = os.path.join(engine.root, "input.tar")
+        with tarfile.open(path, "w") as archive:
+            for name in names:
+                info = tarfile.TarInfo("trial/" + name)
+                info.size = len(b"replacement")
+                archive.addfile(info, io.BytesIO(b"replacement"))
+        engine.behave(cp_archive=path)
+
+    def test_an_existing_hardlink_is_replaced_without_changing_its_other_name(self):
+        e = Engine(self)
+        d = started(self, e)
+        dest = os.path.join(e.root, "dest")
+        os.mkdir(dest)
+        outside = os.path.join(e.root, "outside")
+        with open(outside, "wb") as f:
+            f.write(b"original")
+        target = os.path.join(dest, "row.json")
+        os.link(outside, target)
+        self.archive(e, "row.json")
+        self.assertEqual(d.collect(dest), ["row.json"])
+        with open(outside, "rb") as f:
+            self.assertEqual(f.read(), b"original")
+        with open(target, "rb") as f:
+            self.assertEqual(f.read(), b"replacement")
+        self.assertNotEqual(os.stat(outside).st_ino, os.stat(target).st_ino)
+
+    def test_an_existing_fifo_is_replaced_without_opening_it_for_writing(self):
+        e = Engine(self)
+        d = started(self, e)
+        dest = os.path.join(e.root, "dest")
+        os.mkdir(dest)
+        target = os.path.join(dest, "row.json")
+        os.mkfifo(target)
+        self.archive(e, "row.json")
+        real_open = os.open
+
+        def checked_open(path, flags, *args, **kw):
+            if os.fspath(path) in (target, "row.json"):
+                self.assertFalse(flags & (os.O_WRONLY | os.O_RDWR), "the existing FIFO was opened for writing")
+            return real_open(path, flags, *args, **kw)
+        with mock.patch.object(os, "open", checked_open):
+            self.assertEqual(d.collect(dest), ["row.json"])
+        self.assertTrue(stat.S_ISREG(os.lstat(target).st_mode))
+        with open(target, "rb") as f:
+            self.assertEqual(f.read(), b"replacement")
+
+    def test_directory_links_are_refused_before_creating_any_child(self):
+        e = Engine(self)
+        d = started(self, e)
+        dest, outside = os.path.join(e.root, "dest"), os.path.join(e.root, "outside")
+        os.makedirs(os.path.join(dest, "real"))
+        os.mkdir(outside)
+        os.symlink(outside, os.path.join(dest, "escape"))
+        os.symlink(os.path.join(dest, "real"), os.path.join(dest, "alias"))
+        self.archive(e, "escape/new/deep/file", "alias/new/deep/file")
+        self.assertEqual(d.collect(dest), [])
+        self.assertEqual(os.listdir(outside), [])
+        self.assertEqual(os.listdir(os.path.join(dest, "real")), [])
+
+    def test_destination_ancestors_are_checked_before_creating_children(self):
+        e = Engine(self)
+        d = started(self, e)
+        outside = os.path.join(e.root, "outside")
+        os.mkdir(outside)
+        alias = os.path.join(e.root, "alias")
+        os.symlink(outside, alias)
+        self.archive(e, "row.json")
+        with self.assertRaises(desktop.DesktopError):
+            d.collect(os.path.join(alias, "new", "deep"))
+        self.assertEqual(os.listdir(outside), [])
+
     def test_plain_files_alone_within_the_size_and_nothing_outside_dest(self):
         e = Engine(self)
         d = started(self, e)
@@ -585,6 +851,19 @@ class Collect(unittest.TestCase):
 
 
 class Remove(unittest.TestCase):
+    def test_removal_and_its_check_still_run_after_clients_close(self):
+        e = Engine(self)
+        d = started(self, e)
+        with mock.patch.object(desktop, "_CLIENTS_CLOSED", False):
+            desktop.end_clients()
+            e.behave(rm="stays")
+            with self.assertRaisesRegex(desktop.DesktopError, "still there"):
+                d.remove()
+            e.behave()
+            d.remove()
+            self.assertFalse(e.running("cdb-test-1"))
+            self.assertEqual([c[0] for c in e.calls()[-4:]], ["rm", "container", "rm", "container"])
+
     def test_remove_checks_that_the_container_is_gone(self):
         e = Engine(self)
         d = started(self, e)
