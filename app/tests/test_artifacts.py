@@ -115,7 +115,7 @@ class DeclaredRecords(unittest.TestCase):
             ("r1-events.jsonl", "Its folder", "events.jsonl", "verifier/own/events.jsonl", 4),
             ("r1-row.json", "Its folder", "row.json", "verifier/own/row.json", 11)])
         page = artifacts.read(self.trial, "r1-events.jsonl", 1, self.RECORDS)
-        self.assertEqual((page["label"], page["filename"], page["text"]), ("Its folder", "verifier/own/events.jsonl", "a\nb\n"))
+        self.assertEqual((page["label"], page["filename"], page["text"]), ("Its folder: events.jsonl", "verifier/own/events.jsonl", "a\nb\n"))
         self.assertEqual(artifacts.whole(self.trial, "r0", self.RECORDS), ('{"seed": 7}', False))
         self.assertEqual(artifacts.describe("r0", self.RECORDS), ("The row", "verifier/own/row.json"))
 

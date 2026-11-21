@@ -52,12 +52,20 @@ class TrialRecords(unittest.TestCase):
         self.assertNotIn("<i>odd", tab)
         self.assertIn(f"/trial/{self.job.job_id}/t1/artifact/r0", tab)
         self.assertIn(f"/trial/{self.job.job_id}/t1/artifact/r1-brief.md/download", tab)
+        head = '<tr class="artifact-declared"><td colspan="3" class="muted">The benchmark\'s own records</td></tr>'
+        self.assertEqual(tab.replace("&#39;", "'").count(head), 1)      # one heading, between Nullius's and its own
+        before, after = tab.replace("&#39;", "'").split(head)
+        self.assertIn("Result record", before)
+        self.assertNotIn("Its folder", before)
+        self.assertIn("<td>The task's text</td>", after.replace("&#39;", "'"))
 
     def test_a_declared_record_is_read_and_downloaded_by_its_key(self):
         page = self.get(f"/trial/{self.job.job_id}/t1/artifact/r1-brief.md")
         self.assertEqual(page.status_code, 200)
         html = page.get_data(as_text=True)
         self.assertIn("verifier/own/brief.md", html)
+        self.assertIn("<title>Its folder: brief.md", html)                     # a folder's file under its own name
+        self.assertEqual(artifacts.describe("r0", RECORDS)[0], "The task's text")  # a file declared alone, as declared
         self.assertIn("Set the field, then press Apply.", html)
         got = self.get(f"/trial/{self.job.job_id}/t1/artifact/r0/download")
         self.assertEqual((got.status_code, got.headers["Content-Disposition"]), (200, 'attachment; filename="brief.md"'))

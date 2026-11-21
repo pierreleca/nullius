@@ -68,7 +68,8 @@ def declared(source) -> list:
 
 
 def _declared(key, records):
-    """(label, the path in the trial, the record's own path) of a declared record's key."""
+    """(label, the path in the trial, the record's own path) of a declared record's key: a file of a declared folder
+    is labelled by the folder's label and its own name."""
     m = DECLARED_KEY.fullmatch(key or "")
     if not m or int(m["n"]) >= len(records):
         raise LookupError(key)
@@ -76,7 +77,8 @@ def _declared(key, records):
     name = m["name"]
     if name is not None and (name in (".", "..") or "/" in name or "\0" in name):
         raise LookupError(key)
-    return record["label"], record["path"] + ("/" + name if name is not None else ""), record["path"]
+    label = record["label"] if name is None else f"{record['label']}: {name}"
+    return label, record["path"] + ("/" + name if name is not None else ""), record["path"]
 
 
 def _open_under(trial_dir, path, flags):
@@ -134,7 +136,8 @@ def path_for(trial_dir, key):
 
 
 def _declared_rows(trial_dir, records):
-    """The declared records that exist: a file, or each file of a folder, by name, one level, no link."""
+    """The declared records that exist: a file, or each file of a folder, by name, one level, no link; each row
+    says it is ``declared``."""
     rows = []
     for n, record in enumerate(records):
         try:
@@ -146,7 +149,7 @@ def _declared_rows(trial_dir, records):
             if stat.S_ISREG(info.st_mode):
                 if _text(fd):
                     rows.append(dict(key=f"r{n}", label=record["label"], filename=record["path"], part="",
-                                     exists=True, size=info.st_size))
+                                     exists=True, size=info.st_size, declared=True))
             elif stat.S_ISDIR(info.st_mode):
                 with os.scandir(fd) as entries:
                     names = sorted(e.name for e in entries if e.is_file(follow_symlinks=False))[:FOLDER_FILES]
@@ -159,7 +162,7 @@ def _declared_rows(trial_dir, records):
                         info = os.fstat(one)
                         if stat.S_ISREG(info.st_mode) and _text(one):
                             rows.append(dict(key=f"r{n}-{name}", label=record["label"], part=name, exists=True,
-                                             filename=f"{record['path']}/{name}", size=info.st_size))
+                                             filename=f"{record['path']}/{name}", size=info.st_size, declared=True))
                     finally:
                         os.close(one)
         finally:
