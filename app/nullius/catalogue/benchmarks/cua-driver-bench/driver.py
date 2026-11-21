@@ -87,7 +87,7 @@ ACTIONS = os.path.join("verifier", "computer-actions.jsonl")    # each step's ac
 EVIDENCE = os.path.join("verifier", "cdb")                      # the launcher's trial folder
 REPORT = os.path.join("verifier", "report.json")                # what the pages read: the checks and measures by name
 HELD = os.path.join(".work", "cdb-held")              # in the job: the run's files sent once (computer_port.Held)
-LAUNCHER = "Bench's launcher"                         # what ended the loop when the launcher ended the trial first,
+LAUNCHER = "Stopped by the bench"                     # what ended the loop when the launcher ended the trial first,
                                                       # in the words the pages show (Done, Step limit, Task end)
 USE = "Use the tools of the MCP server named computer, given to this session: they show and drive a desktop."
 # The bench's two rules, in the words its runner gives its agent at the tested commit: the shared system prompt
