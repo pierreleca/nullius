@@ -176,6 +176,17 @@ class DeclaredRecords(unittest.TestCase):
                 artifacts.whole(self.trial, key, records)
         self.assertEqual(artifacts.whole(self.trial, "r1-row.json", records), ('{"seed": 7}', False))
 
+    def test_a_name_that_is_not_printable_or_not_utf8_is_neither_listed_nor_read(self):
+        own = os.fsencode(self.trial / "verifier" / "own")
+        for name in (b"bad-\xff.txt", b"two\nlines.txt", b"tab\there.txt"):
+            with open(os.path.join(own, name), "w") as f:
+                f.write("x\n")
+        keys = [r["key"] for r in self.own()]
+        self.assertEqual(keys, ["r0", "r1-events.jsonl", "r1-row.json"])
+        for name in ("bad-\udcff.txt", "two\nlines.txt", "tab\there.txt"):
+            with self.subTest(name=name), self.assertRaises(LookupError):
+                artifacts.whole(self.trial, f"r1-{name}", self.RECORDS)
+
     def test_a_folder_lists_at_most_its_bound(self):
         for i in range(5):
             (self.trial / "verifier" / "own" / f"f{i}.txt").write_text("x")

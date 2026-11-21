@@ -75,10 +75,17 @@ def _declared(key, records):
         raise LookupError(key)
     record = records[int(m["n"])]
     name = m["name"]
-    if name is not None and (name in (".", "..") or "/" in name or "\0" in name):
+    if name is not None and (name in (".", "..") or "/" in name or not _plain_name(name)):
         raise LookupError(key)
     label = record["label"] if name is None else f"{record['label']}: {name}"
     return label, record["path"] + ("/" + name if name is not None else ""), record["path"]
+
+
+def _plain_name(name) -> bool:
+    """Whether a file's name in a declared folder can be listed and served: printable text alone. A name that is not
+    valid UTF-8 comes back from the system with a surrogate in it, which is not printable, as no control character is;
+    such a file is neither listed nor read."""
+    return name.isprintable()
 
 
 def _open_under(trial_dir, path, flags):
@@ -157,6 +164,8 @@ def _declared_rows(trial_dir, records):
                 first, more = len(rows), False
                 count = 0
                 for name in names:
+                    if not _plain_name(name):
+                        continue
                     try:
                         one = os.open(name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=fd)
                     except OSError:

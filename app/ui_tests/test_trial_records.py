@@ -92,8 +92,7 @@ class TrialRecords(unittest.TestCase):
                 self.assertEqual(self.get(f"/trial/{self.job.job_id}/t1/artifact/{key}/download").status_code, 404)
 
     def test_download_names_are_quoted_without_controls_and_keep_unicode(self):
-        for name, clean in [('line\nbreak\r\t\x01\x7f\x85.txt', 'linebreak.txt'),
-                            ('a"quoted\\name.txt', 'a"quoted\\name.txt'),
+        for name, clean in [('a"quoted\\name.txt', 'a"quoted\\name.txt'),
                             ('résumé-文件.txt', 'résumé-文件.txt')]:
             with self.subTest(name=name):
                 with open(os.path.join(self.root, "t1", "verifier", "own", name), "w") as handle:
@@ -109,6 +108,22 @@ class TrialRecords(unittest.TestCase):
                     self.assertTrue(header.isascii())
                 self.assertEqual(response.get_data(as_text=True), "record")
 
+
+    def test_a_name_that_is_not_printable_or_not_utf8_is_left_out_and_refused(self):
+        own = os.fsencode(os.path.join(self.root, "t1", "verifier", "own"))
+        for name in (b"bad-\xff.txt", b"line\nbreak\r\t\x01\x7f\x85.txt"):
+            with open(os.path.join(own, name), "w") as handle:
+                handle.write("record")
+        page = self.get(f"/trial/{self.job.job_id}/t1")
+        self.assertEqual(page.status_code, 200)
+        tab = page.get_data(as_text=True).split('id="trial-artifacts"', 1)[1].split("</section>", 1)[0]
+        self.assertIn("/artifact/r1-brief.md", tab)
+        self.assertNotIn("/artifact/r1-bad", tab)
+        self.assertNotIn("/artifact/r1-line", tab)
+        for key in (quote(b"r1-bad-\xff.txt"), quote("r1-line\nbreak\r\t\x01\x7f\x85.txt", safe="")):
+            with self.subTest(key=key):
+                self.assertEqual(self.get(f"/trial/{self.job.job_id}/t1/artifact/{key}").status_code, 404)
+                self.assertEqual(self.get(f"/trial/{self.job.job_id}/t1/artifact/{key}/download").status_code, 404)
 
 if __name__ == "__main__":
     unittest.main()
