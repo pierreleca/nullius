@@ -34,7 +34,7 @@ DEFAULT_TRACE_NAME = "trace.json"
 # The shape this module produces. A workspace caches parsed Jobs keyed on it,
 # so bump it when a Trial or Job field is added, renamed or means something
 # new — otherwise a cache written by the old parse is read back as current.
-SCHEMA = "26"
+SCHEMA = "27"
 
 # What a rate-limit record in `agent/gateway.log` looks like. The agent's SDK
 # retries a 429 below the harness (an agent's `max_retries` reaching its
@@ -209,7 +209,7 @@ def _ended_by(res: dict, trial_dir: str) -> str:
     if ended in ("done", "fail", "steps"):
         return ended
     if isinstance(ended, str) and ended.strip() and ended != "turn" and len(ended.strip()) <= ENDED_CHARS:
-        return ended.strip()                       # the benchmark's own end, which the pages have no label for
+        return redact(ended.strip())               # the benchmark's own end, which the pages have no label for
     if cut == "end":
         return "end"
     return "agent" if ended == "turn" else ""

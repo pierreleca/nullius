@@ -250,6 +250,19 @@ class EndedByTest(unittest.TestCase):
         self.assertEqual(self.trial(ended="done", standard=False).ended_by, "")
         self.assertEqual(self.trial(scored=False).ended_by, "")
 
+    def test_an_unknown_end_is_redacted_before_it_is_cached(self):
+        from nullius import workspace
+
+        secret = "sk-" + "example123456789012345"
+        trial = self.trial(ended=secret)
+        self.assertEqual(trial.ended_by, "[REDACTED]")
+        job = parse.Job("j", trial.dir, "model", "example", 1, None, None, [trial])
+        ws = workspace.Workspace("test", "Test", [], "", "", os.path.join(trial.dir, "workspace"))
+        path = os.path.join(ws.jobs_dir, "cached.json")
+        workspace._write_cache(ws, path, "sig", "head", job)
+        with open(path) as handle:
+            self.assertEqual(json.load(handle)["job"]["trials"][0]["ended_by"], "[REDACTED]")
+
     def test_score_links_are_not_followed(self):
         for part in ("score", "verifier", "trial"):
             with self.subTest(part=part):
