@@ -26,7 +26,7 @@ score    - the turn's end; the loop ends, the gate's input closes, the launcher 
            task's checker and writes the row. The verdict is the row's: in the foreground its passed (the check and
            no violation), in the background its background completion (that, and the eight measures of the
            simulated user's window measured and held). The detail, which the trial's page shows under its names,
-           holds the condition, the seed, the checker's partial score and its own pass, its named checks, the
+           holds why a trial that did not pass failed, first, then the condition, the seed, the checker's partial score and its own pass, its named checks, the
            guard's violations, in the background the eight measures (held, not held or not measured) and whether
            the window was measured, beside the steps taken, the budget and what ended the loop; the launcher's whole
            row stays in verifier/cdb. verifier/report.json names the task's checks that passed and failed, for the
@@ -624,8 +624,8 @@ def verdict(u, row):
     detail.update({"timed out": row.get("timed_out"), "image": u.image_id, "checks": _checks(evaluation)})
     if background:
         detail["measures held"] = _measures(a22, measured.get("measured"))
-    if not passed:
-        detail["why"] = _why(detail, guard, background)
+    if not passed:                                       # the reason first: what a reader opens a failed trial for
+        detail = {"why": _why(detail, guard, background), **detail}
     detail.update(steps=b.used if b is not None else 0, steps_limit=b.steps if b is not None else u.steps,
                   ended=b.ended_by if b is not None else "")
     return {"reward": 1.0 if passed else 0.0, "passed": passed, "detail": detail}

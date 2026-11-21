@@ -689,6 +689,7 @@ class Driver(unittest.TestCase):
         d = got["detail"]
         self.assertEqual((d["checker passed"], d["violations"]), (True, ["front at 41 s: a terminal"]))
         self.assertEqual(d["why"], "the guard saw front: a terminal")
+        self.assertEqual(list(d)[:2], ["why", "condition"])            # the trial's page shows the reason first
 
     def test_the_foreground_keeps_its_pass_and_its_detail(self):
         # the row's own pass (the check and no violation), whatever its block of measures says; no background field
