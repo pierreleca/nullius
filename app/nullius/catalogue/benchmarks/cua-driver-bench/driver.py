@@ -506,8 +506,8 @@ def _checks(evaluation):
 
 
 def verdict(u, row, kept):
-    """The row's verdict and its detail; a harness error is the environment's, a row of another trial the
-    verifier's."""
+    """The row's verdict and its detail; a harness error or a row without the launcher's check is the
+    environment's, a row of another trial the verifier's."""
     if not isinstance(row, dict):
         raise RuntimeError("VerifierError: the trial's row is not an object")
     if row.get("harness_error"):
@@ -516,7 +516,10 @@ def verdict(u, row, kept):
     for key, want in (("task", u.task), ("run_index", u.run_index), ("condition", u.condition)):
         if row.get(key) != want:
             raise RuntimeError(f"VerifierError: the trial's row is of {key} {row.get(key)!r}, not {want!r}")
-    evaluation = row.get("evaluation") if isinstance(row.get("evaluation"), dict) else {}
+    if not isinstance(row.get("evaluation"), dict) or "passed" not in row:     # it raised after the agent's slot
+        raise RuntimeError("EnvironmentSetupError: the bench's launcher ended without its check, which is no one's "
+                           "result")
+    evaluation = row["evaluation"]
     guard = row.get("gui_only") if isinstance(row.get("gui_only"), dict) else {}
     a15 = row.get("a15") if isinstance(row.get("a15"), dict) else {}
     a22 = row.get("a22") if isinstance(row.get("a22"), dict) else {}

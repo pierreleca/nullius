@@ -675,6 +675,15 @@ class Driver(unittest.TestCase):
         self.assertTrue(retries.retryable({"exception_info": {"exception_type": "EnvironmentSetupError"}}))
         self.assertTrue(os.path.isfile(self.verifier(ws, os.path.join("cdb", "row.json"))))
 
+    def test_a_row_the_launcher_wrote_without_its_check_is_the_environments(self):
+        early = ("task", "run_index", "seed", "condition", "mode", "platform", "label", "started", "screen",
+                 "pointer_parked", "sentinel_front_at_start", "frames")
+        self.stand.rows = lambda task, i, c: dict({k: v for k, v in row(task, i, c).items() if k in early}, finished=1100.0)
+        ws, _ = self.unit()
+        with self.assertRaisesRegex(RuntimeError, "^EnvironmentSetupError: the bench's launcher ended without its check"):
+            driver.score("foreground__MB-09", ws, [], "")
+        self.assertTrue(os.path.isfile(self.verifier(ws, os.path.join("cdb", "row.json"))))
+
     def test_a_row_of_another_trial_or_none_is_the_verifiers(self):
         self.stand.rows = lambda task, i, c: row(task, i + 1, c)
         ws, _ = self.unit()
