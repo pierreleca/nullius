@@ -236,10 +236,10 @@ class EndedByTest(unittest.TestCase):
 
     def test_a_benchmarks_own_end_reads_as_it_wrote_it(self):
         """An end the pages have no label for is said as the benchmark's detail wrote it, before a cut after the
-        benchmark's end; one too long to be a word of it, or not text, is none."""
+        benchmark's end. A value that is not text is none."""
         long = "x" * (parse.ENDED_CHARS + 1)
         cases = [((None, "guard"), "guard", "guard"), (("end", "guard"), "guard", "guard"), ((None, " its own "), "its own", "its own"),
-                 (("time", "guard"), "time", "Time limit"), ((None, long), "", ""), (("end", long), "end", "Task end"),
+                 (("time", "guard"), "time", "Time limit"), ((None, long), long, long), (("end", long), long, long),
                  ((None, "   "), "", ""), ((None, 7), "", ""), ((None, ["guard"]), "", "")]
         for (cut, ended), by, label in cases:
             with self.subTest(cut=cut, ended=ended):
@@ -262,6 +262,14 @@ class EndedByTest(unittest.TestCase):
         workspace._write_cache(ws, path, "sig", "head", job)
         with open(path) as handle:
             self.assertEqual(json.load(handle)["job"]["trials"][0]["ended_by"], "[REDACTED]")
+
+    def test_a_long_unknown_end_is_kept_with_a_short_preview(self):
+        ended = "launcher stopped after the window focus changed"
+        for cut in (None, "end"):
+            with self.subTest(cut=cut):
+                trial = self.trial(cut=cut, ended=ended)
+                self.assertEqual((trial.ended_by, trial.ended_label), (ended, ended))
+                self.assertEqual(trial.ended_preview, ended[:parse.ENDED_CHARS] + "…")
 
     def test_score_links_are_not_followed(self):
         for part in ("score", "verifier", "trial"):

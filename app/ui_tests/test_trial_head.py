@@ -242,6 +242,32 @@ async function render(noun, data) {
         self.assertNotIn("ended-by", trial.get_data(as_text=True))
 
 
+    def test_a_long_end_has_a_preview_and_full_text_on_both_pages(self):
+        root = os.path.join(self.tmp.name, "parts-arm")
+        shutil.copytree(NATIVE / "parts-arm", root)
+        ended = 'launcher stopped after the window focus changed <"again">'
+        with open(os.path.join(root, "t1", "verifier", "score.json"), "w") as handle:
+            json.dump({"reward": 1, "detail": {"ended": ended}}, handle)
+        path = os.path.join(root, "t1", "result.json")
+        with open(path) as handle:
+            result = json.load(handle)
+        with open(path, "w") as handle:
+            json.dump(dict(result, standard={"benchmark": "example"}), handle)
+        job = parse.parse_job(root)
+        with patch.object(web.shared, "_jobs_for_request", return_value=[job]):
+            for path in (f"/trial/{job.job_id}/t1", f"/job/{job.job_id}"):
+                with self.subTest(path=path):
+                    response = self.client.get(path)
+                    self.addCleanup(response.close)
+                    self.assertEqual(response.status_code, 200)
+                    html = response.get_data(as_text=True)
+                    badge = re.search(r'<span class="[^"]*ended-by" title="([^"]*)">([^<]*)</span>', html)
+                    self.assertIsNotNone(badge)
+                    self.assertEqual(unescape(badge[1]), ended)
+                    self.assertEqual(unescape(badge[2]), ended[:parse.ENDED_CHARS] + "…")
+                    self.assertNotIn('<"again">', html)
+
+
 class RecordDownload(unittest.TestCase):
     def setUp(self):
         self.stack = ExitStack()

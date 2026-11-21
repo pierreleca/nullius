@@ -34,7 +34,7 @@ DEFAULT_TRACE_NAME = "trace.json"
 # The shape this module produces. A workspace caches parsed Jobs keyed on it,
 # so bump it when a Trial or Job field is added, renamed or means something
 # new — otherwise a cache written by the old parse is read back as current.
-SCHEMA = "27"
+SCHEMA = "28"
 
 # What a rate-limit record in `agent/gateway.log` looks like. The agent's SDK
 # retries a 429 below the harness (an agent's `max_retries` reaching its
@@ -116,7 +116,7 @@ def _retries_of(res: dict) -> int:
 
 
 # What ended an agent's work on a standard trial (`Trial.ended_by`), by its name; any other end a benchmark's
-# detail names, of at most ENDED_CHARS characters, reads as written
+# detail names reads as written, with a preview of at most ENDED_CHARS characters on the pages.
 ENDED_LABELS = {"agent": "Agent", "done": "Done", "fail": "Fail", "steps": "Step limit", "time": "Time limit",
                 "calls": "Call cap", "end": "Task end"}
 ENDED_CHARS = 40
@@ -195,7 +195,7 @@ def _ended_by(res: dict, trial_dir: str) -> str:
     """What ended the agent's work on a standard trial: the run's cut when its record has one (``standard.cut``:
     ``time``, the agent's time; ``calls``, the run's cap on its model calls); else the benchmark's own end as its
     score's detail says it (``detail.ended``: ``done``, ``fail``, ``steps``; ``turn``, the agent ended its turn
-    first: ``agent``; any other word of the benchmark's, up to ``ENDED_CHARS``, as written); ``end`` for a turn cut
+    first: ``agent``; any other text of the benchmark's, redacted); ``end`` for a turn cut
     after the benchmark's end with no detail to name it. "" when the trial says none of these."""
     std = res.get("standard") if isinstance(res.get("standard"), dict) else None
     if std is None:
@@ -208,7 +208,7 @@ def _ended_by(res: dict, trial_dir: str) -> str:
     ended = detail.get("ended") if isinstance(detail, dict) else None
     if ended in ("done", "fail", "steps"):
         return ended
-    if isinstance(ended, str) and ended.strip() and ended != "turn" and len(ended.strip()) <= ENDED_CHARS:
+    if isinstance(ended, str) and ended.strip() and ended != "turn":
         return redact(ended.strip())               # the benchmark's own end, which the pages have no label for
     if cut == "end":
         return "end"
@@ -359,6 +359,11 @@ class Trial:
     @property
     def ended_label(self) -> str:
         return ENDED_LABELS.get(self.ended_by, self.ended_by)
+
+    @property
+    def ended_preview(self) -> str:
+        text = self.ended_label
+        return text[:ENDED_CHARS] + "…" if len(text) > ENDED_CHARS else text
 
     @property
     def dur_phases(self) -> float:
