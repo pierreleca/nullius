@@ -739,13 +739,20 @@ class Driver(unittest.TestCase):
         os.symlink(os.path.join(outside, "elsewhere.txt"), os.path.join(trial, "link.txt"))
         with open(os.path.join(trial, "large.log"), "wb") as f:
             f.write(b"x" * 8192)
+        for name in ("a.log", "b.log"):
+            with open(os.path.join(trial, name), "wb") as f:
+                f.write(b"x" * 3072)
         dest = self.verifier(ws, "cdb")
         os.makedirs(dest)
         os.symlink(os.path.join(outside, "written.txt"), os.path.join(dest, "row.json"))
         with mock.patch.object(driver, "EVIDENCE_BYTES", 4096):
             got = driver.score("foreground__MB-09", ws, [], "")
         self.assertEqual(self.stand.collected, [4096])
-        self.assertEqual(got["detail"]["kept"], ["brief.md"])           # the large file left out, the links not used
+        self.assertEqual(got["detail"]["kept"], ["a.log", "brief.md"])
+        total = sum(os.path.getsize(os.path.join(dest, name)) for name in got["detail"]["kept"])
+        self.assertEqual(total, 3072 + len(BRIEF.encode()))
+        self.assertLessEqual(total, 4096)
+        self.assertFalse(os.path.lexists(os.path.join(dest, "b.log")))
         self.assertEqual(sorted(os.listdir(outside)), ["elsewhere.txt"])
         self.assertFalse(os.path.lexists(os.path.join(dest, "link.txt")))
 
