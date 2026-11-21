@@ -627,6 +627,31 @@ def verdict(u, row, kept):
     return {"reward": 1.0 if passed else 0.0, "passed": passed, "detail": detail}
 
 
+def _write_fresh(trial, name, text):
+    """*name* under the trial's folder replaced by a fresh file, put in place by a rename: a link there, or in place
+    of a folder on the way, is never followed, and nothing outside the trial is written. OSError when it cannot be."""
+    *folders, last = name.split(os.sep)
+    fd = os.open(trial, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in folders:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        temporary = f".{last}.{os.getpid()}-{threading.get_ident()}"
+        out = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=fd)
+        try:
+            with os.fdopen(out, "w", encoding="utf-8") as f:
+                f.write(text)
+            os.replace(temporary, last, src_dir_fd=fd, dst_dir_fd=fd)
+        finally:
+            try:
+                os.unlink(temporary, dir_fd=fd)              # left only when the write or the rename failed
+            except FileNotFoundError:
+                pass
+    finally:
+        os.close(fd)
+
+
 def _gone(d):
     """Why a desktop runs no code any more, or None while it does (an action not ended in time included)."""
     try:
@@ -659,8 +684,7 @@ def score(unit, dir, transcript=None, answer=None, **_):
         raise VerifierError(failed)
     said = verdict(u, row, kept)
     try:
-        with open(u.path(REPORT), "w", encoding="utf-8") as f:
-            json.dump(report(said["detail"], u.condition == BACKGROUND), f, indent=1)
+        _write_fresh(u.trial, REPORT, json.dumps(report(said["detail"], u.condition == BACKGROUND), indent=1))
     except OSError as e:                                     # what the pages read; it cannot change the verdict
         sys.stderr.write(f"cua-driver-bench: {unit}: the checks' names were not written: {e}\n")
     return said

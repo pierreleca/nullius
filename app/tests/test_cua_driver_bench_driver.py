@@ -928,6 +928,35 @@ class Driver(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(outside)), ["elsewhere.txt"])
         self.assertFalse(os.path.lexists(os.path.join(dest, "link.txt")))
 
+    def test_the_report_replaces_a_link_and_writes_nothing_outside_the_trial(self):
+        self.stand.rows = lambda task, i, c: row(task, i, c, checker=True)
+        outside = os.path.join(self.tmp, "outside.json")
+        with open(outside, "w") as f:
+            f.write("not of the trial")
+        ws, _ = self.unit()
+        os.symlink(outside, self.verifier(ws, "report.json"))
+        got = driver.score("MB-09__foreground", ws, [], "")
+        self.assertTrue(got["passed"])
+        with open(outside) as f:
+            self.assertEqual(f.read(), "not of the trial")
+        self.assertFalse(os.path.islink(self.verifier(ws, "report.json")))
+        with open(self.verifier(ws, "report.json")) as f:
+            self.assertEqual(json.load(f)["passed"], ["first", "second"])
+        self.assertEqual([n for n in os.listdir(os.path.dirname(outside)) if n.startswith(".")], [])
+        self.assertEqual([n for n in os.listdir(self.verifier(ws, "")) if n.startswith(".")], [])
+
+    def test_a_linked_verifier_folder_leaves_the_report_unwritten_and_the_verdict_whole(self):
+        self.stand.rows = lambda task, i, c: row(task, i, c, checker=True)
+        ws, _ = self.unit()
+        folder = os.path.dirname(self.verifier(ws, "report.json"))
+        elsewhere = os.path.join(self.tmp, "elsewhere")
+        shutil.copytree(folder, elsewhere, symlinks=True)
+        shutil.rmtree(folder)
+        os.symlink(elsewhere, folder)
+        got = driver.score("MB-09__foreground", ws, [], "")
+        self.assertTrue(got["passed"])
+        self.assertFalse(os.path.lexists(os.path.join(elsewhere, "report.json")))
+
     def test_a_removal_that_fails_fails_the_score(self):
         ws, _ = self.unit(participant="control")
         u = driver.OPEN["MB-09__foreground"]
