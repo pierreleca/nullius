@@ -330,8 +330,9 @@ def trial(job_id, trial_name):
                 steps_of = {"steps": detail["steps"], "limit": detail["steps_limit"]}
         except (OSError, ValueError, AttributeError):
             pass
-    # the rest of the benchmark's own detail, under its driver's names: what the page shows elsewhere left out
-    detail = parse.score_detail(t.dir, (("steps", "steps_limit") if steps_of else ()) + (("ended",) if t.ended_by else ())) \
+    # the rest of the benchmark's own detail, under its driver's names: what the page shows elsewhere left out (what
+    # ended the work is the standard's own key, which the header says whenever there is one to say)
+    detail = parse.score_detail(t.dir, (("steps", "steps_limit") if steps_of else ()) + ("ended",)) \
         if j.runner else None
     loc = _gold_localization(j, t, traj) if ok else None
 

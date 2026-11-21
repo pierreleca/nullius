@@ -86,6 +86,12 @@ class TrialDetail(unittest.TestCase):
         self.assertIn('<span class="faint ended-by" title="What ended the agent\'s work">Done</span>', html)
         self.assertEqual(said, "The benchmark's detail seed 1")
 
+    def test_an_end_is_left_out_of_the_panel_even_when_it_is_empty(self):
+        for ended in ("", "done"):
+            with self.subTest(ended=ended):
+                html = self.page({"ended": ended, "seed": 1}, standard={"benchmark": "sums", "unit": "t1"})
+                self.assertEqual(text_of(self.panel(html)), "The benchmark's detail seed 1")
+
     def test_a_score_without_a_detail_has_no_panel(self):
         for detail in ({}, None, ["a"]):
             with self.subTest(detail=detail):
