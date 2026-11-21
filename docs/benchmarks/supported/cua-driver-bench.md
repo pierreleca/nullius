@@ -49,7 +49,7 @@ Ten desktop tasks on Linux: three across several applications, three of pointer 
 ## Good to know
 
 - Runs any agent that holds the computer port's proof on the bench's tasks. The bench's own launcher runs each trial unchanged and holds its agent's slot open while the agent acts through the port. Each acting call is one step.
-- Each task runs under the bench's two conditions as two tasks: foreground__ID, where the agent may take the focus, and background__ID, where a simulated user's window stays in front and types while the agent works. Eight of the ten tasks have a background condition.
+- Each task runs under the bench's two conditions as two tasks: ID__foreground, where the agent may take the focus, and ID__background, where a simulated user's window stays in front and types while the agent works. Eight of the ten tasks have a background condition.
 - The background's pass is the bench's full one: the task's check passes, the guard sees no violation, and the bench's eight measures show the user undisturbed (keyboard focus, a window raised over theirs, their typing, the pointer, the clipboard, the workspace, a dialog on their window, their window's activation). A measure the bench could not take fails the trial. The check's own result stays in the trial's detail.
 - Which tasks: Foreground (10) and Background (8) are the benchmark's own task sets, each run as a job of its own; a run that names no dataset takes Foreground. All tasks (18) lists each task's foreground then its background, side by side. A job of all 18 adds passes of two different measures into one total, so its rate is neither condition's.
 - The bench's published comparison runs one fixed agent and model on each computer-use tool. This setup does not repeat that comparison.

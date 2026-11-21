@@ -9,8 +9,9 @@ The desktop's container is ``desktop.py``'s (the definition's command names it f
 built from); this driver calls it alone, never the engine.
 
 units    - every task of the dataset's conditions, in the bench's task list's order (taskpack/v2-taskset.json), as
-           CONDITION__ID: foreground__CDB-G02, ...; the dataset of both conditions gives each task's foreground unit
-           then its background unit, so that a task's two trials stand side by side
+           ID__CONDITION: CDB-G02__foreground, ...; the dataset of both conditions gives each task's foreground unit
+           then its background unit. The condition comes last: a task's two trials stand side by side in that order
+           and in any list sorted by name
 describe - each task's title, its applications, its category and its condition, from the task list alone
 setup    - the desktop's image (the option desktop_image), a container of it (its memory limit the option
            desktop_memory), the pin's bench folder copied in, and the launcher started on the task with the run
@@ -140,7 +141,7 @@ def _units(dataset):
     """``(unit id, condition, the task's entry)`` of each unit of the dataset: task by task in the list's order, and
     within a task its conditions in the dataset's order."""
     conditions = _conditions(dataset)
-    return [(f"{c}__{t['id']}", c, t) for t in manifest()["tasks"] for c in conditions
+    return [(f"{t['id']}__{c}", c, t) for t in manifest()["tasks"] for c in conditions
             if c in (t.get("conditions") or [])]
 
 
@@ -162,8 +163,9 @@ def describe(dataset=None, **_):
 
 
 def _task(unit):
-    """``(condition, task id, the task's entry)`` of a unit id; a unit the task list does not hold is refused."""
-    condition, _, task = str(unit).partition("__")
+    """``(condition, task id, the task's entry)`` of a unit id (ID__CONDITION); a unit the task list does not hold is
+    refused."""
+    task, _, condition = str(unit).rpartition("__")
     entry = next((t for t in manifest()["tasks"] if t["id"] == task), None) if TASK_ID.match(task) else None
     known = {c for cs in CONDITIONS.values() for c in cs}
     if entry is None or condition not in known or condition not in (entry.get("conditions") or []):

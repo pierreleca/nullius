@@ -51,10 +51,10 @@ with open(os.path.join(ENTRY, "upstream-settings.json"), encoding="utf-8") as _f
 TASKS = [("CDB-G02", "multi_app"), ("CDB-G03", "multi_app"), ("CDB-G04", "multi_app"), ("MB-09", "precision"),
          ("MB-10", "precision"), ("MB-11", "precision"), ("IR-01", "interruptions"), ("IR-02", "interruptions"),
          ("IR-03", "interruptions"), ("IR-04", "interruptions")]
-UNITS = [f"foreground__{t}" for t, _ in TASKS]
-BACKGROUND = [f"background__{t}" for t, _ in TASKS if t not in ("MB-10", "MB-11")]
+UNITS = [f"{t}__foreground" for t, _ in TASKS]
+BACKGROUND = [f"{t}__background" for t, _ in TASKS if t not in ("MB-10", "MB-11")]
 # all of them: each task's foreground unit, then its background unit when it has one
-BOTH = [u for t, _ in TASKS for u in (f"foreground__{t}", f"background__{t}") if u in UNITS + BACKGROUND]
+BOTH = [u for t, _ in TASKS for u in (f"{t}__foreground", f"{t}__background") if u in UNITS + BACKGROUND]
 BRIEF = "A list is open on the screen.\n\nPut its items in the order shown, then press Done.\n"
 
 
@@ -467,7 +467,7 @@ class Driver(unittest.TestCase):
         os.makedirs(ws)
         return ws
 
-    def unit(self, unit="foreground__MB-09", given=True, **kw):
+    def unit(self, unit="MB-09__foreground", given=True, **kw):
         ws = self.workspace()
         s = driver.setup(unit, ws, **dict({"attempt": 1, "participant": "agent"}, **kw))
         if given and kw.get("participant", "agent") == "agent":
@@ -500,16 +500,20 @@ class Driver(unittest.TestCase):
         self.assertEqual(driver.units("linux_background"), {"units": BACKGROUND})
         got = driver.units("linux")["units"]
         self.assertEqual(got, BOTH)
-        self.assertEqual(got[:5], ["foreground__CDB-G02", "background__CDB-G02", "foreground__CDB-G03",
-                                   "background__CDB-G03", "foreground__CDB-G04"])
-        self.assertEqual(got[8:12], ["foreground__MB-10", "foreground__MB-11", "foreground__IR-01", "background__IR-01"])
+        self.assertEqual(got[:5], ["CDB-G02__foreground", "CDB-G02__background", "CDB-G03__foreground",
+                                   "CDB-G03__background", "CDB-G04__foreground"])
+        self.assertEqual(got[8:12], ["MB-10__foreground", "MB-11__foreground", "IR-01__foreground", "IR-01__background"])
         declared = {x["id"]: x["units"] for x in DEFINITION["datasets"]}
         self.assertEqual((len(got), len(BACKGROUND)), (declared["linux"], declared["linux_background"]))
         self.assertEqual(set(UNITS) | set(BACKGROUND), set(got))       # each list inside the whole, nothing more
-        self.assertEqual([u for u in got if u.startswith("background__")], BACKGROUND)
+        self.assertEqual([u for u in got if u.endswith("__background")], BACKGROUND)
+        # sorted by name, as a job's table sorts its trials, each task's units still stand together
+        tasks = [u.rpartition("__")[0] for u in sorted(got)]
+        self.assertEqual(tasks, sorted(tasks))
+        self.assertEqual(sorted(got)[:3], ["CDB-G02__background", "CDB-G02__foreground", "CDB-G03__background"])
         said = driver.describe("linux")["units"]
         self.assertEqual(list(said), BOTH)
-        fg, bg = said["foreground__IR-02"], said["background__IR-02"]
+        fg, bg = said["IR-02__foreground"], said["IR-02__background"]
         self.assertEqual((fg["title"], fg["text"]), (bg["title"], bg["text"]))         # one task, two conditions
         self.assertEqual((fg["categories"], bg["categories"]), ({"category": "interruptions", "condition": "foreground"},
                                                                  {"category": "interruptions", "condition": "background"}))
@@ -519,14 +523,14 @@ class Driver(unittest.TestCase):
             got = driver.describe("linux_foreground")["units"]
             self.assertIsNone(driver._DESKTOP)
         self.assertEqual(list(got), UNITS)
-        self.assertEqual(got["foreground__CDB-G02"], {"title": "Task 1 of the list", "text": "Task 1 of the list. "
+        self.assertEqual(got["CDB-G02__foreground"], {"title": "Task 1 of the list", "text": "Task 1 of the list. "
                                                       "Applications: App 1; A second app.",
                                                       "categories": {"category": "multi_app", "condition": "foreground"}})
-        self.assertEqual(got["foreground__IR-04"]["categories"], {"category": "interruptions", "condition": "foreground"})
+        self.assertEqual(got["IR-04__foreground"]["categories"], {"category": "interruptions", "condition": "foreground"})
 
     def test_a_unit_the_task_list_does_not_hold_is_refused_before_any_desktop(self):
-        for unit in ("background__MB-10", "background__MB-11", "foreground__XX-99", "MB-09", "foreground__../MB-09",
-                     "sideways__MB-09"):
+        for unit in ("MB-10__background", "MB-11__background", "XX-99__foreground", "MB-09", "../MB-09__foreground",
+                     "MB-09__sideways", "foreground__MB-09", "background__IR-02"):     # the condition comes last
             with self.subTest(unit=unit), self.assertRaises(ValueError):
                 driver.setup(unit, self.workspace(), attempt=1, participant="agent")
         self.assertEqual((self.stand.images, self.stand.made), ([], []))
@@ -549,13 +553,13 @@ class Driver(unittest.TestCase):
         self.assertEqual((failed, info["screen"], info["steps"], info["folder"], info["password"]),
                          (False, [1920, 1080], 45, self.stand.module.FOLDER, ""))
         self.assertIn("not been given", str(c.call("click", {"x": 10, "y": 20})[1]))     # the window before the task
-        driver.task_given("foreground__MB-09", ws)
+        driver.task_given("MB-09__foreground", ws)
         self.assertEqual(c.call("click", {"x": 10, "y": 20}), (False, {"steps_left": 44, "done": False}))
         self.assertEqual(c.call("done", {"message": "ordered"}), (False, {"steps_left": 43, "done": True}))
         c.close()
         self.assertEqual([x["call"] for x in self.stand.input()], ["click"])
         self.assertEqual(self.stand.input()[0]["args"], [10, 20])
-        got = driver.score("foreground__MB-09", ws, [], "ordered")
+        got = driver.score("MB-09__foreground", ws, [], "ordered")
         self.assertEqual((got["reward"], got["passed"]), (1.0, True))
         d = got["detail"]
         self.assertEqual((d["steps"], d["steps_limit"], d["ended"], d["task"], d["condition"], d["image"]),
@@ -580,8 +584,8 @@ class Driver(unittest.TestCase):
     def test_the_run_index_and_the_seed_come_from_the_attempt(self):
         for attempt, index in ((1, 0), (3, 2), (None, 0)):
             with self.subTest(attempt=attempt):
-                ws, _ = self.unit("foreground__CDB-G02", attempt=attempt)
-                got = driver.score("foreground__CDB-G02", ws, [], "")
+                ws, _ = self.unit("CDB-G02__foreground", attempt=attempt)
+                got = driver.score("CDB-G02__foreground", ws, [], "")
                 self.assertEqual(self.stand.launched[-1], ("CDB-G02", index, "foreground"))
                 self.assertEqual((got["detail"]["run_index"], got["detail"]["seed"]), (index, seed("CDB-G02", index)))
 
@@ -590,12 +594,12 @@ class Driver(unittest.TestCase):
         self.assertEqual(s["prompt"], BRIEF.strip() + "\n\n" + driver.USE + "\n\nOperate only the applications the task "
                          "names. Do not use the network.\nYou have about 6 minutes and at most 45 turns.")
         self.assertIn("MCP server named computer", s["prompt"])
-        _, s = self.unit("foreground__CDB-G04")                       # the task with a local site: the bench's variant
+        _, s = self.unit("CDB-G04__foreground")                       # the task with a local site: the bench's variant
         self.assertTrue(s["prompt"].endswith("Operate only the applications the task names. Do not use the internet; "
                                              "the task's localhost site is allowed.\nYou have about 6 minutes and at most 45 turns."))
         self.spec("IR-01", timeout_s=600)
         os.environ["NULLIUS_OPTION_MAX_STEPS"] = "30"
-        _, s = self.unit("foreground__IR-01")
+        _, s = self.unit("IR-01__foreground")
         self.assertTrue(s["prompt"].endswith("You have about 10 minutes and at most 30 turns."))
         self.assertEqual(s["agent_seconds"], 600)
         for word in ("bench", "score", "test", "grade", "checker"):
@@ -604,7 +608,7 @@ class Driver(unittest.TestCase):
     def test_the_options_reach_the_loop_and_the_image(self):
         os.environ.update(NULLIUS_OPTION_MAX_STEPS="7", NULLIUS_OPTION_PAUSE="0.05", NULLIUS_OPTION_DESKTOP_IMAGE="desktop-copy:7")
         ws, s = self.unit()
-        u = driver.OPEN["foreground__MB-09"]
+        u = driver.OPEN["MB-09__foreground"]
         self.assertEqual((u.bridge.steps, u.bridge.pause), (7, 0.05))
         self.assertEqual(self.stand.images[-1][0], "desktop-copy:7")
         self.assertEqual(self.stand.made[-1].reference, "image-desktop-copy:7")
@@ -612,11 +616,11 @@ class Driver(unittest.TestCase):
         c = Client(s["mcp"][0]["args"][1])
         self.assertEqual(c.call("info")[1]["steps"], 7)
         c.close()
-        driver.score("foreground__MB-09", ws, [], "")
+        driver.score("MB-09__foreground", ws, [], "")
         os.environ["NULLIUS_OPTION_DESKTOP_MEMORY"] = "512m"
         ws, _ = self.unit(participant="control")
         self.assertEqual(self.stand.made[-1].memory_mb, 512)
-        driver.score("foreground__MB-09", ws, [], "")
+        driver.score("MB-09__foreground", ws, [], "")
         os.environ["NULLIUS_OPTION_MAX_STEPS"] = "0"
         with self.assertRaises(ValueError):
             self.unit()
@@ -633,7 +637,7 @@ class Driver(unittest.TestCase):
         failed, said = c.call("step", {"actions": ["pyautogui.click(1, 1)", "WAIT", "pyautogui.click(2, 2)"]})
         took = time.monotonic() - t0
         c.close()
-        driver.score("foreground__MB-09", ws, [], "")
+        driver.score("MB-09__foreground", ws, [], "")
         self.assertFalse(failed, said)
         with open(self.verifier(ws, "computer-actions.jsonl")) as f:
             first, second = [json.loads(line) for line in f]
@@ -646,7 +650,7 @@ class Driver(unittest.TestCase):
         c = Client(s["mcp"][0]["args"][1])
         answers = [c.call(tool, args) for tool, args in calls]
         c.close()
-        return ws, answers, driver.score(kw.get("unit", "foreground__MB-09"), ws, [], "")
+        return ws, answers, driver.score(kw.get("unit", "MB-09__foreground"), ws, [], "")
 
     def test_done_fail_and_a_step_with_an_end_end_the_task(self):
         for calls, ended in (([("done", {})], "done"), ([("fail", {"reason": "no list"})], "fail"),
@@ -699,15 +703,15 @@ class Driver(unittest.TestCase):
 
     # -- the background ---------------------------------------------------------------------------------------------
     def background(self, rows, calls=(("done", {}),), **kw):
-        """One trial of background__IR-02 whose launcher writes ``rows``' row: its verdict and what the pages read."""
+        """One trial of IR-02__background whose launcher writes ``rows``' row: its verdict and what the pages read."""
         self.stand.rows = rows
-        ws, s = self.unit("background__IR-02", **kw)
+        ws, s = self.unit("IR-02__background", **kw)
         if "mcp" in s:
             c = Client(s["mcp"][0]["args"][1])
             for tool, args in calls:
                 c.call(tool, args)
             c.close()
-        got = driver.score("background__IR-02", ws, [], "")
+        got = driver.score("IR-02__background", ws, [], "")
         with open(self.verifier(ws, "report.json")) as f:
             return got, json.load(f)
 
@@ -787,14 +791,14 @@ class Driver(unittest.TestCase):
         self.assertTrue(failed)
         self.assertIn("ended", str(said))
         c.close()
-        got = driver.score("foreground__MB-09", ws, [], "")
+        got = driver.score("MB-09__foreground", ws, [], "")
         self.assertEqual((got["passed"], got["detail"]["ended"], got["detail"]["steps"]), (False, driver.LAUNCHER, 1))
         self.assertIn("process: a terminal", got["detail"]["why"])
         self.assertEqual(len(self.stand.input()), 1)
 
     def test_the_launchers_end_stops_a_step_between_its_actions(self):
         ws, s = self.unit()
-        u = driver.OPEN["foreground__MB-09"]
+        u = driver.OPEN["MB-09__foreground"]
         acting = u.d.python
 
         def slow(code, seconds=90):
@@ -810,7 +814,7 @@ class Driver(unittest.TestCase):
         self.assertTrue(failed)
         self.assertIn("not run to its end", str(said))
         self.assertEqual(len(self.stand.input()), 1)
-        driver.score("foreground__MB-09", ws, [], "")
+        driver.score("MB-09__foreground", ws, [], "")
 
     # -- the verdict's errors ---------------------------------------------------------------------------------------
     def test_a_harness_error_in_the_row_is_the_environments_and_tried_again(self):
@@ -818,7 +822,7 @@ class Driver(unittest.TestCase):
         ws, _ = self.unit()
         with self.assertRaisesRegex(driver.EnvironmentSetupError, "^the bench's launcher reports a harness error"
                                                                   ".*evaluator_no_result"):
-            driver.score("foreground__MB-09", ws, [], "")
+            driver.score("MB-09__foreground", ws, [], "")
         self.assertTrue(retries.retryable({"exception_info": {"exception_type": "EnvironmentSetupError"}}))
         self.assertTrue(os.path.isfile(self.verifier(ws, os.path.join("cdb", "row.json"))))
 
@@ -828,27 +832,27 @@ class Driver(unittest.TestCase):
         self.stand.rows = lambda task, i, c: dict({k: v for k, v in row(task, i, c).items() if k in early}, finished=1100.0)
         ws, _ = self.unit()
         with self.assertRaisesRegex(driver.EnvironmentSetupError, "^the bench's launcher ended without its check"):
-            driver.score("foreground__MB-09", ws, [], "")
+            driver.score("MB-09__foreground", ws, [], "")
         self.assertTrue(os.path.isfile(self.verifier(ws, os.path.join("cdb", "row.json"))))
 
     def test_a_row_of_another_trial_or_none_is_the_verifiers(self):
         self.stand.rows = lambda task, i, c: row(task, i + 1, c)
         ws, _ = self.unit()
         with self.assertRaisesRegex(driver.VerifierError, "^the trial's row is of run_index 1, not 0"):
-            driver.score("foreground__MB-09", ws, [], "")
+            driver.score("MB-09__foreground", ws, [], "")
         self.stand.fail["finish"] = self.stand.module.DesktopError("the launcher did not end in 420 s")
         ws, _ = self.unit()
         with self.assertRaisesRegex(driver.VerifierError, "^the trial's row could not be read: the launcher"):
-            driver.score("foreground__MB-09", ws, [], "")
+            driver.score("MB-09__foreground", ws, [], "")
         self.assertTrue(os.path.isfile(self.verifier(ws, os.path.join("cdb", "brief.md"))))     # the folder copied all the same
 
     def test_the_null_control_runs_the_launcher_with_no_server(self):
         ws, s = self.unit(participant="control")
         self.assertEqual(set(s), {"prompt"})
-        self.assertIsNone(driver.OPEN["foreground__MB-09"].bridge)
+        self.assertIsNone(driver.OPEN["MB-09__foreground"].bridge)
         with self.assertRaises(ValueError):
-            driver.task_given("foreground__MB-09", ws)
-        got = driver.score("foreground__MB-09", ws, [], "")
+            driver.task_given("MB-09__foreground", ws)
+        got = driver.score("MB-09__foreground", ws, [], "")
         self.assertEqual((got["reward"], got["detail"]["steps"], got["detail"]["steps_limit"], got["detail"]["ended"]),
                          (0.0, 0, 45, ""))
         self.assertEqual(self.stand.launched, [("MB-09", 0, "foreground")])
@@ -865,7 +869,7 @@ class Driver(unittest.TestCase):
                 made = len(self.stand.made)
                 ws = self.workspace()
                 with self.assertRaises(Exception) as got:
-                    driver.setup("foreground__MB-09", ws, attempt=1, participant="agent")
+                    driver.setup("MB-09__foreground", ws, attempt=1, participant="agent")
                 self.assertEqual(driver.OPEN, {})
                 self.assertEqual(len(self.stand.made), made + (stage not in ("image", "start")))
                 self.assertTrue(all(d.removes == 1 for d in self.stand.made))
@@ -893,7 +897,7 @@ class Driver(unittest.TestCase):
         self.stand.rows = lambda task, i, c: row(task, i, c, checker=True)
         self.stand.fail["collect"] = self.stand.module.DesktopError("a link in the folder")
         ws, _ = self.unit()
-        got = driver.score("foreground__MB-09", ws, [], "")
+        got = driver.score("MB-09__foreground", ws, [], "")
         self.assertEqual((got["passed"], got["detail"]["kept"]), (True, None))
 
     def test_the_evidence_is_copied_within_the_drivers_bound_and_no_link_is_followed(self):
@@ -914,7 +918,7 @@ class Driver(unittest.TestCase):
         os.makedirs(dest)
         os.symlink(os.path.join(outside, "written.txt"), os.path.join(dest, "row.json"))
         with mock.patch.object(driver, "EVIDENCE_BYTES", 4096):
-            got = driver.score("foreground__MB-09", ws, [], "")
+            got = driver.score("MB-09__foreground", ws, [], "")
         self.assertEqual(self.stand.collected, [4096])
         self.assertEqual(got["detail"]["kept"], ["a.log", "brief.md"])
         total = sum(os.path.getsize(os.path.join(dest, name)) for name in got["detail"]["kept"])
@@ -926,13 +930,13 @@ class Driver(unittest.TestCase):
 
     def test_a_removal_that_fails_fails_the_score(self):
         ws, _ = self.unit(participant="control")
-        u = driver.OPEN["foreground__MB-09"]
+        u = driver.OPEN["MB-09__foreground"]
         d = u.d
         with mock.patch.object(d, "remove", side_effect=self.stand.module.DesktopError("the container is still there")) as remove:
             with self.assertRaisesRegex(Exception, "still there"):
-                driver.score("foreground__MB-09", ws, [], "")
+                driver.score("MB-09__foreground", ws, [], "")
             self.assertIs(u.d, d)
-            driver.end("foreground__MB-09", ws)
+            driver.end("MB-09__foreground", ws)
             self.assertEqual(remove.call_count, 2)
             self.assertIs(u.d, d)
         driver.close_all()
@@ -951,7 +955,7 @@ class Driver(unittest.TestCase):
         c.close()
         with self.assertRaisesRegex(driver.EnvironmentSetupError, "^the desktop failed during the task: "
                                                                   ".*the engine went away"):
-            driver.score("foreground__MB-09", ws, [], "")
+            driver.score("MB-09__foreground", ws, [], "")
         self.assertEqual(self.stand.made[-1].removes, 1)
         self.assertEqual(driver.OPEN, {})
         self.assertFalse(os.path.exists(s["mcp"][0]["args"][1]))
@@ -959,7 +963,7 @@ class Driver(unittest.TestCase):
 
     def test_a_desktop_gone_between_two_steps_is_the_environments(self):
         ws, s = self.unit()
-        u = driver.OPEN["foreground__MB-09"]
+        u = driver.OPEN["MB-09__foreground"]
         self.stand.fail["finish"] = self.stand.module.DesktopError("the launcher wrote no row.json")
 
         def gone(code, seconds=90):
@@ -967,16 +971,16 @@ class Driver(unittest.TestCase):
         u.d.python = gone                                            # no action ran: the loop saw nothing
         with self.assertRaisesRegex(driver.EnvironmentSetupError, "^the desktop failed during the task: "
                                                                   ".*no such container"):
-            driver.score("foreground__MB-09", ws, [], "")
+            driver.score("MB-09__foreground", ws, [], "")
         self.assertEqual(self.stand.made[-1].removes, 1)
 
     def test_a_unit_never_scored_goes_at_its_end_at_the_next_setup_and_at_the_drivers_exit(self):
         ws, s = self.unit()
-        self.assertEqual(driver.end("foreground__MB-09", ws), {})
+        self.assertEqual(driver.end("MB-09__foreground", ws), {})
         self.assertEqual(self.stand.made[-1].removes, 1)
         self.assertFalse(os.path.exists(s["mcp"][0]["args"][1]))
         self.unit()
-        self.unit("foreground__IR-02")                               # the one before never reached score
+        self.unit("IR-02__foreground")                               # the one before never reached score
         self.assertEqual([d.removes for d in self.stand.made], [1, 1, 0])
         driver.close_all()
         self.assertEqual(self.stand.clients[-1], True)
@@ -995,20 +999,20 @@ class Driver(unittest.TestCase):
         self.assertFalse(failed, said)
         self.assertEqual(base64.b64decode(said["files"]["helper.txt"]), data)
         self.assertTrue(os.path.isfile(os.path.join(self.stand.home, "made.txt")))     # run in the desktop
-        driver.task_given("foreground__MB-09", ws)
+        driver.task_given("MB-09__foreground", ws)
         self.assertIn("has been given", str(c.call("upload", {"path": "late.txt", "data": "eA=="})[1]))
         c.close()
-        driver.score("foreground__MB-09", ws, [], "")
+        driver.score("MB-09__foreground", ws, [], "")
         with open(self.verifier(ws, "computer-prepare.jsonl")) as f:
             self.assertEqual(json.loads(f.readline())["files"], ["helper.txt"])
-        ws, s = self.unit("foreground__IR-01", given=False)           # the next unit of the run takes it by its digest
+        ws, s = self.unit("IR-01__foreground", given=False)           # the next unit of the run takes it by its digest
         c = Client(s["mcp"][0]["args"][1])
         self.assertEqual(c.call("upload", {"path": "helper.txt", "sha256": digest}), (False, {"size": len(data)}))
         c.close()
         with open(os.path.join(folder, "helper.txt"), "rb") as f:
             self.assertEqual(f.read(), data)
         self.assertTrue(os.path.isfile(os.path.join(self.tmp, "job", ".work", "cdb-held", digest)))
-        driver.score("foreground__IR-01", ws, [], "")
+        driver.score("IR-01__foreground", ws, [], "")
 
 
 # -- a whole run --------------------------------------------------------------------------------------------------------
@@ -1166,7 +1170,7 @@ class ThroughARun(unittest.TestCase):
         job, trial, desk = self.run_one(bg_row("CDB-G02", 0, checker=True, disturbed=["pointer"]),
                                         dataset="linux_background")
         record, verdict, actions, removed = self.records(job, trial, desk)
-        self.assertEqual(record["standard"]["unit"], "background__CDB-G02")
+        self.assertEqual(record["standard"]["unit"], "CDB-G02__background")
         self.assertEqual((trial.exception_type, trial.reward, trial.outcome), ("", 0.0, "failed_verification"))
         d = verdict["detail"]
         self.assertEqual((d["condition"], d["task_passed"], d["disturbed"]), ("background", True, ["pointer"]))
