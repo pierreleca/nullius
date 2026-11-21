@@ -654,11 +654,16 @@ def plan_sets(j, waiting: list) -> list:
 def _identity_names(identity: dict) -> dict:
     """The names the job page gives what identifies a run (``Job.identity``):
     its benchmark's title and each option's label, from the definitions the
-    catalogue holds now; where it holds none, the key, its underscores as spaces."""
+    catalogue holds now; where it holds none, the key, its underscores as spaces.
+    A job that records no version of a benchmark that has versions now ran the
+    one it had before them, as running its tasks again takes it (``rerun``)."""
     if not identity:
         return {}
     key, version = identity.get("benchmark", ""), identity.get("benchmark_version", "")
     bench = standard_definitions.get("benchmark", f"{key}@{version}" if version else key) if key else None
+    if bench is not None and not version:
+        from nullius.standard import rerun
+        bench = rerun._ran_before_versions(bench, None) or bench
     ref = identity.get("agent", "")
     other = next((d for d in (standard_definitions.get(kind, ref) for kind in ("agent", "capability")) if d), None) if ref else None
 

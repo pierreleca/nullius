@@ -176,6 +176,17 @@ class RunFactsOnTheJobPage(unittest.TestCase):
         self.assertIsNotNone(block)
         return [(self.text(dt, r".*"), self.text(dd, r".*")) for dt, dd in re.findall(r"<dt>(.*?)</dt><dd[^>]*>(.*?)</dd>", block[0], re.S)]
 
+    def test_a_job_that_records_no_version_is_named_by_the_one_its_benchmark_had_before_versions(self):
+        # a job written before OSWorld1 had versions ran main (044bc33), not the version a bare key resolves to now
+        from nullius.standard import definitions
+        from web import runs as runs_web
+        earlier = definitions.title(definitions.get("benchmark", "osworld1@044bc33"))
+        self.assertEqual(runs_web._identity_names({"benchmark": "osworld1"})["benchmark"], earlier)
+        recorded = {"benchmark": "osworld1", "benchmark_version": "desktop-env-v1.0.3"}
+        self.assertEqual(runs_web._identity_names(recorded)["benchmark"], "OSWorld1 desktop-env-v1.0.3")   # a recorded one is the one run
+        self.assertEqual(runs_web._identity_names({"benchmark": "humaneval"})["benchmark"],
+                         definitions.title(definitions.get("benchmark", "humaneval")))                     # no versions: no change
+
     def test_a_standard_job_shows_what_identifies_it_in_one_block_and_no_credential(self):
         from tests.test_parse import SECRET
         html = self.page("facts")
