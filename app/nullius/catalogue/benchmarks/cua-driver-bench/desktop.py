@@ -210,10 +210,10 @@ _CLIENTS_LOCK = threading.Lock()
 _CLIENTS_CLOSED = False
 
 
-def _spawn(args: List[str], **kw) -> subprocess.Popen:
+def _spawn(args: List[str], *, cleanup: bool = False, **kw) -> subprocess.Popen:
     """One client of the engine started and counted, for :func:`end_clients`."""
     with _CLIENTS_LOCK:
-        if _CLIENTS_CLOSED:
+        if _CLIENTS_CLOSED and not cleanup:
             raise DesktopError("the desktop's engine clients have been closed")
         try:
             p = subprocess.Popen([container.DOCKER, *args], env=container.client_env(), **kw)
@@ -228,10 +228,11 @@ def _done(p: subprocess.Popen) -> None:
         _CLIENTS.discard(p)
 
 
-def _engine(args: List[str], *, input: Optional[bytes] = None, timeout: float) -> subprocess.CompletedProcess:
+def _engine(args: List[str], *, input: Optional[bytes] = None, timeout: float,
+            cleanup: bool = False) -> subprocess.CompletedProcess:
     """One call of the engine's program, its stdin the request's bytes or nothing, killed past ``timeout``
     (``subprocess.TimeoutExpired``, as ``subprocess.run`` raises it)."""
-    p = _spawn(args, stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL, stdout=subprocess.PIPE,
+    p = _spawn(args, cleanup=cleanup, stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL, stdout=subprocess.PIPE,
                stderr=subprocess.PIPE)
     try:
         try:
@@ -726,14 +727,15 @@ class Desktop:
                 with contextlib.suppress(OSError):
                     self._said.close()
         try:
-            r = _engine(["rm", "-f", self.name], timeout=REMOVE_SECONDS)
+            r = _engine(["rm", "-f", self.name], timeout=REMOVE_SECONDS, cleanup=True)
         except subprocess.TimeoutExpired:
             raise DesktopError(f"removing the desktop {self.name}: {container.DOCKER} rm did not answer in "
                                f"{REMOVE_SECONDS} s")
         if r.returncode != 0 and not _absent(r):
             raise DesktopError(f"removing the desktop {self.name}: {_said(r)}")
         try:
-            r = _engine(["container", "inspect", "--format", "{{.Id}}", self.name], timeout=INSPECT_SECONDS)
+            r = _engine(["container", "inspect", "--format", "{{.Id}}", self.name], timeout=INSPECT_SECONDS,
+                        cleanup=True)
         except subprocess.TimeoutExpired:
             raise DesktopError(f"the desktop {self.name}'s removal could not be checked")
         if r.returncode == 0 or not _absent(r):

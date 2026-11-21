@@ -354,6 +354,23 @@ class Start(unittest.TestCase):
                 desktop.Desktop.start("bench:image", name="cdb-test-1")
         self.assertFalse(e.running("cdb-test-1"))
 
+    def test_shutdown_during_start_still_removes_what_it_made(self):
+        e = Engine(self)
+        real = desktop._engine
+
+        def shutdown(args, **kw):
+            if args[0] == "exec":
+                desktop.end_clients()
+                raise KeyboardInterrupt
+            return real(args, **kw)
+        with mock.patch.object(desktop, "_CLIENTS_CLOSED", False), mock.patch.object(desktop, "_engine", shutdown):
+            with self.assertRaises(KeyboardInterrupt):
+                desktop.Desktop.start("bench:image", name="unfinished")
+            self.assertFalse(e.running("unfinished"))
+            self.assertEqual([c[0] for c in e.calls()], ["run", "rm", "container"])
+            with self.assertRaises(desktop.DesktopError):
+                real(["logs", "unfinished"], timeout=1)
+
 
 class Bench(unittest.TestCase):
     def test_the_pin_goes_over_the_checkout_and_its_node_modules_stay(self):
@@ -629,6 +646,19 @@ class Collect(unittest.TestCase):
 
 
 class Remove(unittest.TestCase):
+    def test_removal_and_its_check_still_run_after_clients_close(self):
+        e = Engine(self)
+        d = started(self, e)
+        with mock.patch.object(desktop, "_CLIENTS_CLOSED", False):
+            desktop.end_clients()
+            e.behave(rm="stays")
+            with self.assertRaisesRegex(desktop.DesktopError, "still there"):
+                d.remove()
+            e.behave()
+            d.remove()
+            self.assertFalse(e.running("cdb-test-1"))
+            self.assertEqual([c[0] for c in e.calls()[-4:]], ["rm", "container", "rm", "container"])
+
     def test_remove_checks_that_the_container_is_gone(self):
         e = Engine(self)
         d = started(self, e)
