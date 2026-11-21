@@ -7,6 +7,8 @@ import os
 import shutil
 import tempfile
 import unittest
+from urllib.parse import quote
+from werkzeug.http import parse_options_header
 from contextlib import ExitStack
 from unittest.mock import patch
 
@@ -76,6 +78,24 @@ class TrialRecords(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertEqual(self.get(f"/trial/{self.job.job_id}/t1/artifact/{key}").status_code, 404)
                 self.assertEqual(self.get(f"/trial/{self.job.job_id}/t1/artifact/{key}/download").status_code, 404)
+
+    def test_download_names_are_quoted_without_controls_and_keep_unicode(self):
+        for name, clean in [('line\nbreak\r\t\x01\x7f\x85.txt', 'linebreak.txt'),
+                            ('a"quoted\\name.txt', 'a"quoted\\name.txt'),
+                            ('résumé-文件.txt', 'résumé-文件.txt')]:
+            with self.subTest(name=name):
+                with open(os.path.join(self.root, "t1", "verifier", "own", name), "w") as handle:
+                    handle.write("record")
+                response = self.get(f"/trial/{self.job.job_id}/t1/artifact/{quote('r1-' + name, safe='')}/download")
+                self.assertEqual(response.status_code, 200)
+                header = response.headers["Content-Disposition"]
+                self.assertTrue(header.startswith('attachment; filename="'))
+                self.assertFalse(any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in header))
+                self.assertEqual(parse_options_header(header), ("attachment", {"filename": clean}))
+                if not clean.isascii():
+                    self.assertIn("filename*=UTF-8''", header)
+                    self.assertTrue(header.isascii())
+                self.assertEqual(response.get_data(as_text=True), "record")
 
 
 if __name__ == "__main__":
