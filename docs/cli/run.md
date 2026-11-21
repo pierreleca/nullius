@@ -105,7 +105,7 @@ A benchmark whose loop can be ended from outside may score an agent's unit that 
 | --- | --- |
 | Still errors | A time run out while the provider refused the agent's last call (the unit is tried again); a unit where nothing moved, no model call answered and no step counted |
 | An action in flight | On the computer port, a call the agent made before the cut runs on until the benchmark is told the turn ended, seconds later, at its score; what is left of it then is not run, nor is any call after |
-| The record | `standard.cut` in the trial's `result.json`; the job page, the trial page and `nullius runs show` say what ended the work: the agent, the benchmark (`done`, `fail`, its steps), the time or the cap. A unit no limit cut is written as before |
+| The record | `standard.cut` in the trial's `result.json`; the job page, the trial page and `nullius runs show` say what ended the work: the agent, the benchmark (`done`, `fail`, its steps, or its own word, as written), the time or the cap. A unit no limit cut is written as before |
 | Not here yet | A run with no time limit; telling the agent its time or its cap of model calls |
 
 ## The exchange record

@@ -234,6 +234,18 @@ class EndedByTest(unittest.TestCase):
             t = self.trial(cut, ended)
             self.assertEqual((t.ended_by, t.ended_label), (by, label), (cut, ended))
 
+    def test_a_benchmarks_own_end_reads_as_it_wrote_it(self):
+        """An end the pages have no label for is said as the benchmark's detail wrote it, before a cut after the
+        benchmark's end; one too long to be a word of it, or not text, is none."""
+        long = "x" * (parse.ENDED_CHARS + 1)
+        cases = [((None, "guard"), "guard", "guard"), (("end", "guard"), "guard", "guard"), ((None, " its own "), "its own", "its own"),
+                 (("time", "guard"), "time", "Time limit"), ((None, long), "", ""), (("end", long), "end", "Task end"),
+                 ((None, "   "), "", ""), ((None, 7), "", ""), ((None, ["guard"]), "", "")]
+        for (cut, ended), by, label in cases:
+            with self.subTest(cut=cut, ended=ended):
+                t = self.trial(cut, ended)
+                self.assertEqual((t.ended_by, t.ended_label), (by, label))
+
     def test_a_trial_that_says_nothing_of_it_has_none(self):
         self.assertEqual(self.trial(ended="done", standard=False).ended_by, "")
         self.assertEqual(self.trial(scored=False).ended_by, "")
