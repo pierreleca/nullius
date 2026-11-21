@@ -604,15 +604,6 @@ class Driver(unittest.TestCase):
         self.assertEqual((got["detail"]["ended"], got["detail"]["steps"], got["passed"]), ("turn", 1, False))
         self.assertIn("first", got["detail"]["why"])
 
-    def test_a_check_passed_when_the_time_ran_out_counts(self):
-        self.stand.rows = lambda task, i, c: row(task, i, c, checker=True)
-        ws, s = self.unit()
-        c = Client(s["mcp"][0]["args"][1])
-        c.call("click", {"x": 3, "y": 4})
-        c.close()
-        got = driver.score("foreground__MB-09", ws, [], "")          # the run's cut at the agent's time, then score
-        self.assertEqual((got["reward"], got["passed"], got["detail"]["ended"]), (1.0, True, "turn"))
-
     def test_a_check_passed_with_a_violation_fails(self):
         front = {"t_s": 41.0, "kind": "front", "detail": "a terminal"}
         self.stand.rows = lambda task, i, c: row(task, i, c, checker=True, violations=[front])
@@ -814,6 +805,142 @@ class Driver(unittest.TestCase):
             self.assertEqual(f.read(), data)
         self.assertTrue(os.path.isfile(os.path.join(self.tmp, "job", ".work", "cdb-held", digest)))
         driver.score("foreground__IR-01", ws, [], "")
+
+
+# -- a whole run --------------------------------------------------------------------------------------------------------
+# The desktop module's stand-in as a file the definition's command names, for a run whose driver is a process of its
+# own: a trial whose row says passed, the port's code run with the recording pyautogui
+MODULE = r'''
+import json, os, subprocess, sys
+ROOT = __ROOT__
+ROW = json.loads(__ROW__)
+SCREEN, FOLDER = (1920, 1080), os.path.join(ROOT, "agent")
+
+
+class DesktopError(Exception):
+    pass
+
+
+class HarnessError(Exception):
+    def __init__(self, message, row=None):
+        super().__init__(message)
+        self.row = row
+
+
+class Refused(Exception):
+    pass
+
+
+def image(option, upstream, log_dir):
+    return option, "sha256:" + "2" * 64
+
+
+def end_clients(closing=True):
+    return 0
+
+
+class Desktop:
+    @classmethod
+    def start(cls, reference, *, job=None, seconds=180):
+        return cls()
+
+    def put_bench(self, folder):
+        return 0
+
+    def launch(self, task, run_index, condition, *, seconds=300):
+        self.row = dict(ROW, task=task, run_index=run_index, condition=condition)
+        return "Press the button on the screen.\n"
+
+    def launcher_ended(self):
+        return False
+
+    def python(self, code, seconds=90):
+        stub = "import sys\nsys.path.insert(0, %r)\n" % os.path.join(ROOT, "stub")
+        p = subprocess.run([sys.executable, "-I", "-c", stub + code], capture_output=True, text=True, timeout=seconds,
+                           stdin=subprocess.DEVNULL, cwd=ROOT)
+        return {"status": "success", "output": p.stdout, "error": p.stderr, "returncode": p.returncode}
+
+    def upload(self, path, data):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(data)
+        return len(data)
+
+    def read(self, path):
+        if not os.path.isfile(path):
+            return None
+        with open(path, "rb") as f:
+            return f.read()
+
+    def capture(self):
+        return b"\x89PNG\r\n\x1a\n" + b"stand-in"
+
+    def finish(self, *, seconds=420):
+        return self.row
+
+    def collect(self, dest, *, max_bytes=64 * 2 ** 20):
+        os.makedirs(dest, exist_ok=True)
+        with open(os.path.join(dest, "row.json"), "w") as f:
+            json.dump(self.row, f)
+        return ["row.json"]
+
+    def remove(self):
+        with open(os.path.join(ROOT, "removed"), "a") as f:
+            f.write("1\n")
+'''
+FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "standard")
+
+
+class ThroughARun(unittest.TestCase):
+    """The entry run by Nullius as a whole: its driver a process of its own over the stand-in module, the scripted
+    computer agent that looks, clicks once and then holds its turn, and the agent's time cut short."""
+
+    def test_a_check_passed_when_the_agents_time_ran_out_counts(self):
+        from nullius.runs import parse
+        from nullius.standard import install
+        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as tmp:
+            entry, desk, up = (os.path.join(tmp, n) for n in ("entry", "desktop", "upstream"))
+            for d in (entry, os.path.join(desk, "stub"), os.path.join(up, "libs", "cua-driver-bench", "taskpack")):
+                os.makedirs(d)
+            with open(os.path.join(desk, "stub", "pyautogui.py"), "w") as f:
+                f.write(STUB)
+            shutil.copyfile(os.path.join(ENTRY, "driver.py"), os.path.join(entry, "driver.py"))
+            with open(os.path.join(entry, "desktop.py"), "w") as f:
+                f.write(MODULE.replace("__ROOT__", repr(desk)).replace("__ROW__", repr(json.dumps(row("CDB-G02", 0, checker=True)))))
+            data = os.path.join(up, DEFINITION["datasets"][0]["path"])
+            with open(data, "w") as f:
+                json.dump(task_list(), f)
+            spec = os.path.join(up, driver.TASK_SPECS, "CDB-G02")
+            os.makedirs(spec)
+            with open(os.path.join(spec, "task.json"), "w") as f:
+                json.dump({"id": "CDB-G02", "timeout_s": 360, "max_turns": 45}, f)
+            bench = dict(DEFINITION, _here=entry, datasets=[dict(DEFINITION["datasets"][0], sha256=install.sha256_of(data))],
+                         driver=dict(DEFINITION["driver"], command=[sys.executable, "{here}/driver.py", "{here}/desktop.py"]),
+                         mcp_servers={"computer": dict(DEFINITION["mcp_servers"]["computer"], command=[sys.executable])})
+            other = definitions.get("agent", "fake", os.path.join(FIXTURES, "catalogue"))
+            other = dict(other, _here=FIXTURES, start={"acp": [sys.executable, "{here}/fake_computer_agent.py", "hang"]})
+            with mock.patch.object(install, "HOME", os.path.join(tmp, "install")), \
+                    mock.patch.object(install, "upstream_dir", return_value=up), \
+                    mock.patch.object(install, "upstream", return_value=up):
+                job = standard_run.run(bench, other, model="m", provider="custom", jobs_root=os.path.join(tmp, "jobs"),
+                                       limit=1, concurrency=1, proving=True, unsandboxed=True, retries=0,
+                                       timeouts={"setup": 60, "agent": 3}, bench_options={"desktop_image": "cdb-stand-in"},
+                                       env={"MODEL_API_URL": "http://127.0.0.1:9/v1"}, say=lambda _: None)
+            trial = parse.parse_job(job).trials[0]
+            with open(os.path.join(job, trial.trial_name, "result.json")) as f:
+                record = json.load(f)
+            with open(os.path.join(job, trial.trial_name, "verifier", "computer-actions.jsonl")) as f:
+                actions = [json.loads(line) for line in f]
+            with open(os.path.join(job, trial.trial_name, "verifier", "score.json")) as f:
+                verdict = json.load(f)
+            with open(os.path.join(desk, "removed")) as f:
+                removed = f.read()
+        self.assertEqual(record["standard"].get("cut"), "time")              # the agent's time ended its turn
+        self.assertEqual((trial.exception_type, trial.reward), ("", 1.0))   # and the row's pass stands
+        self.assertEqual((verdict["reward"], verdict["passed"], verdict["detail"]["checker_passed"]), (1.0, True, True))
+        self.assertEqual((verdict["detail"]["steps"], verdict["detail"]["violations"]), (1, []))
+        self.assertEqual([a["step"] for a in actions], [1])                 # the click, the agent's one step
+        self.assertEqual(removed, "1\n")
 
 
 if __name__ == "__main__":
