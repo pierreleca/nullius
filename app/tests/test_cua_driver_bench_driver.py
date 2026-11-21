@@ -386,11 +386,17 @@ class Declarations(unittest.TestCase):
             for v in bad:
                 self.assertIsNotNone(definitions.option_problem(opts[name], v), (name, v))
         self.assertTrue(opts["max_steps"]["limit"])
-        self.assertEqual((opts["max_steps"]["setups"], opts["pause"]["setups"]), (["agent"], ["agent"]))
+        self.assertEqual(opts["pause"]["setups"], ["agent"])
+        # the port's, as the builder's Limits shows a bound for an agent's run; the null control is given it and
+        # takes no step
+        self.assertNotIn("setups", opts["max_steps"])
         self.assertNotIn("setups", opts["desktop_image"])            # the null control's desktop too
         self.assertNotIn("setups", opts["desktop_memory"])
         vals, bad = definitions.bench_options_of(DEFINITION, "linux_foreground", {}, "yours", kind="control")
-        self.assertEqual((vals, bad), ({"desktop_image": "build", "desktop_memory": "8g"}, []))
+        self.assertEqual((vals, bad), ({"max_steps": "45", "desktop_image": "build", "desktop_memory": "8g"}, []))
+        vals, bad = definitions.bench_options_of(DEFINITION, "linux_foreground", {}, "yours", kind="agent")
+        self.assertEqual((vals, bad), ({"max_steps": "45", "pause": "1.0", "desktop_image": "build",
+                                        "desktop_memory": "8g"}, []))
         self.assertEqual(definitions.option_needs(DEFINITION, {"desktop_image": "build"})["host"], ["docker"])
 
     def test_the_page_says_what_the_entry_runs_and_what_it_cannot_enforce(self):

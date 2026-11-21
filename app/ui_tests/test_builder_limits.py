@@ -61,6 +61,15 @@ class LimitsStep(CompilerCase):
                 self.assertIn(label, field)
                 self.assertIn(f'placeholder="{shown}"', field)
 
+    def test_a_desktop_benchmarks_steps_show_for_an_agent_and_not_for_its_control_alone(self):
+        steps = lambda html: re.findall(r'<label class="nb-field" title="[^"]*">Steps per task[^<]*<input[^>]*data-bench-opt-select="max_steps"[^>]*>', html)
+        agent = "r.others=[C.standardOthers(r).find(o=>!o.setup&&!o.control).key];"
+        field = steps(self.draw("cua-driver-bench", agent))
+        self.assertEqual(len(field), 1)
+        self.assertIn("Steps per task (default 45)", field[0])
+        self.assertIn('placeholder="45"', field[0])
+        self.assertEqual(steps(self.draw("cua-driver-bench", "r.others=['nop'];")), [])
+
     def test_the_number_of_tasks_says_all_of_them_and_takes_that_many_at_most(self):
         field = lambda html: re.search(r'<label class="nb-field">Number of tasks<input[^>]*>(<small>[^<]*</small>)?', html).group(0)
         small = field(self.draw("osworld1", "r.datasets=['test_small'];"))

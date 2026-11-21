@@ -90,10 +90,7 @@
       "pattern": "[1-9][0-9]{0,2}",
       "example": "30",
       "default": "45",
-      "limit": true,
-      "setups": [
-        "agent"
-      ]
+      "limit": true
     },
     "pause": {
       "label": "Pause after each action (seconds)",
