@@ -152,6 +152,7 @@ else:
 # until it ends ("normal"); then it writes row.json and exits.
 LAUNCHER = r'''
 import argparse, json, os, subprocess, sys, time
+print("launcher diagnostic", flush=True)
 split = sys.argv.index("--")
 ap = argparse.ArgumentParser()
 for a in ("--task", "--condition", "--out", "--label"):
@@ -440,6 +441,25 @@ class Bench(unittest.TestCase):
         up = e.bench()
         first = desktop.tag(up)
         self.assertRegex(first, r"^nullius/env-cua-driver-bench-desktop:[0-9a-f]{12}$")
+        recipe = os.path.join(e.root, "recipe")
+        os.mkdir(recipe)
+        for rel in (desktop.DOCKERFILE, desktop.REQUIREMENTS):
+            shutil.copyfile(os.path.join(desktop.HERE, rel), os.path.join(recipe, rel))
+        with mock.patch.object(desktop, "HERE", recipe):
+            self.assertEqual(desktop.tag(up), first)
+            for rel in (desktop.DOCKERFILE, desktop.REQUIREMENTS):
+                with self.subTest(recipe=rel):
+                    path = os.path.join(recipe, rel)
+                    with open(path, "rb") as f:
+                        original = f.read()
+                    with open(path, "ab") as f:
+                        f.write(b"\n# changed recipe input\n")
+                    try:
+                        self.assertNotEqual(desktop.tag(up), first)
+                    finally:
+                        with open(path, "wb") as f:
+                            f.write(original)
+                    self.assertEqual(desktop.tag(up), first)
         os.makedirs(os.path.join(up, desktop.BENCH_DIR, "node_modules"))
         with open(os.path.join(up, desktop.BENCH_DIR, "node_modules", "x"), "w") as f:
             f.write("not the pin")
@@ -462,7 +482,18 @@ class Image(unittest.TestCase):
         e = Engine(self)
         up = e.bench()
         logs = os.path.join(e.root, "logs")
-        with mock.patch.dict(os.environ, {"TMPDIR": e.root}):
+        real = desktop._spawn
+
+        def checked_build(args, **kw):
+            if args[0] == "build":
+                for rel, source in desktop._bench_files(desktop.bench_folder(up)):
+                    copied = os.path.join(args[-1], "bench", rel)
+                    with open(source, "rb") as src, open(copied, "rb") as dst:
+                        self.assertEqual(dst.read(), src.read(), rel)
+                    self.assertEqual(os.stat(copied).st_mode & 0o111, os.stat(source).st_mode & 0o111, rel)
+            return real(args, **kw)
+
+        with mock.patch.dict(os.environ, {"TMPDIR": e.root}), mock.patch.object(desktop, "_spawn", checked_build):
             tempfile.tempdir = None
             try:
                 ref, found = desktop.image("build", up, logs)
@@ -540,9 +571,19 @@ class Trial(unittest.TestCase):
 
     def test_a_trial_from_the_gate_to_the_row(self):
         e, d = self.launched()
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            brief = d.launch("IR-02", 3, "foreground")
+        with tempfile.TemporaryFile() as out:
+            saved = os.dup(1)
+            try:
+                sys.stdout.flush()
+                os.dup2(out.fileno(), 1)
+                brief = d.launch("IR-02", 3, "foreground")
+            finally:
+                sys.stdout.flush()
+                os.dup2(saved, 1)
+                os.close(saved)
+            out.seek(0)
+            self.assertEqual(out.read(), b"")
+        self.assertIn("launcher diagnostic", d.launcher_output())
         self.assertEqual(brief, "Do IR-02.\n")
         self.assertTrue(os.path.exists(desktop.GATE))
         self.assertFalse(d.launcher_ended())
@@ -558,13 +599,13 @@ class Trial(unittest.TestCase):
         self.assertEqual(row["cwd"], os.path.join(desktop.BENCH_IN, desktop.HARNESS))
         self.assertIs(d.finish(), row)
         self.assertTrue(d.launcher_ended())
-        self.assertEqual(out.getvalue(), "")
         d.remove()
         self.assertFalse(e.running("cdb-test-1"))
 
     def test_the_ports_operations_as_the_desktops_user(self):
         e, d = self.launched()
         d.launch("IR-02", 0, "foreground")
+        before = len(e.calls())
         r = d.python("import os, sys; print(os.environ['DISPLAY'], os.environ['XAUTHORITY'], os.getcwd()); "
                      "sys.stderr.write('e'); sys.exit(4)")
         self.assertEqual(r, {"status": "success", "output": f":7 {desktop.PORT_XAUTHORITY} {desktop.HOME}\n",
@@ -590,6 +631,11 @@ class Trial(unittest.TestCase):
         with mock.patch.object(desktop, "_CAPTURE", "print('no picture')"):
             with self.assertRaises(desktop.DesktopError):
                 d.capture()
+        calls = e.calls()[before:]
+        self.assertEqual(len(calls), 9)
+        for call in calls:
+            self.assertEqual(call[0], "exec")
+            self.assertEqual(call[call.index("-u") + 1], desktop.USER)
         d.finish()
 
     def test_code_past_its_bound_is_none_and_its_group_is_killed(self):
