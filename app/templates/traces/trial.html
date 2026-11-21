@@ -106,7 +106,7 @@
 {% if detail %}
 <div class="panel" id="trial-detail">
   <h3 style="margin-top:0">The benchmark's detail</h3>
-  {% if detail.fields %}<table class="grid compact"><tbody>
+  {% if detail.fields %}<table class="grid compact" style="width:auto"><tbody>
     {% for f in detail.fields %}<tr><td class="muted">{{ f.name }}</td><td style="overflow-wrap:anywhere">{% if f.cut %}<details><summary>{{ f.cut }}…</summary>{{ f.text }}</details>{% else %}{{ f.text }}{% endif %}</td></tr>
     {% endfor %}
   </tbody></table>{% endif %}

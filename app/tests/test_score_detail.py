@@ -24,10 +24,10 @@ class ScoreDetail(unittest.TestCase):
 
     def test_plain_values_keep_their_names_and_order_and_read_as_written(self):
         got = self.detail({"zeta": "as written", "count": 3, "share": 0.45, "seen": True, "missed": False, "gone": None,
-                           "names": ["a", 2, None], "empty": []})
+                           "names": ["a", 2, None], "empty": [], "blank": ""})
         self.assertEqual([(f["name"], f["text"]) for f in got["fields"]],
                          [("zeta", "as written"), ("count", "3"), ("share", "0.45"), ("seen", "yes"), ("missed", "no"),
-                          ("gone", "none"), ("names", "a, 2, none"), ("empty", "none")])
+                          ("gone", "none"), ("names", "a, 2, none"), ("empty", "none"), ("blank", "none")])
         self.assertEqual(got["groups"], [])
 
     def test_an_object_of_plain_values_is_a_list_of_flags(self):

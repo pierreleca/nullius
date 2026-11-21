@@ -144,7 +144,7 @@ def _read_score(trial_dir: str):
 
 
 # A value of a score's detail longer than this is cut on the trial's page, its whole text a click away
-DETAIL_CELL = 120
+DETAIL_CELL = 200
 
 
 def _plain(value) -> bool:
@@ -152,11 +152,11 @@ def _plain(value) -> bool:
 
 
 def _shown(value) -> str:
-    """A value of a score's detail as the page writes it: text as written, a boolean as yes or no, none for null, a
-    list of plain values joined, anything deeper as its JSON."""
+    """A value of a score's detail as the page writes it: text as written, a boolean as yes or no, none for null or
+    empty text, a list of plain values joined, anything deeper as its JSON."""
     if isinstance(value, bool):
         return "yes" if value else "no"
-    if value is None:
+    if value is None or value == "":
         return "none"
     if isinstance(value, (str, int, float)):
         return str(value)
