@@ -415,7 +415,7 @@ class Declarations(unittest.TestCase):
         self.assertNotIn("held", b.report)                               # no tests that a change could break
         # the Artifacts tab lists the launcher's folder copied into the trial and the loop's two records of actions
         self.assertEqual([(r["label"], r["path"]) for r in b.records], [
-            ("Launcher's records", "verifier/cdb"), ("Actions run", "verifier/computer-actions.jsonl"),
+            ("Bench's own records", "verifier/cdb"), ("Actions run", "verifier/computer-actions.jsonl"),
             ("Actions before the task", "verifier/computer-prepare.jsonl")])
         self.assertEqual({r["path"] for r in b.records}, {driver.EVIDENCE, driver.ACTIONS, driver.PREPARED})
 
