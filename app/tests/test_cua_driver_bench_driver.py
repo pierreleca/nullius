@@ -1017,6 +1017,21 @@ class Driver(unittest.TestCase):
             driver.score("MB-09__foreground", ws, [], "")
         self.assertEqual(self.stand.made[-1].removes, 1)
 
+    def test_a_failed_score_probe_is_the_environments_and_a_healthy_one_is_the_verifiers(self):
+        self.stand.fail["finish"] = self.stand.module.DesktopError("the launcher wrote no row.json")
+        for reply, error in ((None, driver.EnvironmentSetupError),
+                             ({"returncode": -9}, driver.EnvironmentSetupError),
+                             ({"returncode": 0}, driver.VerifierError)):
+            with self.subTest(reply=reply):
+                ws, _ = self.unit(participant="control")
+                d = driver.OPEN["MB-09__foreground"].d
+                with mock.patch.object(d, "python", return_value=reply) as probe:
+                    with self.assertRaises(error):
+                        driver.score("MB-09__foreground", ws)
+                probe.assert_called_once_with("pass", driver.PYTHON_SECONDS)
+                self.assertEqual(d.removes, 1)
+                self.assertTrue(os.path.isfile(self.verifier(ws, os.path.join("cdb", "brief.md"))))
+
     def test_a_unit_never_scored_goes_at_its_end_at_the_next_setup_and_at_the_drivers_exit(self):
         ws, s = self.unit()
         self.assertEqual(driver.end("MB-09__foreground", ws), {})

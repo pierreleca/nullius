@@ -649,11 +649,15 @@ def _write_fresh(trial, name, text):
 
 
 def _gone(d):
-    """Why a desktop runs no code any more, or None while it does (an action not ended in time included)."""
+    """Why a desktop's health probe failed, or None when it succeeded."""
     try:
-        d.python("pass", PYTHON_SECONDS)
+        reply = d.python("pass", PYTHON_SECONDS)
     except Exception as e:
         return f"{type(e).__name__}: {e}"
+    if reply is None:
+        return "the desktop's health probe timed out"
+    if reply.get("returncode") != 0:
+        return "the desktop's health probe failed"
     return None
 
 
