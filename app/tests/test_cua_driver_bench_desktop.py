@@ -377,6 +377,42 @@ class Start(unittest.TestCase):
         self.assertFalse(e.running(made))
         self.assertIn(["rm", "-f", made], e.calls())
 
+    def test_a_container_created_after_start_times_out_is_removed_by_its_reaper(self):
+        e = Engine(self)
+        real_engine, popen = desktop._engine, subprocess.Popen
+        reapers, names = [], []
+
+        def recorded(args, **kw):
+            p = popen(args, **kw)
+            if os.path.join(desktop.HERE, "reaper.py") in args:
+                reapers.append(p)
+
+                def stopped():
+                    if p.poll() is None:
+                        p.kill()
+                    p.wait(timeout=5)
+                    p.stdin.close()
+                self.addCleanup(stopped)
+            return p
+
+        def pending(args, **kw):
+            if args[0] == "run":
+                names.append(args[args.index("--name") + 1])
+                raise subprocess.TimeoutExpired(args, kw["timeout"])
+            return real_engine(args, **kw)
+
+        with mock.patch.object(desktop, "_engine", pending), mock.patch.object(subprocess, "Popen", recorded):
+            with self.assertRaises(desktop.DesktopError):
+                desktop.Desktop.start("bench:image")
+        # The engine completes creation only after the failed start has returned.
+        os.mkdir(os.path.join(e.state, "containers", names[0]))
+        self.assertEqual(len(reapers), 1)
+        self.assertIsNone(reapers[0].poll())
+        end = time.monotonic() + 5
+        while e.running(names[0]) and time.monotonic() < end:
+            time.sleep(0.02)
+        self.assertFalse(e.running(names[0]))
+
     def test_an_interrupted_start_removes_what_it_made(self):
         e = Engine(self)
         real = desktop._engine

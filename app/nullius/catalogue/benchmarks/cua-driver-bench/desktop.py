@@ -523,8 +523,12 @@ class Desktop:
                 if made:
                     cls(made).remove()
                 elif name is None:                      # a run cut before it wrote the id: the name is this start's
-                    d.remove()
-                d._tell("removed")
+                    cls(d.name).remove()
+                if made or name is not None:
+                    d._tell("removed")
+            if d._reaper is not None:
+                with contextlib.suppress(OSError, ValueError):
+                    d._reaper.stdin.close()
             raise
         finally:
             identity.cleanup()
