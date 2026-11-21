@@ -660,6 +660,7 @@
       {% if artifact.declared and not seen.declared %}{% set seen.declared = true %}<tr class="artifact-declared"><td colspan="3" class="muted">The benchmark's own records</td></tr>{% endif %}
       <tr><td>{{ artifact.label }}{% if artifact.part %} <span class="mono muted">{{ artifact.part }}</span>{% endif %}</td><td class="num mono muted">{{ '%.2f'|format(artifact.size / 1024) }} KB</td>
         <td><span class="artifact-actions"><a class="btn ghost sm" href="{{ artifact.url }}">Read</a><a class="btn ghost sm" href="{{ artifact.download }}" download>Download</a></span></td></tr>
+      {% if artifact.more %}<tr><td colspan="3" class="muted">More records in {{ artifact.label }}.</td></tr>{% endif %}
     {% endfor %}
     </tbody></table>
   </div>

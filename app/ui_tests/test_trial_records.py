@@ -61,6 +61,18 @@ class TrialRecords(unittest.TestCase):
         self.assertNotIn("Its folder", before)
         self.assertIn("<td>The task's text</td>", after.replace("&#39;", "'"))
 
+    def test_the_tab_says_when_a_folder_has_more_records(self):
+        path = f"/trial/{self.job.job_id}/t1"
+        with patch.object(artifacts, "FOLDER_FILES", 1):
+            html = self.get(path).get_data(as_text=True)
+        tab = html.split('id="trial-artifacts"', 1)[1].split("</section>", 1)[0]
+        self.assertIn("More records in Its folder.", tab)
+        self.assertNotIn("More records in", self.get(path).get_data(as_text=True))
+        with patch.object(artifacts, "declared", return_value=[]):
+            plain = self.get(path).get_data(as_text=True)
+        self.assertNotIn("More records in", plain)
+        self.assertNotIn("Its folder", plain)
+
     def test_a_declared_record_is_read_and_downloaded_by_its_key(self):
         page = self.get(f"/trial/{self.job.job_id}/t1/artifact/r1-brief.md")
         self.assertEqual(page.status_code, 200)

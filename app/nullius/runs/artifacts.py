@@ -152,7 +152,8 @@ def _declared_rows(trial_dir, records):
                                      exists=True, size=info.st_size, declared=True))
             elif stat.S_ISDIR(info.st_mode):
                 with os.scandir(fd) as entries:
-                    names = sorted(e.name for e in entries if e.is_file(follow_symlinks=False))[:FOLDER_FILES]
+                    names = sorted(e.name for e in entries if e.is_file(follow_symlinks=False))
+                count = 0
                 for name in names:
                     try:
                         one = os.open(name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=fd)
@@ -161,8 +162,12 @@ def _declared_rows(trial_dir, records):
                     try:
                         info = os.fstat(one)
                         if stat.S_ISREG(info.st_mode) and _text(one):
+                            if count == FOLDER_FILES:
+                                rows[-1]["more"] = True
+                                break
                             rows.append(dict(key=f"r{n}-{name}", label=record["label"], part=name, exists=True,
                                              filename=f"{record['path']}/{name}", size=info.st_size, declared=True))
+                            count += 1
                     finally:
                         os.close(one)
         finally:

@@ -182,6 +182,22 @@ class DeclaredRecords(unittest.TestCase):
         with mock.patch.object(artifacts, "FOLDER_FILES", 3):
             self.assertEqual([r["part"] for r in self.own()], ["", "events.jsonl", "f0.txt", "f1.txt"])
 
+    def test_binary_files_do_not_use_the_text_record_allowance(self):
+        own = self.trial / "verifier" / "own"
+        for i in range(artifacts.FOLDER_FILES):
+            (own / f"image-{i:04d}.png").write_bytes(b"PNG\0")
+        self.assertIn("r1-row.json", [r["key"] for r in self.own()])
+
+    def test_a_folder_says_when_more_text_records_exist(self):
+        with mock.patch.object(artifacts, "FOLDER_FILES", 1):
+            rows = self.own()
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(rows[-1].get("more"))
+        self.assertFalse(any(r.get("more") for r in self.own()))
+        (self.trial / "verifier" / "own" / "packed.bin").write_bytes(b"\0")
+        with mock.patch.object(artifacts, "FOLDER_FILES", 2):
+            self.assertFalse(any(r.get("more") for r in self.own()))
+
     def test_the_benchmark_is_found_by_its_key_its_datasets_and_its_report_sources(self):
         good = {"label": " Its row ", "path": "verifier/own/row.json"}
         bench = catalog.Benchmark(key="bench", title="B", datasets=["bench-small"], report={"sources": ["Bench-Harbor"]},
