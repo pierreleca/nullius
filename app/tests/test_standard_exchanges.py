@@ -884,6 +884,22 @@ class TheRun(WithUpstream):
             runs_cli.main(["show", os.path.join(self.tmp, "jobs"), j.job_id, name, "--call", "1"])
         self.assertEqual(usage.exception.code, 2)
 
+    def test_an_earlier_try_is_read_by_its_name_call_by_call_as_for_one_request(self):
+        # a try kept in retried/ goes by its folder's name (NAME.try-N): --calls reads it as --call N --request does
+        Upstream.refuse = 1
+        job_dir = self.go(retries=1)
+        (kept,) = os.listdir(os.path.join(job_dir, "retried"))
+        name = kept.rpartition(".try-")[0]
+        (j,) = parse.load_all([os.path.join(self.tmp, "jobs")])
+        statuses = {}
+        for trial in (kept, name):
+            code, out, err = self.show(j.job_id, trial, "--calls")
+            self.assertEqual(code, 0, err)
+            statuses[trial] = [c["status"] for c in json.loads(out)["calls"]]
+        self.assertEqual(statuses, {kept: [429], name: [200]})          # each try's own calls
+        self.assertEqual(self.show(j.job_id, kept, "--call", "1", "--request")[0], 0)
+        self.assertEqual(self.show(j.job_id, name + ".try-9", "--calls")[0], runs_cli.EXIT_NOT_FOUND)
+
     def show(self, job_id, trial, *more):
         out, err = io.TextIOWrapper(io.BytesIO(), encoding="utf-8"), io.StringIO()
         with mock.patch.object(sys, "stdout", out), contextlib.redirect_stderr(err):

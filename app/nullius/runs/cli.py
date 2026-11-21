@@ -298,7 +298,7 @@ def _show(args) -> int:
         return EXIT_NOT_FOUND
     if args.trial_name:
         trial = next((t for t in job.trials if t.trial_name == args.trial_name), None)
-        if trial is None and args.call is not None:
+        if trial is None and (args.call is not None or args.calls):
             trial = next((t for current in job.trials for _, t in parse.tries(current)
                           if t.trial_name == args.trial_name), None)
         if trial is None:
