@@ -183,7 +183,8 @@ def score_detail(trial_dir: str, leave_out=()) -> dict | None:
         if isinstance(value, dict) and value and all(_plain(x) for x in value.values()):
             groups.append({"name": redact(str(name)), "flags": [
                 {"name": redact(str(k)), "held": x if isinstance(x, bool) else None,
-                 "text": "" if isinstance(x, bool) else redact(_shown(x))} for k, x in value.items()]})
+                 "text": (text := "" if isinstance(x, bool) else redact(_shown(x))),
+                 **({"cut": text[:DETAIL_CELL]} if len(text) > DETAIL_CELL else {})} for k, x in value.items()]})
             continue
         text = redact(_shown(value))
         fields.append({"name": redact(str(name)), "text": text,

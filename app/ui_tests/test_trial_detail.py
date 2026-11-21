@@ -75,6 +75,13 @@ class TrialDetail(unittest.TestCase):
         cut = long[:parse.DETAIL_CELL]
         self.assertIn(f"<details><summary>{cut}…</summary>{long}</details>", html)
 
+    def test_a_long_nested_value_is_collapsed_with_its_full_text_reachable(self):
+        text = "x" * 100_000 + "<end>"
+        html = self.panel(self.page({"flags": {"explanation": text}}))
+        self.assertIn(f'<details class="faint"><summary>{text[:parse.DETAIL_CELL]}…</summary>'
+                      + "x" * 100_000 + "&lt;end&gt;</details>", html)
+        self.assertNotIn("<details open", html)
+
     def test_values_and_names_are_text_never_markup(self):
         html = self.page({"<b>name</b>": "<script>alert(1)</script>", "flags": {"<i>flag</i>": True}})
         self.assertNotIn("<script>alert(1)</script>", html)

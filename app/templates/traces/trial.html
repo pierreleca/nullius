@@ -113,7 +113,7 @@
   {% for g in detail.groups %}
   <h3>{{ g.name }}</h3>
   <ul class="files" style="list-style:none;padding-left:0">
-    {% for x in g.flags %}<li>{% if x.held is sameas true %}<span class="ok">✓</span>{% elif x.held is sameas false %}<span class="bad">×</span>{% else %}<span class="faint">·</span>{% endif %} {{ x.name }}{% if x.text %}: <span class="faint">{{ x.text }}</span>{% endif %}</li>
+    {% for x in g.flags %}<li style="overflow-wrap:anywhere">{% if x.held is sameas true %}<span class="ok">✓</span>{% elif x.held is sameas false %}<span class="bad">×</span>{% else %}<span class="faint">·</span>{% endif %} {{ x.name }}{% if x.text %}: {% if x.cut %}<details class="faint"><summary>{{ x.cut }}…</summary>{{ x.text }}</details>{% else %}<span class="faint">{{ x.text }}</span>{% endif %}{% endif %}</li>
     {% endfor %}
   </ul>
   {% endfor %}

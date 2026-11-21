@@ -54,6 +54,14 @@ class ScoreDetail(unittest.TestCase):
         self.assertEqual([f["name"] for f in got["fields"]], ["seed"])
         self.assertIsNone(self.detail({"steps": 3}, ("steps",)))
 
+    def test_a_long_nonboolean_flag_has_a_preview_and_full_redacted_text(self):
+        secret = "sk-" + "example123456789012345"
+        text = "x" * 100_000 + " " + secret
+        flag = self.detail({"flags": {"explanation": text}})["groups"][0]["flags"][0]
+        self.assertEqual(flag.get("cut"), "x" * parse.DETAIL_CELL)
+        self.assertEqual(flag["text"], "x" * 100_000 + " [REDACTED]")
+        self.assertIsNone(flag["held"])
+
     def test_no_detail_no_view(self):
         for detail in (None, {}, [1, 2], "said"):
             with self.subTest(detail=detail):
