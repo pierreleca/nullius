@@ -510,6 +510,15 @@ class TheBuilder(task_set_pages.BuilderCase):
         self.assertNotIn("other", task_set_pages.visible(got["all"]))           # the other sets are not offered there
         self.assertEqual(titles(got["older"]), ["All of it", "Specific tasks", "The first 2"])    # a recipe from before, shown chosen
 
+    def test_the_run_command_s_page_says_what_the_step_offers_and_leaves_the_other_forms_to_the_command_line(self):
+        doc = (Path(__file__).resolve().parents[2] / "docs" / "cli" / "run.md").read_text(encoding="utf-8")
+        part = doc[doc.index("## Plan the whole, begin with a part"):]
+        row = next(line for line in part.splitlines() if line.startswith("| The builder |"))
+        self.assertIn("**Start with**: all of it, or specific tasks", row)      # the step's two choices, as drawn above
+        self.assertNotIn("a number of tasks", row)
+        for form in ("A number", "a file", "`set:NAME`"):
+            self.assertIn(form, row)
+
     def test_the_page_holds_the_dialog_with_the_tasks_list(self):
         html = self.get("/new-run").get_data(as_text=True)
         dialog = re.search(r'<dialog id="nb-tasks".*?</dialog>', html, re.S).group(0)
