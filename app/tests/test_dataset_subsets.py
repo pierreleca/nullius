@@ -1,7 +1,7 @@
 """A benchmark's list cut from another of its lists (``subset_of`` on a dataset of its definition): the field is
 optional and names another list, one cut from none, that holds at least as many units; OSWorld1 declares its three
-cuts of All tasks at each of its versions and no other benchmark declares any; a run still names the list it runs,
-so a recipe of a cut compiles as before. No key, no network."""
+cuts of All tasks at each of its versions, Cua Driver Bench its two conditions, and no other benchmark declares any;
+a run still names the list it runs, so a recipe of a cut compiles as before. No key, no network."""
 from __future__ import annotations
 
 import copy
@@ -58,7 +58,7 @@ class Declared(unittest.TestCase):
     def test_no_other_benchmark_declares_one(self):
         every, _ = definitions.load("benchmark", every=True)
         declaring = sorted({b["key"] for b in every if any("subset_of" in x for x in b.get("datasets") or [])})
-        self.assertEqual(declaring, ["osworld1"])
+        self.assertEqual(declaring, ["cua-driver-bench", "osworld1"])
 
     def test_a_run_still_names_the_list_it_runs(self):
         b = definitions.get("benchmark", "osworld1@044bc33")
