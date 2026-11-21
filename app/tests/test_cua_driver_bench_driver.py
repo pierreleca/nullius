@@ -328,7 +328,7 @@ class Declarations(unittest.TestCase):
                                                                      "desktop_image": "build"})
         for name, good, bad in (("max_steps", ("1", "45", "999"), ("0", "1000", "default")),
                                 ("pause", ("0", "1.0", "2.5"), ("10", "-1", "1.234")),
-                                ("desktop_image", ("build", "osw-cdb:328", "cdb-desktop"), ("ghcr.io/trycua/linux:24.04", "Build", ""))):
+                                ("desktop_image", ("build", "desktop-copy:7", "cdb-desktop"), ("ghcr.io/trycua/linux:24.04", "Build", ""))):
             for v in good:
                 self.assertIsNone(definitions.option_problem(opts[name], v), (name, v))
             for v in bad:
@@ -521,12 +521,12 @@ class Driver(unittest.TestCase):
             self.assertNotIn(word, driver.USE.lower())
 
     def test_the_options_reach_the_loop_and_the_image(self):
-        os.environ.update(NULLIUS_OPTION_MAX_STEPS="7", NULLIUS_OPTION_PAUSE="0.05", NULLIUS_OPTION_DESKTOP_IMAGE="osw-cdb:328")
+        os.environ.update(NULLIUS_OPTION_MAX_STEPS="7", NULLIUS_OPTION_PAUSE="0.05", NULLIUS_OPTION_DESKTOP_IMAGE="desktop-copy:7")
         ws, s = self.unit()
         u = driver.OPEN["foreground__MB-09"]
         self.assertEqual((u.bridge.steps, u.bridge.pause), (7, 0.05))
-        self.assertEqual(self.stand.images[-1][0], "osw-cdb:328")
-        self.assertEqual(self.stand.made[-1].reference, "image-osw-cdb:328")
+        self.assertEqual(self.stand.images[-1][0], "desktop-copy:7")
+        self.assertEqual(self.stand.made[-1].reference, "image-desktop-copy:7")
         c = Client(s["mcp"][0]["args"][1])
         self.assertEqual(c.call("info")[1]["steps"], 7)
         c.close()
