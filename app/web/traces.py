@@ -329,6 +329,9 @@ def trial(job_id, trial_name):
                 steps_of = {"steps": detail["steps"], "limit": detail["steps_limit"]}
         except (OSError, ValueError, AttributeError):
             pass
+    # the rest of the benchmark's own detail, under its driver's names: what the page shows elsewhere left out
+    detail = parse.score_detail(t.dir, (("steps", "steps_limit") if steps_of else ()) + (("ended",) if t.ended_by else ())) \
+        if j.runner else None
     loc = _gold_localization(j, t, traj) if ok else None
 
     # `hide`/`hide_span` make a filtered view a plain link — shareable,
@@ -356,7 +359,7 @@ def trial(job_id, trial_name):
         if notice:
             flash(notice, "error")
     return render_template(
-        "traces/trial.html", job=j, trial=t, traj=traj, loc=loc, bench_parts=bench_parts, steps_of=steps_of,
+        "traces/trial.html", job=j, trial=t, traj=traj, loc=loc, bench_parts=bench_parts, steps_of=steps_of, detail=detail,
         trace=tr, charts=ch, viewing=viewing, imported_from=_imported_from(j),
         chart_filter=cfilt, default_save_name=SAVED_TRACE_DEFAULT,
         artifacts=records, pictures=pictures, attempt=attempt, attempts=task_attempts.of(j, attempt), tries=_tries(attempt),

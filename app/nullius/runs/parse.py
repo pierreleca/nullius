@@ -141,6 +141,54 @@ def _read_score(trial_dir: str):
         return None
 
 
+# A value of a score's detail longer than this is cut on the trial's page, its whole text a click away
+DETAIL_CELL = 120
+
+
+def _plain(value) -> bool:
+    return value is None or isinstance(value, (str, int, float, bool))
+
+
+def _shown(value) -> str:
+    """A value of a score's detail as the page writes it: text as written, a boolean as yes or no, none for null, a
+    list of plain values joined, anything deeper as its JSON."""
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if value is None:
+        return "none"
+    if isinstance(value, (str, int, float)):
+        return str(value)
+    if isinstance(value, list) and all(_plain(x) for x in value):
+        return ", ".join(_shown(x) for x in value) if value else "none"
+    return json.dumps(value, ensure_ascii=False)
+
+
+def score_detail(trial_dir: str, leave_out=()) -> dict | None:
+    """The detail of a standard trial's score (``verifier/score.json``), as its benchmark's driver wrote it, for the
+    trial's page: ``fields``, each plain value (a list of plain values too, anything deeper as its JSON) with its
+    name, its text and, past ``DETAIL_CELL`` characters, the text cut; ``groups``, each object of plain values one
+    level down (flags) by its name, each flag ``held`` True or False when it is a boolean, else its text. Names
+    and order are the driver's; ``leave_out``, the names the page already shows elsewhere. Every text is redacted.
+    None when the score has no detail, or nothing of it is left to show."""
+    said = _read_score(trial_dir)
+    detail = said.get("detail") if isinstance(said, dict) else None
+    if not isinstance(detail, dict):
+        return None
+    fields, groups = [], []
+    for name, value in detail.items():
+        if name in leave_out:
+            continue
+        if isinstance(value, dict) and value and all(_plain(x) for x in value.values()):
+            groups.append({"name": redact(str(name)), "flags": [
+                {"name": redact(str(k)), "held": x if isinstance(x, bool) else None,
+                 "text": "" if isinstance(x, bool) else redact(_shown(x))} for k, x in value.items()]})
+            continue
+        text = redact(_shown(value))
+        fields.append({"name": redact(str(name)), "text": text,
+                       "cut": text[:DETAIL_CELL] if len(text) > DETAIL_CELL else ""})
+    return {"fields": fields, "groups": groups} if fields or groups else None
+
+
 def _ended_by(res: dict, trial_dir: str) -> str:
     """What ended the agent's work on a standard trial: the run's cut when its record has one (``standard.cut``:
     ``time``, the agent's time; ``calls``, the run's cap on its model calls); else the benchmark's own end as its
