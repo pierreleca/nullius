@@ -666,12 +666,9 @@ class Driver(unittest.TestCase):
     def test_a_harness_error_in_the_row_is_the_environments_and_tried_again(self):
         self.stand.rows = lambda task, i, c: row(task, i, c, harness_error="evaluate: evaluator_no_result")
         ws, _ = self.unit()
-        with self.assertRaises(RuntimeError) as got:
+        with self.assertRaisesRegex(driver.EnvironmentSetupError, "^the bench's launcher reports a harness error"
+                                                                  ".*evaluator_no_result"):
             driver.score("foreground__MB-09", ws, [], "")
-        said = f"RuntimeError: {got.exception}"                      # as the driver's reply gives it
-        self.assertTrue(str(got.exception).startswith("EnvironmentSetupError: "))
-        self.assertIn("evaluator_no_result", said)
-        self.assertEqual(standard_run._kind(Exception(said), "VerifierError"), "EnvironmentSetupError")
         self.assertTrue(retries.retryable({"exception_info": {"exception_type": "EnvironmentSetupError"}}))
         self.assertTrue(os.path.isfile(self.verifier(ws, os.path.join("cdb", "row.json"))))
 
@@ -680,18 +677,18 @@ class Driver(unittest.TestCase):
                  "pointer_parked", "sentinel_front_at_start", "frames")
         self.stand.rows = lambda task, i, c: dict({k: v for k, v in row(task, i, c).items() if k in early}, finished=1100.0)
         ws, _ = self.unit()
-        with self.assertRaisesRegex(RuntimeError, "^EnvironmentSetupError: the bench's launcher ended without its check"):
+        with self.assertRaisesRegex(driver.EnvironmentSetupError, "^the bench's launcher ended without its check"):
             driver.score("foreground__MB-09", ws, [], "")
         self.assertTrue(os.path.isfile(self.verifier(ws, os.path.join("cdb", "row.json"))))
 
     def test_a_row_of_another_trial_or_none_is_the_verifiers(self):
         self.stand.rows = lambda task, i, c: row(task, i + 1, c)
         ws, _ = self.unit()
-        with self.assertRaisesRegex(RuntimeError, "^VerifierError: the trial's row is of run_index 1, not 0"):
+        with self.assertRaisesRegex(driver.VerifierError, "^the trial's row is of run_index 1, not 0"):
             driver.score("foreground__MB-09", ws, [], "")
         self.stand.fail["finish"] = self.stand.module.DesktopError("the launcher did not end in 420 s")
         ws, _ = self.unit()
-        with self.assertRaisesRegex(RuntimeError, "^VerifierError: the trial's row could not be read: the launcher"):
+        with self.assertRaisesRegex(driver.VerifierError, "^the trial's row could not be read: the launcher"):
             driver.score("foreground__MB-09", ws, [], "")
         self.assertTrue(os.path.isfile(self.verifier(ws, os.path.join("cdb", "brief.md"))))     # the folder copied all the same
 
@@ -802,12 +799,9 @@ class Driver(unittest.TestCase):
         c = Client(s["mcp"][0]["args"][1])
         self.assertTrue(c.call("click", {"x": 1, "y": 1})[0])
         c.close()
-        with self.assertRaisesRegex(RuntimeError, "^EnvironmentSetupError: the desktop failed during the task: "
-                                                  ".*the engine went away") as got:
+        with self.assertRaisesRegex(driver.EnvironmentSetupError, "^the desktop failed during the task: "
+                                                                  ".*the engine went away"):
             driver.score("foreground__MB-09", ws, [], "")
-        kind = standard_run._kind(Exception(f"RuntimeError: {got.exception}"), "VerifierError")
-        self.assertEqual(kind, "EnvironmentSetupError")
-        self.assertTrue(retries.retryable({"exception_info": {"exception_type": kind}}))
         self.assertEqual(self.stand.made[-1].removes, 1)
         self.assertEqual(driver.OPEN, {})
         self.assertFalse(os.path.exists(s["mcp"][0]["args"][1]))
@@ -942,52 +936,70 @@ class ThroughARun(unittest.TestCase):
     """The entry run by Nullius as a whole: its driver a process of its own over the stand-in module, the scripted
     computer agent that looks, clicks once and then holds its turn, and the agent's time cut short."""
 
-    def test_a_check_passed_when_the_agents_time_ran_out_counts(self):
+    def run_one(self, the_row, module=MODULE, retries=0):
+        """A run of one unit, CDB-G02, its row ``the_row``: the job's folder, its trial and the stand-in's folder."""
         from nullius.runs import parse
         from nullius.standard import install
-        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as tmp:
-            entry, desk, up = (os.path.join(tmp, n) for n in ("entry", "desktop", "upstream"))
-            for d in (entry, os.path.join(desk, "stub"), os.path.join(up, "libs", "cua-driver-bench", "taskpack")):
-                os.makedirs(d)
-            with open(os.path.join(desk, "stub", "pyautogui.py"), "w") as f:
-                f.write(STUB)
-            shutil.copyfile(os.path.join(ENTRY, "driver.py"), os.path.join(entry, "driver.py"))
-            with open(os.path.join(entry, "desktop.py"), "w") as f:
-                f.write(MODULE.replace("__ROOT__", repr(desk)).replace("__ROW__", repr(json.dumps(row("CDB-G02", 0, checker=True)))))
-            data = os.path.join(up, DEFINITION["datasets"][0]["path"])
-            with open(data, "w") as f:
-                json.dump(task_list(), f)
-            spec = os.path.join(up, driver.TASK_SPECS, "CDB-G02")
-            os.makedirs(spec)
-            with open(os.path.join(spec, "task.json"), "w") as f:
-                json.dump({"id": "CDB-G02", "timeout_s": 360, "max_turns": 45}, f)
-            bench = dict(DEFINITION, _here=entry, datasets=[dict(DEFINITION["datasets"][0], sha256=install.sha256_of(data))],
-                         driver=dict(DEFINITION["driver"], command=[sys.executable, "{here}/driver.py", "{here}/desktop.py"]),
-                         mcp_servers={"computer": dict(DEFINITION["mcp_servers"]["computer"], command=[sys.executable])})
-            other = definitions.get("agent", "fake", os.path.join(FIXTURES, "catalogue"))
-            other = dict(other, _here=FIXTURES, start={"acp": [sys.executable, "{here}/fake_computer_agent.py", "hang"]})
-            with mock.patch.object(install, "HOME", os.path.join(tmp, "install")), \
-                    mock.patch.object(install, "upstream_dir", return_value=up), \
-                    mock.patch.object(install, "upstream", return_value=up):
-                job = standard_run.run(bench, other, model="m", provider="custom", jobs_root=os.path.join(tmp, "jobs"),
-                                       limit=1, concurrency=1, proving=True, unsandboxed=True, retries=0,
-                                       timeouts={"setup": 60, "agent": 3}, bench_options={"desktop_image": "cdb-stand-in"},
-                                       env={"MODEL_API_URL": "http://127.0.0.1:9/v1"}, say=lambda _: None)
-            trial = parse.parse_job(job).trials[0]
-            with open(os.path.join(job, trial.trial_name, "result.json")) as f:
-                record = json.load(f)
-            with open(os.path.join(job, trial.trial_name, "verifier", "computer-actions.jsonl")) as f:
-                actions = [json.loads(line) for line in f]
-            with open(os.path.join(job, trial.trial_name, "verifier", "score.json")) as f:
-                verdict = json.load(f)
-            with open(os.path.join(desk, "removed")) as f:
-                removed = f.read()
+        tmp = tempfile.mkdtemp(dir=os.environ.get("TMPDIR"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        entry, desk, up = (os.path.join(tmp, n) for n in ("entry", "desktop", "upstream"))
+        for d in (entry, os.path.join(desk, "stub"), os.path.join(up, "libs", "cua-driver-bench", "taskpack")):
+            os.makedirs(d)
+        with open(os.path.join(desk, "stub", "pyautogui.py"), "w") as f:
+            f.write(STUB)
+        shutil.copyfile(os.path.join(ENTRY, "driver.py"), os.path.join(entry, "driver.py"))
+        with open(os.path.join(entry, "desktop.py"), "w") as f:
+            f.write(module.replace("__ROOT__", repr(desk)).replace("__ROW__", repr(json.dumps(the_row))))
+        data = os.path.join(up, DEFINITION["datasets"][0]["path"])
+        with open(data, "w") as f:
+            json.dump(task_list(), f)
+        spec = os.path.join(up, driver.TASK_SPECS, "CDB-G02")
+        os.makedirs(spec)
+        with open(os.path.join(spec, "task.json"), "w") as f:
+            json.dump({"id": "CDB-G02", "timeout_s": 360, "max_turns": 45}, f)
+        bench = dict(DEFINITION, _here=entry, datasets=[dict(DEFINITION["datasets"][0], sha256=install.sha256_of(data))],
+                     driver=dict(DEFINITION["driver"], command=[sys.executable, "{here}/driver.py", "{here}/desktop.py"]),
+                     mcp_servers={"computer": dict(DEFINITION["mcp_servers"]["computer"], command=[sys.executable])})
+        other = definitions.get("agent", "fake", os.path.join(FIXTURES, "catalogue"))
+        other = dict(other, _here=FIXTURES, start={"acp": [sys.executable, "{here}/fake_computer_agent.py", "hang"]})
+        with mock.patch.object(install, "HOME", os.path.join(tmp, "install")), \
+                mock.patch.object(install, "upstream_dir", return_value=up), \
+                mock.patch.object(install, "upstream", return_value=up):
+            job = standard_run.run(bench, other, model="m", provider="custom", jobs_root=os.path.join(tmp, "jobs"),
+                                   limit=1, concurrency=1, proving=True, unsandboxed=True, retries=retries,
+                                   timeouts={"setup": 60, "agent": 3}, bench_options={"desktop_image": "cdb-stand-in"},
+                                   env={"MODEL_API_URL": "http://127.0.0.1:9/v1"}, say=lambda _: None)
+        return job, parse.parse_job(job).trials[0], desk
+
+    def test_a_check_passed_when_the_agents_time_ran_out_counts(self):
+        job, trial, desk = self.run_one(row("CDB-G02", 0, checker=True))
+        with open(os.path.join(job, trial.trial_name, "result.json")) as f:
+            record = json.load(f)
+        with open(os.path.join(job, trial.trial_name, "verifier", "computer-actions.jsonl")) as f:
+            actions = [json.loads(line) for line in f]
+        with open(os.path.join(job, trial.trial_name, "verifier", "score.json")) as f:
+            verdict = json.load(f)
+        with open(os.path.join(desk, "removed")) as f:
+            removed = f.read()
         self.assertEqual(record["standard"].get("cut"), "time")              # the agent's time ended its turn
         self.assertEqual((trial.exception_type, trial.reward), ("", 1.0))   # and the row's pass stands
         self.assertEqual((verdict["reward"], verdict["passed"], verdict["detail"]["checker_passed"]), (1.0, True, True))
         self.assertEqual((verdict["detail"]["steps"], verdict["detail"]["violations"]), (1, []))
         self.assertEqual([a["step"] for a in actions], [1])                 # the click, the agent's one step
         self.assertEqual(removed, "1\n")
+
+    def test_the_environments_errors_at_score_are_recorded_as_the_environments(self):
+        failing = MODULE + ("\n_python = Desktop.python\n\n\ndef _failing(self, code, seconds=90):\n"
+                            "    if 'click' in code:\n        raise DesktopError('the engine went away')\n"
+                            "    return _python(self, code, seconds)\n\n\nDesktop.python = _failing\n")
+        for case, the_row, module in (("harness error", row("CDB-G02", 0, harness_error="evaluate: no result"), MODULE),
+                                      ("desktop gone", row("CDB-G02", 0, checker=True), failing)):
+            with self.subTest(case):
+                job, trial, _ = self.run_one(the_row, module)
+                with open(os.path.join(job, trial.trial_name, "result.json")) as f:
+                    said = (json.load(f).get("exception_info") or {}).get("exception_message") or ""
+                self.assertEqual(trial.exception_type, "EnvironmentSetupError", said)
+                self.assertIn("no result" if case == "harness error" else "the engine went away", said)
 
 
 if __name__ == "__main__":

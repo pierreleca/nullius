@@ -505,20 +505,28 @@ def _checks(evaluation):
     return {str(n): bool(c.get("passed")) if isinstance(c, dict) else bool(c) for n, c in raw.items()}
 
 
+class EnvironmentSetupError(RuntimeError):
+    """The trial's environment failed, which is no one's result: --retries runs it again. The run takes the kind of
+    a driver's error from its class's name."""
+
+
+class VerifierError(RuntimeError):
+    """The trial's row could not be read, or is another trial's."""
+
+
 def verdict(u, row, kept):
     """The row's verdict and its detail; a harness error or a row without the launcher's check is the
     environment's, a row of another trial the verifier's."""
     if not isinstance(row, dict):
-        raise RuntimeError("VerifierError: the trial's row is not an object")
+        raise VerifierError("the trial's row is not an object")
     if row.get("harness_error"):
-        raise RuntimeError("EnvironmentSetupError: the bench's launcher reports a harness error, which is no one's "
-                           f"result: {str(row['harness_error'])[:500]}")
+        raise EnvironmentSetupError("the bench's launcher reports a harness error, which is no one's result: "
+                                    f"{str(row['harness_error'])[:500]}")
     for key, want in (("task", u.task), ("run_index", u.run_index), ("condition", u.condition)):
         if row.get(key) != want:
-            raise RuntimeError(f"VerifierError: the trial's row is of {key} {row.get(key)!r}, not {want!r}")
+            raise VerifierError(f"the trial's row is of {key} {row.get(key)!r}, not {want!r}")
     if not isinstance(row.get("evaluation"), dict) or "passed" not in row:     # it raised after the agent's slot
-        raise RuntimeError("EnvironmentSetupError: the bench's launcher ended without its check, which is no one's "
-                           "result")
+        raise EnvironmentSetupError("the bench's launcher ended without its check, which is no one's result")
     evaluation = row["evaluation"]
     guard = row.get("gui_only") if isinstance(row.get("gui_only"), dict) else {}
     a15 = row.get("a15") if isinstance(row.get("a15"), dict) else {}
@@ -555,14 +563,14 @@ def score(unit, dir, transcript=None, answer=None, **_):
         try:
             row = u.d.finish()
         except Exception as e:
-            failed = f"VerifierError: the trial's row could not be read: {e}"
+            failed = f"the trial's row could not be read: {e}"
         kept = u.keep()
     finally:
         u.remove()
     if u.error:
-        raise RuntimeError(f"EnvironmentSetupError: the desktop failed during the task: {u.error}")
+        raise EnvironmentSetupError(f"the desktop failed during the task: {u.error}")
     if failed:
-        raise RuntimeError(failed)
+        raise VerifierError(failed)
     return verdict(u, row, kept)
 
 
