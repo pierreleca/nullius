@@ -318,15 +318,21 @@ def _bench_files(folder: str) -> List[Tuple[str, str]]:
 
 
 def tag(upstream: str) -> str:
-    """The tag ``build`` gives: the sha256 of the recipe, the pins and the bench's folder, each path and its bytes."""
+    """The tag ``build`` gives: the sha256 of the recipe, the pins and the bench's folder, each path and its bytes
+    (and a bench file's mode in the build's context)."""
     h = hashlib.sha256()
     for rel in (DOCKERFILE, REQUIREMENTS):
         with open(os.path.join(HERE, rel), "rb") as f:
             h.update(b"\0" + posixpath.basename(rel).encode() + b"\0" + hashlib.sha256(f.read()).digest())
     for rel, path in _bench_files(bench_folder(upstream)):
         with open(path, "rb") as f:
-            h.update(b"\0bench/" + rel.encode() + b"\0" + hashlib.sha256(f.read()).digest())
+            h.update(b"\0bench/" + rel.encode() + b"\0" + b"%o" % _mode(path) + hashlib.sha256(f.read()).digest())
     return f"nullius/env-{IMAGE_KEY}-{ENVIRONMENT}:{h.hexdigest()[:12]}"
+
+
+def _mode(path: str) -> int:
+    """A file's mode in the build's context, whatever the checkout's: 755 when executable, else 644."""
+    return 0o755 if os.stat(path).st_mode & 0o111 else 0o644
 
 
 def _image_id(reference: str) -> Optional[str]:
@@ -384,6 +390,11 @@ def _build(reference: str, bench: str, log_dir: Optional[str], end: float) -> No
         for rel, path in _bench_files(bench):
             os.makedirs(os.path.dirname(os.path.join(ctx, "bench", rel)), exist_ok=True)
             shutil.copy2(path, os.path.join(ctx, "bench", rel))
+        for root, dirs, files in os.walk(ctx):         # the builder's cache keys on modes: none of the checkout's
+            for name in dirs:
+                os.chmod(os.path.join(root, name), 0o755)
+            for name in files:
+                os.chmod(os.path.join(root, name), _mode(os.path.join(root, name)))
         if log_dir:
             os.makedirs(log_dir, exist_ok=True)
         log = open(os.path.join(log_dir, f"env-{ENVIRONMENT}.log"), "ab") if log_dir else tempfile.TemporaryFile()

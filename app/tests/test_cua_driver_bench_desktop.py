@@ -528,6 +528,44 @@ class Image(unittest.TestCase):
         self.assertIn("'desktop.Dockerfile'", said)
         self.assertTrue(os.path.exists(os.path.join(e.root, "nullius-cua-driver-bench-desktop.lock")))
 
+    def test_the_builds_context_has_the_same_modes_from_any_checkout(self):
+        e = Engine(self)
+        up = e.bench()
+        bench = desktop.bench_folder(up)
+        tool = os.path.join(bench, desktop.HARNESS, "launch", "tool.sh")
+        first = desktop.tag(up)
+        self.addCleanup(os.umask, os.umask(0o002))             # a checkout and a build under another umask
+        for root, dirs, files in os.walk(bench):
+            for name in dirs:
+                os.chmod(os.path.join(root, name), 0o775)
+            for name in files:
+                path = os.path.join(root, name)
+                os.chmod(path, 0o775 if path == tool else 0o664)
+        self.assertEqual(desktop.tag(up), first)
+        seen = {}
+        real = desktop._spawn
+
+        def recorded(args, **kw):
+            if args[0] == "build":
+                for root, dirs, files in os.walk(args[-1]):
+                    for name in dirs + files:
+                        path = os.path.join(root, name)
+                        seen[os.path.relpath(path, args[-1])] = (os.path.isdir(path), stat.S_IMODE(os.stat(path).st_mode))
+            return real(args, **kw)
+        with mock.patch.dict(os.environ, {"TMPDIR": e.root}), mock.patch.object(desktop, "_spawn", recorded):
+            tempfile.tempdir = None
+            try:
+                desktop.image("build", up)
+            finally:
+                tempfile.tempdir = None
+        executable = os.path.join("bench", os.path.relpath(tool, bench))
+        self.assertIn(executable, seen)
+        self.assertIn("desktop-requirements.txt", seen)
+        for rel, (folder, mode) in seen.items():
+            self.assertEqual(mode, 0o755 if folder or rel == executable else 0o644, rel)
+        os.chmod(tool, 0o664)                                      # the executable bit is in the image: in the tag
+        self.assertNotEqual(desktop.tag(up), first)
+
 
 class Trial(unittest.TestCase):
     def launched(self, mode="normal", **kw):
