@@ -1,0 +1,289 @@
+[
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/xfce_session.py",
+  "setting": "--task",
+  "values": "the ten task ids of the task list",
+  "default": "none: required",
+  "nullius": "dataset:linux_foreground"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/xfce_session.py",
+  "setting": "--run-index",
+  "values": "a whole number from 0",
+  "default": "none: required",
+  "nullius": "fixed:the attempt's number - 1 - the bench's trial k is run index k - 1, from which the launcher draws the seed; a retried attempt keeps it"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/xfce_session.py",
+  "setting": "--condition",
+  "values": "foreground, background",
+  "default": "none: required",
+  "nullius": "fixed:foreground - the condition of the dataset linux_foreground; the background is not offered yet"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/xfce_session.py",
+  "setting": "--out",
+  "values": "a folder",
+  "default": "none: required",
+  "nullius": "fixed:a folder of the trial in the desktop - copied into the trial's verifier/cdb when the trial ends"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/xfce_session.py",
+  "setting": "--label",
+  "values": "a word",
+  "default": "empty",
+  "nullius": "fixed:empty - its default; Nullius names each trial by its job"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/xfce_session.py",
+  "setting": "--timeout",
+  "values": "seconds",
+  "default": "360",
+  "nullius": "fixed:21600 - the agent's time (the task's 360 s) is the run's, counted from the moment the task is given; the launcher's own limit, counted from its command's start, is held above it"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/xfce_session.py",
+  "setting": "--no-enforce",
+  "values": "on, off",
+  "default": "off",
+  "nullius": "fixed:off - its default: the guard ends a trial at its first violation, as in the bench's runs"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/xfce_session.py",
+  "setting": "-- COMMAND",
+  "values": "the agent's command",
+  "default": "none: required",
+  "nullius": "fixed:the gate - a command that holds the agent's slot open until the trial's score, while an agent acts through the computer port"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/xfce_session.py",
+  "setting": "CDB_TASKPACK",
+  "values": "a folder",
+  "default": "the taskpack beside the launcher",
+  "nullius": "fixed:unset - its default, the pin's taskpack"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/xfce_session.py",
+  "setting": "DISPLAY and the session's variables",
+  "values": "an X11 session",
+  "default": "the caller's",
+  "nullius": "fixed:the desktop's session - read from its window manager's process"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/xfce/agent.sh",
+  "setting": "ARM",
+  "values": "cua-driver, agent-desktop",
+  "default": "none: required",
+  "nullius": "not offered - the bench's own agent with one of its tools; an agent of the catalogue acts through the computer port in its place"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/xfce/agent.sh",
+  "setting": "MODEL",
+  "values": "a Claude model",
+  "default": "claude-sonnet-5-5",
+  "nullius": "not offered - the bench's own agent's model; a run's model is its agent's"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/xfce/agent.sh",
+  "setting": "TURNS",
+  "values": "a number of turns",
+  "default": "45",
+  "nullius": "option:max_steps"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/xfce/agent.sh",
+  "setting": "CLAUDE",
+  "values": "the claude command",
+  "default": "claude",
+  "nullius": "not offered - the bench's own agent"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/xfce/agent.sh",
+  "setting": "CDB_HOME",
+  "values": "a folder",
+  "default": "$HOME/cdb",
+  "nullius": "not offered - where the bench's tools are installed for its own agent"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/xfce/agent.sh",
+  "setting": "--effort",
+  "values": "low, medium, high",
+  "default": "medium",
+  "nullius": "not offered - the bench's own agent's setting"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/xfce/agent.sh",
+  "setting": "MAX_THINKING_TOKENS",
+  "values": "a number of tokens",
+  "default": "16000",
+  "nullius": "not offered - the bench's own agent's setting"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/xfce/agent.sh",
+  "setting": "CUA_DRIVER_RS_TELEMETRY_ENABLED, DO_NOT_TRACK, AGENT_DESKTOP_TELEMETRY",
+  "values": "on, off",
+  "default": "off",
+  "nullius": "not offered - the bench's tools' own telemetry, which no agent of the catalogue starts"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/xfce/agent.sh",
+  "setting": "--output-format stream-json (agent-transcript.jsonl)",
+  "values": "the transcript",
+  "default": "written",
+  "nullius": "not offered - the transcript that the guard's scan of tool calls reads; an agent through the port writes none"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/probes/TASK/task.json",
+  "setting": "timeout_s",
+  "values": "seconds",
+  "default": "360",
+  "nullius": "fixed:the task's own - the agent's time on the task, and the minutes its text names"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/probes/TASK/task.json",
+  "setting": "max_turns",
+  "values": "a number of turns",
+  "default": "45",
+  "nullius": "option:max_steps"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/probes/TASK/task.json",
+  "setting": "browser",
+  "values": "true, false",
+  "default": "false; true for CDB-G04",
+  "nullius": "fixed:the task's own - a task with a local site gets the bench's variant of the network rule"
+ },
+ {
+  "entry": "libs/cua-driver-bench/taskpack/v2-taskset.json",
+  "setting": "limits",
+  "values": "timeout_s, max_turns",
+  "default": "360, 45",
+  "nullius": "fixed:the task list's - the task's own spec gives the same"
+ },
+ {
+  "entry": "libs/cua-driver-bench/taskpack/v2-taskset.json",
+  "setting": "seed",
+  "values": "the bench's seed rule",
+  "default": "sha256 of TASK:INDEX, its first 8 hex digits, modulo 10^6",
+  "nullius": "fixed:the launcher's - it draws the seed itself; the driver reads it back from the trial's row"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/claude_arms.py",
+  "setting": "SYSTEM_PROMPT",
+  "values": "the shared system prompt of the bench's own agent",
+  "default": "it holds two rule sentences: Operate only the applications the task names. Do not use the network.",
+  "nullius": "fixed:its two rule sentences, after the task's text - the rest of the prompt is the bench's own agent's; an agent of the catalogue keeps its own"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/claude_arms.py",
+  "setting": "system_prompt_for(browser=True)",
+  "values": "the variant for a task with a local site",
+  "default": "Do not use the internet; the task's localhost site is allowed. (in place of the network sentence)",
+  "nullius": "fixed:for a task with a local site - as the bench gives it"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/run_bench.py",
+  "setting": "--tell-budget",
+  "values": "on, off",
+  "default": "on",
+  "nullius": "fixed:on - its default: the task's text ends with You have about N minutes and at most M turns., N from the task's time, M the steps per task"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/run_bench.py",
+  "setting": "the entry point",
+  "values": "preflight, dry-run, run",
+  "default": "none",
+  "nullius": "not offered - the macOS runner of the bench's published comparison: one fixed agent and model on each tool"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/run_pilot.py",
+  "setting": "the entry point",
+  "values": "the pilot's arms",
+  "default": "none",
+  "nullius": "not offered - a local macOS pilot of the bench's own, diagnostic"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/hyprland_session.py",
+  "setting": "the entry point",
+  "values": "a trial's flags, as the Linux launcher's",
+  "default": "none",
+  "nullius": "not offered - a trial on a Hyprland (Wayland) desktop"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/windows_session.py",
+  "setting": "the entry point",
+  "values": "a trial's flags, as the Linux launcher's",
+  "default": "none",
+  "nullius": "not offered - a trial on a Windows desktop"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/linux_session.py",
+  "setting": "the entry point",
+  "values": "--evidence, --check-run, -- COMMAND",
+  "default": "none",
+  "nullius": "not offered - a supervisor of a headless X11 session; the desktop's image has its own session"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/launch_bench.command",
+  "setting": "the entry point",
+  "values": "launch.env",
+  "default": "none",
+  "nullius": "not offered - the macOS release run's command"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/xfce/provision-root.sh",
+  "setting": "the entry point",
+  "values": "none",
+  "default": "none",
+  "nullius": "option:desktop_image"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/xfce/provision-user.sh",
+  "setting": "the entry point",
+  "values": "none",
+  "default": "none",
+  "nullius": "option:desktop_image"
+ },
+ {
+  "entry": "libs/cua-driver-bench/README.md",
+  "setting": "the Linux desktop image",
+  "values": "ghcr.io/trycua/linux:24.04",
+  "default": "ghcr.io/trycua/linux:24.04",
+  "nullius": "option:desktop_image"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/tools/validate_cdb.py",
+  "setting": "the entry point",
+  "values": "the pack tasks",
+  "default": "none",
+  "nullius": "not offered - scripted solutions of the three multi-app tasks, run in the desktop; a reference control later"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/hyprland/oracle.py",
+  "setting": "the entry point",
+  "values": "the BenchLab tasks",
+  "default": "none",
+  "nullius": "not offered - scripted solutions through the GUI on Hyprland, with no X11 version"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/windows/oracle.py",
+  "setting": "the entry point",
+  "values": "the BenchLab tasks",
+  "default": "none",
+  "nullius": "not offered - scripted solutions on Windows"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/tools/analyze_v2.py",
+  "setting": "the entry point",
+  "values": "a run's rows",
+  "default": "none",
+  "nullius": "not offered - the bench's analysis of a run of all its setups; Nullius counts passes and pass_hat_k by attempt"
+ },
+ {
+  "entry": "libs/cua-driver-bench/automated-eval/macos_bench/analyze_bench.py",
+  "setting": "the entry point",
+  "values": "a run's rows",
+  "default": "none",
+  "nullius": "not offered - an analysis of the bench's own runs"
+ }
+]

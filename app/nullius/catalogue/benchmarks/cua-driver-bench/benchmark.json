@@ -1,0 +1,53 @@
+{
+  "key": "cua-driver-bench",
+  "title": "Cua Driver Bench",
+  "category": "Computer use",
+  "domain": "Ten desktop tasks on Linux: three across several applications, three of pointer precision, four through an interruption, each checked from the applications' own state.",
+  "scoring": "Bench checker and guard",
+  "harness": [
+    "standard"
+  ],
+  "origin": "official",
+  "good_to_know": [
+    "Runs any agent that holds the computer port's proof on the bench's tasks. The bench's own launcher runs each trial unchanged and holds its agent's slot open while the agent acts through the port. Each acting call is one step.",
+    "The bench's published comparison runs one fixed agent and model on each computer-use tool. This setup does not repeat that comparison.",
+    "The agent is told the task as the launcher writes it, the name of the computer server, and the bench's two rules as its runner states them: operate only the applications the task names and stay off the network, in about 6 minutes and at most 45 turns.",
+    "Each task has 6 minutes from the moment it is given, and 45 steps (Steps per task). A task cut by the time, by a run's cap of model calls, or a minute after its loop ended is checked as the desktop then stands; a check that passes at the time limit counts, as in the launcher's own row.",
+    "The guard ends a trial when a terminal stays in front for three samples or starts outside the launcher. The desktop's panel shows a terminal launcher.",
+    "Attempts are the bench's trials: attempt k is the launcher's run index k - 1, which sets the seed. Five attempts are the bench's five trials of a task.",
+    "A trial the launcher marks as a harness error is no one's result; --retries runs it again with the same seed, as the bench does.",
+    "Desktop image: build makes it once on the machine from the bench's public Linux image and its own provisioning scripts, about 3.5 GB of downloads; or name an image the machine holds.",
+    "Nothing of the bench is copied into Nullius: the install fetches it at its pinned commit, and each trial copies its folder into the desktop. The bench is under FSL-1.1-MIT."
+  ],
+  "upstream_limitations": [
+    "The bench's scripted solutions of its seven BenchLab tasks run on Hyprland and Windows alone. No reference run shows that each task can be passed on this desktop.",
+    "The desktop's build installs the latest Google Chrome and GnuCash. A later build can differ from the one a score was made with."
+  ],
+  "limitations": [
+    "Only the foreground condition runs, where the agent may take the focus. The background condition is not offered yet.",
+    "The port cannot enforce the bench's rule of acting through the screen alone. A step's code runs as the desktop's user, who can read the task's checker and the trial's files, write an application's store and use sudo. The guard still ends a trial on a terminal. The trial's records list every action's code.",
+    "The bench's scan of its agent's tool calls for code that runs outside the screen does not run here. It reads a transcript that an agent through the port does not write.",
+    "The bench counts its own agent's turns, those with no action included; the port counts acting calls. 45 steps can therefore be more model turns than the bench's 45.",
+    "The 6 minutes start when the task is given, once the agent has started; the bench's own runner counts its agent's start in them.",
+    "The first build of the desktop can take hours on a slow link; a unit's setup may take 4 hours for it.",
+    "A named image is one the machine holds, by a local name of at most 64 characters, with no registry path.",
+    "Each trial's desktop has no network. The task with a local site serves it inside the desktop.",
+    "On the local backend an agent runs as you and can write where you can, the trial's records included.",
+    "A driver killed outright leaves its trial's desktop running; each desktop has the job's label."
+  ],
+  "datasets": [
+    {
+      "key": "cua-driver-bench",
+      "title": "Cua Driver Bench v2, Linux",
+      "tasks": 10,
+      "official": "https://github.com/trycua/cua/tree/main/libs/cua-driver-bench",
+      "source": "GitHub",
+      "registry": "",
+      "hub": "",
+      "verifier": "Each task's own checker on the applications' state and event logs, and the launcher's guard, as the trial's row gives them.",
+      "notes": "10 tasks: 3 multi-app, 3 precision, 4 interruptions. FSL-1.1-MIT."
+    }
+  ],
+  "citation": "@misc{Cua,\n  title = {Cua},\n  author = {{Cua AI}},\n  year = {2025},\n  publisher = {GitHub},\n  journal = {GitHub repository},\n  howpublished = {\\url{https://github.com/trycua/cua}},\n  url = {https://github.com/trycua/cua}\n}",
+  "citation_source": "https://github.com/trycua/cua/blob/main/CITATION.cff"
+}
