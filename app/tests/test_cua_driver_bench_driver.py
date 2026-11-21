@@ -11,6 +11,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import pathlib
 import shutil
 import socket
 import subprocess
@@ -24,7 +25,7 @@ from unittest import mock
 
 from nullius.catalogue import catalog
 from nullius.standard import computer_port as port
-from nullius.standard import definitions, retries
+from nullius.standard import definitions, payload, retries
 from nullius.standard import run as standard_run
 
 ENTRY = os.path.join(definitions.CATALOGUE, "benchmarks", "cua-driver-bench")
@@ -317,8 +318,12 @@ class Declarations(unittest.TestCase):
         # then the desktop module, which the driver takes from its first argument
         self.assertEqual(drv["command"][:2], ["python3", "{here}/driver.py"])
         named = [w[len("{here}/"):] for w in drv["command"][2:]]
+        self.assertEqual(named, ["desktop.py", "env/desktop.Dockerfile", "env/desktop-requirements.txt"])
         self.assertTrue(all(os.path.isfile(os.path.join(ENTRY, n)) for n in named), named)
-        self.assertEqual(named[:1], ["desktop.py"] if named else [])
+        # a host's snapshot of the entry: the driver loads the desktop module by its path, which no import names, and
+        # the module builds its image from the two files of its env folder
+        files = set(payload._entry(pathlib.Path(ENTRY)))
+        self.assertTrue({"standard.json", "benchmark.json", "driver.py", *named} <= files, sorted(files))
         self.assertEqual(DEFINITION["mcp_servers"]["computer"]["command"], ["python3"])
         self.assertEqual(DEFINITION["limits"]["scored_cuts"], ["time", "calls", "end"])
         self.assertTrue(DEFINITION["limits"]["attempts"])

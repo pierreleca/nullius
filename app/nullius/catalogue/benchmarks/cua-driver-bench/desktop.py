@@ -2,8 +2,8 @@
 it whole and unchanged, a gate in the launcher's agent slot, and the operations the computer port's server needs.
 
 **The image** (:func:`image`) is a name the machine holds, inspected and never pulled, or ``build``: this folder's
-``desktop.Dockerfile`` on Cua's public Linux image at a digest, the bench's folder at the entry's pin from the
-upstream's checkout, the bench's two provisioning scripts, and the port's Python (``desktop-requirements.txt`` by
+``env/desktop.Dockerfile`` on Cua's public Linux image at a digest, the bench's folder at the entry's pin from the
+upstream's checkout, the bench's two provisioning scripts, and the port's Python (``env/desktop-requirements.txt`` by
 hash), built once under a lock and kept by a tag of its inputs' hash. Either holds the port's Python at
 :data:`PORT_PYTHON`, apart from the bench's own Python.
 
@@ -68,8 +68,8 @@ KEEP = "node_modules"                                   # kept in the image's ch
 NOT_SESSION = ("_", "PWD", "OLDPWD", "SHLVL")           # of the window manager's environment, its own process's
 IMAGE_KEY = "cua-driver-bench"
 ENVIRONMENT = "desktop"
-DOCKERFILE = "desktop.Dockerfile"
-REQUIREMENTS = "desktop-requirements.txt"
+DOCKERFILE = "env/desktop.Dockerfile"                  # beside this file; at the top of the build's context
+REQUIREMENTS = "env/desktop-requirements.txt"
 
 RUN_SECONDS = 120
 START_SECONDS = 180
@@ -295,7 +295,7 @@ def tag(upstream: str) -> str:
     h = hashlib.sha256()
     for rel in (DOCKERFILE, REQUIREMENTS):
         with open(os.path.join(HERE, rel), "rb") as f:
-            h.update(b"\0" + rel.encode() + b"\0" + hashlib.sha256(f.read()).digest())
+            h.update(b"\0" + posixpath.basename(rel).encode() + b"\0" + hashlib.sha256(f.read()).digest())
     for rel, path in _bench_files(bench_folder(upstream)):
         with open(path, "rb") as f:
             h.update(b"\0bench/" + rel.encode() + b"\0" + hashlib.sha256(f.read()).digest())
@@ -353,7 +353,7 @@ def _build(reference: str, bench: str, log_dir: Optional[str], end: float) -> No
     ctx = tempfile.mkdtemp(prefix="nullius-cdb-image-")
     try:
         for rel in (DOCKERFILE, REQUIREMENTS):
-            shutil.copyfile(os.path.join(HERE, rel), os.path.join(ctx, rel))
+            shutil.copyfile(os.path.join(HERE, rel), os.path.join(ctx, posixpath.basename(rel)))
         for rel, path in _bench_files(bench):
             os.makedirs(os.path.dirname(os.path.join(ctx, "bench", rel)), exist_ok=True)
             shutil.copy2(path, os.path.join(ctx, "bench", rel))
@@ -364,8 +364,8 @@ def _build(reference: str, bench: str, log_dir: Optional[str], end: float) -> No
             log.write(f"# {reference}\n".encode())
             log.flush()
             p = _spawn(["build", "--label", f"nullius.env={IMAGE_KEY}/{ENVIRONMENT}", "-t", reference,
-                        "-f", os.path.join(ctx, DOCKERFILE), ctx], stdin=subprocess.DEVNULL, stdout=log,
-                       stderr=subprocess.STDOUT)
+                        "-f", os.path.join(ctx, posixpath.basename(DOCKERFILE)), ctx],
+                       stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
             try:
                 rc = p.wait(timeout=max(1.0, end - time.monotonic()))
             except BaseException:
