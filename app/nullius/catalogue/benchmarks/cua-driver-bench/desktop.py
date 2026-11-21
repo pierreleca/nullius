@@ -272,6 +272,23 @@ def _absent(r: subprocess.CompletedProcess) -> bool:
     return "no such container" in (r.stderr or b"").decode("utf-8", "replace").lower()
 
 
+def _left(end: float) -> float:
+    left = end - time.monotonic()
+    if left <= 0:
+        raise DesktopError("the desktop operation exceeded its deadline")
+    return left
+
+
+@contextlib.contextmanager
+def _locked_until(lock, end: float):
+    if not lock.acquire(timeout=_left(end)):
+        raise DesktopError("the desktop operation exceeded its deadline waiting for its lock")
+    try:
+        yield
+    finally:
+        lock.release()
+
+
 # -- the image ----------------------------------------------------------------------------------------------------
 def bench_folder(upstream: str) -> str:
     """The bench's folder: ``upstream`` itself when it holds the launcher, else its ``libs/cua-driver-bench``."""
@@ -426,24 +443,24 @@ class Desktop:
         """Start a desktop of ``reference`` and wait until its window manager runs, at most ``seconds``. ``job``
         labels the container as a unit's are, so a sweep of the job removes it. A failed or interrupted start
         removes what it made."""
+        end = time.monotonic() + seconds
         d = cls(name or f"nullius-cdb-{secrets.token_hex(4)}")
         label = ["--label", f"{container.LABEL}={job}"] if job else []
-        end = time.monotonic() + seconds
         identity = tempfile.TemporaryDirectory(prefix="nullius-cdb-start-")
         cidfile = os.path.join(identity.name, "cid")
         try:
             try:
                 r = _engine(["run", "-d", "--name", d.name, "--network", "none", "-e", "CUA_RESOLUTION=1920x1080",
                              *label, "--cidfile", cidfile, *container.capped(), reference],
-                            timeout=min(RUN_SECONDS, seconds))
+                            timeout=min(RUN_SECONDS, _left(end)))
             except subprocess.TimeoutExpired:
                 raise DesktopError(f"starting the desktop {d.name}: {container.DOCKER} run did not answer in time")
             if r.returncode != 0:
                 raise DesktopError(f"starting the desktop {d.name}: {_said(r)}")
-            left = max(1.0, end - time.monotonic())
+            left = _left(end)
             try:
                 r = _engine(["exec", "-u", USER, d.name, "python3", "-I", "-c", _SESSION, WINDOW_MANAGER, PORT_PYTHON,
-                             str(left)], timeout=left + ENGINE_GRACE)
+                             str(left)], timeout=left)
             except subprocess.TimeoutExpired:
                 r = None
             said = None
@@ -454,7 +471,7 @@ class Desktop:
                     said = None
             if not isinstance(said, dict) or not isinstance(said.get("env"), dict):
                 try:
-                    log = _said(_engine(["logs", "--tail", "20", d.name], timeout=30))
+                    log = _said(_engine(["logs", "--tail", "20", d.name], timeout=min(30, _left(end))))
                 except (subprocess.TimeoutExpired, DesktopError):
                     log = "its log could not be read"
                 raise DesktopError(f"the desktop {d.name} had no {WINDOW_MANAGER} in {seconds:.0f} s: {log}")
@@ -462,6 +479,7 @@ class Desktop:
                 raise DesktopError(f"the image {reference} has no {PORT_PYTHON}: it lacks the port's layer "
                                    f"(build this entry's {DOCKERFILE}, or its last stage on that image)")
             d.env = {k: v for k, v in said["env"].items() if k not in NOT_SESSION}
+            _left(end)
         except BaseException:                           # an error or an interrupt: what this start made goes
             with contextlib.suppress(OSError, DesktopError, subprocess.TimeoutExpired):
                 with open(cidfile) as f:
@@ -507,11 +525,11 @@ class Desktop:
         file exists. :class:`HarnessError` when the launcher ended first with a ``harness_error``; a
         :class:`DesktopError` when it ended first without one, or past ``seconds``."""
         end = time.monotonic() + seconds
-        with self._lock:
+        with _locked_until(self._lock, end):
             if self._launcher is not None:
                 raise DesktopError(f"the launcher was started already in {self.name}")
             try:
-                r = self._exec(["rm", "-rf", OUT, GATE], timeout=min(60, seconds))
+                r = self._exec(["rm", "-rf", OUT, GATE], timeout=min(60, _left(end)))
             except subprocess.TimeoutExpired:
                 raise DesktopError(f"the desktop {self.name} did not answer in time")
             if r.returncode != 0:
@@ -526,7 +544,8 @@ class Desktop:
                                     stdin=subprocess.PIPE, stdout=self._said, stderr=subprocess.STDOUT)
         while True:
             if self._launcher.poll() is not None:
-                row = self._read_row()
+                row = self._read_row(timeout=_left(end))
+                _left(end)
                 if isinstance(row, dict) and row.get("harness_error"):
                     raise HarnessError(f"the launcher ended before the agent's slot: {row['harness_error']}", row)
                 raise DesktopError(f"the launcher ended before the agent's slot (exit {self._launcher.returncode}): "
@@ -535,13 +554,14 @@ class Desktop:
             if left <= 0:
                 raise DesktopError(f"the gate did not start in {seconds:.0f} s")
             try:
-                r = self._exec(["test", "-e", GATE], timeout=min(left, 30) + ENGINE_GRACE)
+                r = self._exec(["test", "-e", GATE], timeout=min(left, 30))
             except subprocess.TimeoutExpired:
                 raise DesktopError(f"the desktop {self.name} did not answer in time")
             if r.returncode == 0:
                 break
             time.sleep(min(POLL, max(0.0, end - time.monotonic())))
-        brief = self.read(f"{OUT}/brief.md")
+        brief = self._read(f"{OUT}/brief.md", timeout=_left(end))
+        _left(end)
         if brief is None:
             raise DesktopError(f"the launcher wrote no brief.md in {self.name}")
         return brief.decode("utf-8", "replace")
@@ -597,11 +617,14 @@ class Desktop:
     def read(self, path: str) -> Optional[bytes]:
         """The bytes of ``path`` as the desktop's user reads them, or None when it cannot open it. A path that is no
         regular file, or a file past :data:`READ_LIMIT`, is :class:`Refused`."""
+        return self._read(path, timeout=FILE_SECONDS)
+
+    def _read(self, path: str, *, timeout: float) -> Optional[bytes]:
         try:
-            r = self._exec(["python3", "-I", "-c", _READ, path, str(READ_LIMIT)], timeout=FILE_SECONDS,
+            r = self._exec(["python3", "-I", "-c", _READ, path, str(READ_LIMIT)], timeout=timeout,
                            env={"HOME": HOME})
         except subprocess.TimeoutExpired:
-            raise DesktopError(f"read of {path}: no answer in {FILE_SECONDS} s")
+            raise DesktopError(f"read of {path}: no answer in {timeout} s")
         if r.returncode == 3:
             return None
         if r.returncode == 4:
@@ -622,9 +645,9 @@ class Desktop:
             raise DesktopError(f"the capture: {_said(r)}")
         return r.stdout
 
-    def _read_row(self) -> Optional[dict]:
+    def _read_row(self, *, timeout: float = FILE_SECONDS) -> Optional[dict]:
         try:
-            data = self.read(f"{OUT}/row.json")
+            data = self._read(f"{OUT}/row.json", timeout=timeout)
         except (DesktopError, Refused):
             return None
         try:
@@ -643,7 +666,8 @@ class Desktop:
         """Close the gate's pipe, wait for the launcher's exit (its check and ``row.json``), and answer the row; a
         second call answers the same row. A :class:`DesktopError` when the launcher does not end in ``seconds`` or
         wrote no row."""
-        with self._lock:
+        end = time.monotonic() + seconds
+        with _locked_until(self._lock, end):
             if self._row is not None:
                 return self._row
             p = self._launcher
@@ -651,16 +675,16 @@ class Desktop:
                 raise DesktopError(f"no launcher was started in {self.name}")
             self._close_pipe()
         try:
-            p.wait(timeout=seconds)
+            p.wait(timeout=_left(end))
         except subprocess.TimeoutExpired:
             raise DesktopError(f"the launcher did not end in {seconds:.0f} s after its gate was closed")
         finally:
             if p.poll() is not None:
                 _done(p)
-        row = self._read_row()
+        row = self._read_row(timeout=_left(end))
         if row is None:
             raise DesktopError(f"the launcher wrote no row.json (exit {p.returncode}): {self.launcher_output()[-300:]}")
-        with self._lock:
+        with _locked_until(self._lock, end):
             self._row = self._row or row
             return self._row
 

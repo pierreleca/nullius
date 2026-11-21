@@ -276,6 +276,17 @@ def started(test, engine, **kw):
 
 
 class Start(unittest.TestCase):
+    def test_session_read_shares_the_start_deadline(self):
+        e = Engine(self)
+        session = "import json, time; time.sleep(0.6); print(json.dumps({'env': {}, 'port': True}))"
+        self.addCleanup(desktop.Desktop("late-session").remove)
+        with mock.patch.object(desktop, "_SESSION", session):
+            before = time.monotonic()
+            with self.assertRaises(desktop.DesktopError):
+                desktop.Desktop.start("bench:image", name="late-session", seconds=0.15)
+        self.assertLess(time.monotonic() - before, 0.6)
+        self.assertFalse(e.running("late-session"))
+
     def test_a_desktop_starts_with_the_readme_flags_and_reads_the_session_from_the_window_manager(self):
         e = Engine(self)
         out = io.StringIO()
@@ -479,6 +490,53 @@ class Trial(unittest.TestCase):
         d = started(self, e)
         d.put_bench(e.bench(mode))
         return e, d
+
+    def test_brief_read_shares_the_launch_deadline(self):
+        e, d = self.launched()
+        mark = os.path.join(e.root, "reading")
+        read = f"import time; open({mark!r}, 'w').close(); time.sleep(0.8)\n" + desktop._READ
+        with mock.patch.object(desktop, "_READ", read), mock.patch.object(desktop, "POLL", 0.01):
+            before = time.monotonic()
+            with self.assertRaises(desktop.DesktopError):
+                d.launch("IR-02", 0, "foreground", seconds=0.4)
+        self.assertTrue(os.path.isfile(mark))
+        self.assertLess(time.monotonic() - before, 0.8)
+
+    def test_row_read_shares_the_finish_deadline(self):
+        e, d = self.launched()
+        d.launch("IR-02", 0, "foreground")
+        read = "import time; time.sleep(0.6)\n" + desktop._READ
+        with mock.patch.object(desktop, "_READ", read):
+            before = time.monotonic()
+            with self.assertRaises(desktop.DesktopError):
+                d.finish(seconds=0.15)
+        self.assertLess(time.monotonic() - before, 0.6)
+
+    def test_waiting_for_the_lock_shares_the_launch_and_finish_deadlines(self):
+        e, d = self.launched()
+        for operation in (lambda: d.launch("IR-02", 0, "foreground", seconds=0.05),
+                          lambda: d.finish(seconds=0.05)):
+            errors = []
+
+            def invoke():
+                try:
+                    operation()
+                except Exception as error:
+                    errors.append(error)
+            with self.subTest(operation=operation):
+                d._lock.acquire()
+                worker = threading.Thread(target=invoke)
+                worker.start()
+                try:
+                    worker.join(0.3)
+                    blocked = worker.is_alive()
+                finally:
+                    d._lock.release()
+                    worker.join(3)
+                self.assertFalse(worker.is_alive())
+                self.assertFalse(blocked)
+                self.assertEqual(len(errors), 1)
+                self.assertIsInstance(errors[0], desktop.DesktopError)
 
     def test_a_trial_from_the_gate_to_the_row(self):
         e, d = self.launched()
