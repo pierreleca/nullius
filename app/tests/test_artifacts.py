@@ -180,7 +180,10 @@ class DeclaredRecords(unittest.TestCase):
         for i in range(5):
             (self.trial / "verifier" / "own" / f"f{i}.txt").write_text("x")
         with mock.patch.object(artifacts, "FOLDER_FILES", 3):
-            self.assertEqual([r["part"] for r in self.own()], ["", "events.jsonl", "f0.txt", "f1.txt"])
+            rows = self.own()
+            self.assertEqual(len(rows), 4)
+            self.assertEqual(rows[0]["part"], "")
+            self.assertEqual([r["part"] for r in rows[1:]], sorted(r["part"] for r in rows[1:]))
 
     def test_binary_files_do_not_use_the_text_record_allowance(self):
         own = self.trial / "verifier" / "own"
@@ -197,6 +200,27 @@ class DeclaredRecords(unittest.TestCase):
         (self.trial / "verifier" / "own" / "packed.bin").write_bytes(b"\0")
         with mock.patch.object(artifacts, "FOLDER_FILES", 2):
             self.assertFalse(any(r.get("more") for r in self.own()))
+
+    def test_folder_scanning_stops_after_one_extra_text_record(self):
+        own = self.trial / "verifier" / "own"
+        for i in range(5):
+            (own / f"file-{i}.txt").write_text("x")
+        with os.scandir(own) as entries:
+            files = [e for e in entries if e.is_file()]
+
+        def bounded():
+            yield from files[:4]
+            self.fail("the scan passed the first extra text record")
+
+        scan = mock.MagicMock()
+        scan.__enter__.return_value = scan
+        scan.__iter__.side_effect = bounded
+        with mock.patch.object(artifacts, "FOLDER_FILES", 3), \
+                mock.patch.object(artifacts.os, "scandir", return_value=scan):
+            rows = self.own()[1:]
+        self.assertEqual([r["part"] for r in rows], sorted(e.name for e in files[:3]))
+        self.assertTrue(rows[-1].get("more"))
+        scan.close.assert_called_once()
 
     def test_the_benchmark_is_found_by_its_key_its_datasets_and_its_report_sources(self):
         good = {"label": " Its row ", "path": "verifier/own/row.json"}

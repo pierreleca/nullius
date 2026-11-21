@@ -144,6 +144,7 @@ def _declared_rows(trial_dir, records):
             fd = _open_under(trial_dir, record["path"], os.O_RDONLY | os.O_NONBLOCK)
         except OSError:
             continue
+        entries = None
         try:
             info = os.fstat(fd)
             if stat.S_ISREG(info.st_mode):
@@ -151,8 +152,9 @@ def _declared_rows(trial_dir, records):
                     rows.append(dict(key=f"r{n}", label=record["label"], filename=record["path"], part="",
                                      exists=True, size=info.st_size, declared=True))
             elif stat.S_ISDIR(info.st_mode):
-                with os.scandir(fd) as entries:
-                    names = sorted(e.name for e in entries if e.is_file(follow_symlinks=False))
+                entries = os.scandir(fd)
+                names = (e.name for e in entries if e.is_file(follow_symlinks=False))
+                first, more = len(rows), False
                 count = 0
                 for name in names:
                     try:
@@ -163,14 +165,19 @@ def _declared_rows(trial_dir, records):
                         info = os.fstat(one)
                         if stat.S_ISREG(info.st_mode) and _text(one):
                             if count == FOLDER_FILES:
-                                rows[-1]["more"] = True
+                                more = True
                                 break
                             rows.append(dict(key=f"r{n}-{name}", label=record["label"], part=name, exists=True,
                                              filename=f"{record['path']}/{name}", size=info.st_size, declared=True))
                             count += 1
                     finally:
                         os.close(one)
+                rows[first:] = sorted(rows[first:], key=lambda row: row["part"])
+                if more:
+                    rows[-1]["more"] = True
         finally:
+            if entries is not None:
+                entries.close()
             os.close(fd)
     return rows
 
