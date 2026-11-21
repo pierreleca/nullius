@@ -38,6 +38,7 @@ import os
 import posixpath
 import secrets
 import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -283,10 +284,18 @@ def bench_folder(upstream: str) -> str:
 def _bench_files(folder: str) -> List[Tuple[str, str]]:
     """The bench's folder as ``(relative path, path)`` in a fixed order, without :data:`SKIP`'s folders."""
     out = []
+    if not stat.S_ISDIR(os.lstat(folder).st_mode):
+        raise DesktopError(f"the bench's folder is not a plain directory: {folder}")
     for root, dirs, files in os.walk(folder):
         dirs[:] = sorted(d for d in dirs if d not in SKIP)
+        for name in dirs:
+            path = os.path.join(root, name)
+            if not stat.S_ISDIR(os.lstat(path).st_mode):
+                raise DesktopError(f"the bench's folder contains a directory link: {path}")
         for name in sorted(files):
             path = os.path.join(root, name)
+            if not stat.S_ISREG(os.lstat(path).st_mode):
+                raise DesktopError(f"the bench's folder contains a file that is not plain: {path}")
             out.append((os.path.relpath(path, folder).replace(os.sep, "/"), path))
     return out
 

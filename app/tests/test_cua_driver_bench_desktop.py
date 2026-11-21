@@ -373,6 +373,35 @@ class Start(unittest.TestCase):
 
 
 class Bench(unittest.TestCase):
+    def test_links_and_special_files_are_refused_before_hashing_or_copying(self):
+        e = Engine(self)
+        up = e.bench()
+        bench = desktop.bench_folder(up)
+        outside = os.path.join(e.root, "outside")
+        with open(outside, "wb") as f:
+            f.write(b"private fixture bytes")
+        bad = os.path.join(bench, "bad")
+        real_open = open
+
+        def checked_open(path, *args, **kw):
+            self.assertNotEqual(os.fspath(path), bad, "unsafe benchmark input was opened")
+            return real_open(path, *args, **kw)
+
+        for kind in ("file link", "directory link", "fifo"):
+            if kind == "fifo":
+                os.mkfifo(bad)
+            else:
+                os.symlink(outside if kind == "file link" else e.root, bad)
+            try:
+                for operation in (lambda: desktop.tag(up),
+                                  lambda: desktop._build("fixture:image", bench, None, time.monotonic() + 5)):
+                    with self.subTest(kind=kind, operation=operation), mock.patch("builtins.open", checked_open):
+                        with self.assertRaises(desktop.DesktopError):
+                            operation()
+            finally:
+                os.unlink(bad)
+        self.assertFalse([c for c in e.calls() if c[0] == "build"])
+
     def test_the_pin_goes_over_the_checkout_and_its_node_modules_stay(self):
         e = Engine(self)
         d = started(self, e)
