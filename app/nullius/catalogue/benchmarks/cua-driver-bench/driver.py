@@ -290,6 +290,7 @@ class Unit:
         self.d = self.bridge = self.server = self.loop = self.watch = self.folder = None
         self.image_id, self.brief, self.error = None, "", None
         self.ending, self.stopped = threading.Event(), threading.Event()
+        self.actions, self.actions_unwritten = [], False    # the actions' record's lines, and whether one write failed
 
     def path(self, name):
         return os.path.join(self.trial, name)
@@ -382,15 +383,21 @@ class Unit:
 
     def record(self, step, start, action, reply):
         """One line of the actions' record: the step, the times, the code and how it ended, credential-shaped
-        values replaced."""
+        values replaced. The record is written whole as a fresh file each time (_write_fresh), so a link in its place
+        is replaced, not followed. A record that cannot be written leaves the trial as it is, and is said once."""
         line = {"step": step, "start": start, "end": time.time(), "action": _redact(action),
                 "returncode": None if reply is None else reply.get("returncode")}
         if reply is None:
             line["timed_out"] = True
         elif reply.get("returncode"):
             line["error"] = _redact(str(reply.get("error") or reply.get("output") or ""))[-2000:]
-        with open(self.path(ACTIONS), "a", encoding="utf-8") as f:
-            f.write(json.dumps(line) + "\n")
+        self.actions.append(json.dumps(line) + "\n")
+        try:
+            _write_fresh(self.trial, ACTIONS, "".join(self.actions))
+        except OSError as e:                                 # a record the pages read; it cannot change the trial
+            if not self.actions_unwritten:
+                self.actions_unwritten = True
+                sys.stderr.write(f"cua-driver-bench: {self.unit}: the actions' record was not written: {e}\n")
 
     def watch_launcher(self):
         """The launcher's end, looked for until the unit ends: its guard stopped the gate, or it failed."""

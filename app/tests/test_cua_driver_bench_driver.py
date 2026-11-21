@@ -971,6 +971,45 @@ class Driver(unittest.TestCase):
         self.assertTrue(got["passed"])
         self.assertFalse(os.path.lexists(os.path.join(elsewhere, "report.json")))
 
+    def test_the_actions_record_replaces_a_link_and_writes_nothing_outside_the_trial(self):
+        for link in (os.symlink, os.link):
+            with self.subTest(link=link.__name__):
+                outside = os.path.join(self.tmp, f"outside-{link.__name__}.jsonl")
+                with open(outside, "w") as f:
+                    f.write("not of the trial\n")
+                ws, s = self.unit()
+                link(outside, self.verifier(ws, "computer-actions.jsonl"))
+                c = Client(s["mcp"][0]["args"][1])
+                failed, said = c.call("step", {"actions": ["pyautogui.click(1, 1)", "pyautogui.click(2, 2)"]})
+                c.close()
+                self.assertFalse(failed, said)
+                driver.score("MB-09__foreground", ws, [], "")
+                with open(outside) as f:
+                    self.assertEqual(f.read(), "not of the trial\n")
+                self.assertFalse(os.path.islink(self.verifier(ws, "computer-actions.jsonl")))
+                with open(self.verifier(ws, "computer-actions.jsonl")) as f:
+                    self.assertEqual([json.loads(line)["action"] for line in f],
+                                     ["pyautogui.click(1, 1)", "pyautogui.click(2, 2)"])
+                self.assertEqual([n for n in os.listdir(self.verifier(ws, "")) if n.startswith(".")], [])
+
+    def test_a_linked_verifier_folder_leaves_the_actions_unrecorded_and_the_steps_going(self):
+        self.stand.rows = lambda task, i, c: row(task, i, c, checker=True)
+        ws, s = self.unit()
+        folder = os.path.dirname(self.verifier(ws, "computer-actions.jsonl"))
+        elsewhere = os.path.join(self.tmp, "elsewhere")
+        shutil.copytree(folder, elsewhere, symlinks=True)
+        shutil.rmtree(folder)
+        os.symlink(elsewhere, folder)
+        c = Client(s["mcp"][0]["args"][1])
+        self.assertEqual(c.call("click", {"x": 1, "y": 1}), (False, {"steps_left": 44, "done": False}))
+        self.assertEqual(c.call("click", {"x": 2, "y": 2}), (False, {"steps_left": 43, "done": False}))
+        c.close()
+        got = driver.score("MB-09__foreground", ws, [], "")
+        self.assertTrue(got["passed"])
+        self.assertEqual(got["detail"]["steps"], 2)
+        self.assertFalse(os.path.lexists(os.path.join(elsewhere, "computer-actions.jsonl")))
+        self.assertEqual([x["args"] for x in self.stand.input()], [[1, 1], [2, 2]])
+
     def test_a_removal_that_fails_fails_the_score(self):
         ws, _ = self.unit(participant="control")
         u = driver.OPEN["MB-09__foreground"]
