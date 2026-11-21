@@ -177,7 +177,7 @@ def score_detail(trial_dir: str, leave_out=()) -> dict | None:
     if not isinstance(detail, dict):
         return None
     fields, groups = [], []
-    for name, value in detail.items():
+    for name, value in _options(detail).items():
         if name in leave_out:
             continue
         if isinstance(value, dict) and value and all(_plain(x) for x in value.values()):

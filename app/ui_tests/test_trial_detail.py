@@ -82,6 +82,15 @@ class TrialDetail(unittest.TestCase):
         self.assertIn("&lt;b&gt;name&lt;/b&gt;", html)
         self.assertIn("&lt;i&gt;flag&lt;/i&gt;", html)
 
+    def test_named_credentials_never_reach_the_panel(self):
+        secret = "example12345678901234567890"
+        html = self.panel(self.page({"api_key": secret, "credentials": {"password": secret},
+                                     "flags": {"password": secret, "held": True},
+                                     "rows": [{"inner": {"secret": secret}}]}))
+        self.assertNotIn(secret, html)
+        self.assertIn("[REDACTED]", html)
+        self.assertIn("✓</span> held", html)
+
     def test_what_the_page_shows_elsewhere_is_left_out(self):
         html = self.page({"steps": 4, "steps_limit": 45, "ended": "done", "seed": 1},
                          standard={"benchmark": "sums", "unit": "t1"})

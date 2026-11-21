@@ -73,6 +73,18 @@ class ScoreDetail(unittest.TestCase):
         got = self.detail({"said": f"the key {key}", "flags": {key: True}})
         self.assertNotIn(key, json.dumps(got))
 
+    def test_named_credentials_are_scrubbed_at_every_displayed_depth(self):
+        secret = "example12345678901234567890"
+        for detail in ({"api_key": secret}, {"credentials": {"password": secret}},
+                       {"flags": {"password": secret, "held": True}},
+                       {"deep": {"inner": {"Authorization": secret}}},
+                       {"rows": [{"access_token": secret}]}, {"secret": [secret]}):
+            with self.subTest(detail=detail):
+                self.assertNotIn(secret, json.dumps(self.detail(detail)))
+        got = self.detail({"input_tokens": 12, "flags": {"token_count": 4, "held": True}})
+        self.assertEqual(got["fields"][0]["text"], "12")
+        self.assertEqual(got["groups"][0]["flags"][0]["text"], "4")
+
 
 if __name__ == "__main__":
     unittest.main()
