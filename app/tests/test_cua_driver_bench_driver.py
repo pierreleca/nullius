@@ -750,10 +750,21 @@ class Driver(unittest.TestCase):
         self.assertFalse(os.path.lexists(os.path.join(dest, "link.txt")))
 
     def test_a_removal_that_fails_fails_the_score(self):
-        self.stand.fail["remove"] = self.stand.module.DesktopError("the container is still there")
-        ws, _ = self.unit()
-        with self.assertRaisesRegex(Exception, "still there"):
-            driver.score("foreground__MB-09", ws, [], "")
+        ws, _ = self.unit(participant="control")
+        u = driver.OPEN["foreground__MB-09"]
+        d = u.d
+        with mock.patch.object(d, "remove", side_effect=self.stand.module.DesktopError("the container is still there")) as remove:
+            with self.assertRaisesRegex(Exception, "still there"):
+                driver.score("foreground__MB-09", ws, [], "")
+            self.assertIs(u.d, d)
+            driver.end("foreground__MB-09", ws)
+            self.assertEqual(remove.call_count, 2)
+            self.assertIs(u.d, d)
+        driver.close_all()
+        self.assertIsNone(u.d)
+        self.assertEqual(d.removes, 1)
+        driver.close_all()
+        self.assertEqual(d.removes, 1)
         self.assertEqual(driver.OPEN, {})
 
     def test_a_desktop_that_fails_during_the_task_is_the_environments(self):

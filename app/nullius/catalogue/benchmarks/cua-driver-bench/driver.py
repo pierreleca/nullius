@@ -409,7 +409,12 @@ class Unit:
                 self.d.remove()
             except Exception as e:
                 failed = e
-            self.d = None
+                with OPEN_LOCK:
+                    PENDING.add(self)
+            else:
+                self.d = None
+                with OPEN_LOCK:
+                    PENDING.discard(self)
         if self.folder is not None:
             shutil.rmtree(self.folder, ignore_errors=True)
             self.folder = None
@@ -425,13 +430,14 @@ class Unit:
 
 
 OPEN = {}                                    # unit -> Unit, while it is set up and not scored
+PENDING = set()                               # Failed removals remain available for the next cleanup.
 OPEN_LOCK = threading.Lock()
 
 
 def close_all(*, shutdown=True):
     """Every unit still open let go, then every client of the engine still running ended."""
     with OPEN_LOCK:
-        held = list(OPEN.values())
+        held = list(OPEN.values()) + list(PENDING)
         OPEN.clear()
     for u in held:
         try:
