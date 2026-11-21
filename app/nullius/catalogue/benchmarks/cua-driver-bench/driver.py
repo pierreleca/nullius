@@ -25,10 +25,12 @@ task_given - the agent is about to be given its task: the window before it close
 score    - the turn's end; the loop ends, the gate's input closes, the launcher disarms its witness window, runs the
            task's checker and writes the row. The verdict is the row's: in the foreground its passed (the check and
            no violation), in the background its background completion (that, and the eight measures of the
-           simulated user's window measured and held). The detail holds the checker's partial score, its named
-           checks, the guard's violations, the eight measures and whether they were measured, beside the steps taken,
-           the budget and what ended the loop; verifier/report.json names the checks that passed and failed, and in
-           the background the measures, for the pages. A row with a harness error is raised as the environment's
+           simulated user's window measured and held). The detail, which the trial's page shows under its names,
+           holds the condition, the seed, the checker's partial score and its own pass, its named checks, the
+           guard's violations, in the background the eight measures (held, not held or not measured) and whether
+           the window was measured, beside the steps taken, the budget and what ended the loop; the launcher's whole
+           row stays in verifier/cdb. verifier/report.json names the task's checks that passed and failed, for the
+           pages' count of checks. A row with a harness error is raised as the environment's
            error, run again by --retries; a row of another trial, or none, as the verifier's. The trial's folder in
            the desktop is copied to verifier/cdb (plain files, 64 MiB at most), and the desktop removed
 end      - an agent's unit has ended, scored or not: its desktop, if it still has one, goes
@@ -532,52 +534,49 @@ class VerifierError(RuntimeError):
     """The trial's row could not be read, or is another trial's."""
 
 
+NOT_MEASURED = "not measured"
+
+
 def _measures(a22, measured):
-    """The eight measures as the row's A22 block gives them, each True (held), False (the user was disturbed) or
-    None (not measured), and the names of those that do not count as held: all eight when the bench could not
-    measure the user's window at all."""
+    """The eight measures as the row's A22 block gives them: each True (held), False (the user was disturbed) or
+    "not measured", every one of them when the bench could not measure the user's window at all."""
     criteria = a22.get("criteria") if isinstance(a22.get("criteria"), dict) else {}
-    named = {m: criteria.get(m) for m in MEASURES}
-    if measured is not True:
-        return named, list(MEASURES)
-    return named, [m for m in MEASURES if named[m] is not True]
+    return {m: criteria.get(m) if measured is True and isinstance(criteria.get(m), bool) else NOT_MEASURED
+            for m in MEASURES}
 
 
-def report(detail, background):
-    """What the pages read of a trial (the ``report`` block of benchmark.json): the task's checks that passed and
-    failed by name and, in the background, the eight measures, each named ``measure:NAME``; one not measured is
-    failed with that said, as the bench fails it."""
+def report(detail):
+    """What the pages count as a trial's checks (the ``report`` block of benchmark.json): the task's named checks
+    that passed and failed. The measures of the background are the detail's."""
     checks = detail.get("checks") or {}
-    out = {"condition": detail.get("condition"), "seed": detail.get("seed"), "score": detail.get("score"),
-           "passed": [n for n, ok in checks.items() if ok], "failed": [n for n, ok in checks.items() if not ok]}
-    if background:
-        named, failing = detail.get("criteria") or {}, set(detail.get("disturbed") or ())
-        unmeasured = detail.get("measured") is not True
-        for m in MEASURES:
-            if m not in failing:
-                out["passed"].append(f"measure:{m}")
-            else:
-                out["failed"].append(f"measure:{m}" + (" (not measured)" if unmeasured or named.get(m) is None else ""))
-    return out
+    return {"condition": detail.get("condition"), "seed": detail.get("seed"), "score": detail.get("partial score"),
+            "passed": [n for n, ok in checks.items() if ok], "failed": [n for n, ok in checks.items() if not ok]}
 
 
-def _why(detail, background):
+def _violation(v):
+    """One of the guard's violations in a line, as its row gives it: its kind, when it saw it, what it saw."""
+    at = v.get("t_s")
+    when = f" at {at:g} s" if isinstance(at, (int, float)) and not isinstance(at, bool) else ""
+    return f"{v.get('kind')}{when}: {v.get('detail')}"
+
+
+def _why(detail, guard, background):
     """Why a trial did not pass, in a line: the guard's violations, else the checks that failed; in the background
     also the measures that did not hold, or that the bench could not measure the user's window."""
     said = []
-    if detail["violations"]:
-        said.append("the guard saw " + "; ".join(f"{v.get('kind')}: {v.get('detail')}" for v in
-                                                 detail["violations"][:3] if isinstance(v, dict)))
-    if not detail["violations"] and not background or background and detail["checker_passed"] is not True:
+    if guard:
+        said.append("the guard saw " + "; ".join(f"{v.get('kind')}: {v.get('detail')}" for v in guard[:3]))
+    if not guard and not background or background and detail["checker passed"] is not True:
         failed = [n for n, ok in detail["checks"].items() if not ok]
         said.append("the task's checker did not pass" + (f": {', '.join(failed)}" if failed else ""))
     if background:
+        held = detail["measures held"]
         if detail["measured"] is not True:
             said.append("the bench did not measure the simulated user's window"
                         + (f" ({detail['samples']} samples)" if isinstance(detail.get("samples"), int) else ""))
         else:
-            disturbed = [m for m in detail["disturbed"] if detail["criteria"].get(m) is False]
-            untaken = [m for m in detail["disturbed"] if detail["criteria"].get(m) is not False]
+            disturbed = [m for m in MEASURES if held[m] is False]
+            untaken = [m for m in MEASURES if held[m] == NOT_MEASURED]
             if disturbed:
                 said.append("the simulated user was disturbed: " + ", ".join(disturbed))
             if untaken:
@@ -585,9 +584,9 @@ def _why(detail, background):
     return "; ".join(said)
 
 
-def verdict(u, row, kept):
-    """The row's verdict and its detail; a harness error or a row without the launcher's check is the
-    environment's, a row of another trial the verifier's."""
+def verdict(u, row):
+    """The row's verdict and its detail, under the names the trial's page shows; a harness error or a row without
+    the launcher's check is the environment's, a row of another trial the verifier's."""
     if not isinstance(row, dict):
         raise VerifierError("the trial's row is not an object")
     if row.get("harness_error"):
@@ -599,8 +598,8 @@ def verdict(u, row, kept):
     if not isinstance(row.get("evaluation"), dict) or "passed" not in row:     # it raised after the agent's slot
         raise EnvironmentSetupError("the bench's launcher ended without its check, which is no one's result")
     evaluation = row["evaluation"]
-    guard = row.get("gui_only") if isinstance(row.get("gui_only"), dict) else {}
-    a15 = row.get("a15") if isinstance(row.get("a15"), dict) else {}
+    gui = row.get("gui_only") if isinstance(row.get("gui_only"), dict) else {}
+    guard = [v for v in gui.get("violations") or [] if isinstance(v, dict)]
     a22 = row.get("a22") if isinstance(row.get("a22"), dict) else {}
     measured = row.get("background") if isinstance(row.get("background"), dict) else {}
     background = u.condition == BACKGROUND
@@ -608,22 +607,19 @@ def verdict(u, row, kept):
     # with the eight measures measured and held
     passed = (a22.get("background_completion") is True) if background else row.get("passed") is True
     b = u.bridge
-    detail = {"condition": u.condition, "task": u.task, "run_index": u.run_index, "seed": row.get("seed"),
-              "score": evaluation.get("score"), "checks": _checks(evaluation),
-              "checker_passed": row.get("checker_passed"), "violations": list(guard.get("violations") or []),
-              "criteria": a22.get("criteria"), "unmeasured": a22.get("unmeasured"), "measured": measured.get("measured"),
-              "a15": a15, "success_regardless_of_focus": a15.get("success_regardless_of_focus"),
-              "timed_out": row.get("timed_out"), "image": u.image_id,
-              "steps": b.used if b is not None else 0, "steps_limit": b.steps if b is not None else u.steps,
-              "ended": b.ended_by if b is not None else "", "kept": kept}
+    detail = {"condition": u.condition, "seed": row.get("seed"), "partial score": evaluation.get("score"),
+              "checker passed": row.get("checker_passed"),
+              "violations": [_violation(v) for v in guard]}
     if background:
         disturbance = row.get("disturbance") if isinstance(row.get("disturbance"), dict) else {}
-        detail["criteria"], disturbed = _measures(a22, measured.get("measured"))
-        detail.update(task_passed=row.get("passed") is True, user_undisturbed=a22.get("user_undisturbed"),
-                      background_completion=a22.get("background_completion"), disturbed=disturbed,
-                      samples=disturbance.get("samples"))
+        detail.update({"measured": measured.get("measured") is True, "samples": disturbance.get("samples")})
+    detail.update({"timed out": row.get("timed_out"), "image": u.image_id, "checks": _checks(evaluation)})
+    if background:
+        detail["measures held"] = _measures(a22, measured.get("measured"))
     if not passed:
-        detail["why"] = _why(detail, background)
+        detail["why"] = _why(detail, guard, background)
+    detail.update(steps=b.used if b is not None else 0, steps_limit=b.steps if b is not None else u.steps,
+                  ended=b.ended_by if b is not None else "")
     return {"reward": 1.0 if passed else 0.0, "passed": passed, "detail": detail}
 
 
@@ -666,7 +662,7 @@ def score(unit, dir, transcript=None, answer=None, **_):
         u = OPEN.pop(unit, None)
     if u is None:
         raise ValueError(f"{unit} was not set up")
-    row = failed = kept = None
+    row = failed = None
     try:
         u.end()
         try:
@@ -675,16 +671,16 @@ def score(unit, dir, transcript=None, answer=None, **_):
             failed = f"the trial's row could not be read: {e}"
             if u.error is None:                  # the desktop gone between two steps: the loop saw nothing
                 u.error = _gone(u.d)
-        kept = u.keep()
+        u.keep()
     finally:
         u.remove()
     if u.error:
         raise EnvironmentSetupError(f"the desktop failed during the task: {u.error}")
     if failed:
         raise VerifierError(failed)
-    said = verdict(u, row, kept)
+    said = verdict(u, row)
     try:
-        _write_fresh(u.trial, REPORT, json.dumps(report(said["detail"], u.condition == BACKGROUND), indent=1))
+        _write_fresh(u.trial, REPORT, json.dumps(report(said["detail"]), indent=1))
     except OSError as e:                                     # what the pages read; it cannot change the verdict
         sys.stderr.write(f"cua-driver-bench: {unit}: the checks' names were not written: {e}\n")
     return said

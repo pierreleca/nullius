@@ -408,9 +408,10 @@ class Declarations(unittest.TestCase):
             self.assertIn(words, said)
         self.assertNotIn("not offered yet", said)
         self.assertEqual(LISTING["datasets"][0]["tasks"], 18)
-        # the pages read each trial's checks, and in the background its measures, by name from the driver's file
+        # the pages count each trial's task checks by name from the driver's file; the measures are the detail's
         self.assertEqual(b.report["file"], os.path.join("verifier", "report.json"))
         self.assertEqual((b.report["gained"], b.report["words"]["gained"]), ({"pass": ["passed"], "fail": ["failed"]}, "Checks"))
+        self.assertEqual(b.report["words"]["gained_term"], "The task's named checks:")
         self.assertNotIn("held", b.report)                               # no tests that a change could break
 
     def test_the_settings_name_where_the_bench_states_its_rules(self):
@@ -562,11 +563,12 @@ class Driver(unittest.TestCase):
         got = driver.score("MB-09__foreground", ws, [], "ordered")
         self.assertEqual((got["reward"], got["passed"]), (1.0, True))
         d = got["detail"]
-        self.assertEqual((d["steps"], d["steps_limit"], d["ended"], d["task"], d["condition"], d["image"]),
-                         (2, 45, "done", "MB-09", "foreground", "sha256:" + "1" * 64))
-        self.assertEqual((d["checker_passed"], d["checks"], d["violations"], d["score"]), (True, {"first": True, "second": True}, [], 1.0))
-        self.assertEqual(set(d["criteria"]), set(CRITERIA))
-        self.assertEqual(d["kept"], ["brief.md", "row.json"])
+        self.assertEqual((d["steps"], d["steps_limit"], d["ended"], d["condition"], d["image"]),
+                         (2, 45, "done", "foreground", "sha256:" + "1" * 64))
+        self.assertEqual((d["checker passed"], d["checks"], d["violations"], d["partial score"], d["timed out"]),
+                         (True, {"first": True, "second": True}, [], 1.0, False))
+        self.assertNotIn("measures held", d)                           # the foreground's pass takes no measure
+        self.assertEqual(sorted(os.listdir(self.verifier(ws, "cdb"))), ["brief.md", "row.json"])
         self.assertEqual(self.stand.collected, [64 * 2 ** 20])        # the trial's folder within 64 MiB
         with open(self.verifier(ws, os.path.join("cdb", "row.json"))) as f:
             self.assertEqual(json.load(f)["task"], "MB-09")
@@ -587,7 +589,7 @@ class Driver(unittest.TestCase):
                 ws, _ = self.unit("CDB-G02__foreground", attempt=attempt)
                 got = driver.score("CDB-G02__foreground", ws, [], "")
                 self.assertEqual(self.stand.launched[-1], ("CDB-G02", index, "foreground"))
-                self.assertEqual((got["detail"]["run_index"], got["detail"]["seed"]), (index, seed("CDB-G02", index)))
+                self.assertEqual(got["detail"]["seed"], seed("CDB-G02", index))
 
     def test_the_task_text_is_the_launchers_then_the_server_and_the_benchs_two_rules(self):
         _, s = self.unit()
@@ -680,7 +682,7 @@ class Driver(unittest.TestCase):
         _, _, got = self.end_by([("done", {})])
         self.assertEqual((got["reward"], got["passed"]), (0.0, False))
         d = got["detail"]
-        self.assertEqual((d["checker_passed"], d["violations"]), (True, [front]))
+        self.assertEqual((d["checker passed"], d["violations"]), (True, ["front at 41 s: a terminal"]))
         self.assertEqual(d["why"], "the guard saw front: a terminal")
 
     def test_the_foreground_keeps_its_pass_and_its_detail(self):
@@ -691,11 +693,12 @@ class Driver(unittest.TestCase):
                                                           a22=dict(row(task, i, c)["a22"], background_completion=completion))
                 ws, _, got = self.end_by([("done", {})])
                 self.assertEqual(got["passed"], checker)
-                self.assertEqual(set(got["detail"]) - {"why"}, {
-                    "condition", "task", "run_index", "seed", "score", "checks", "checker_passed", "violations",
-                    "criteria", "unmeasured", "measured", "a15", "success_regardless_of_focus", "timed_out", "image",
-                    "steps", "steps_limit", "ended", "kept"})
-                self.assertEqual(got["detail"]["criteria"], row("MB-09", 0)["a22"]["criteria"])     # as the row has it
+                # in the order the trial's page shows them; the launcher's whole row stays in its records
+                self.assertEqual([k for k in got["detail"] if k != "why"], [
+                    "condition", "seed", "partial score", "checker passed", "violations", "timed out", "image", "checks",
+                    "steps", "steps_limit", "ended"])
+                with open(self.verifier(ws, os.path.join("cdb", "row.json"))) as f:
+                    self.assertEqual(json.load(f)["a22"]["criteria"], row("MB-09", 0)["a22"]["criteria"])
                 with open(self.verifier(ws, "report.json")) as f:
                     said = json.load(f)
                 self.assertEqual((said["passed"], said["failed"]), (["first", "second"] if checker else ["second"],
@@ -720,22 +723,26 @@ class Driver(unittest.TestCase):
         self.assertEqual(self.stand.launched, [("IR-02", 0, "background")])
         self.assertEqual((got["reward"], got["passed"]), (1.0, True))
         d = got["detail"]
-        self.assertEqual((d["condition"], d["task_passed"], d["user_undisturbed"], d["background_completion"], d["measured"]),
-                         ("background", True, True, True, True))
-        self.assertEqual(list(d["criteria"].items()), [(c, True) for c in CRITERIA])        # the eight, by name
-        self.assertEqual((d["disturbed"], d["samples"], d["success_regardless_of_focus"]), ([], 50, True))
-        self.assertTrue(d["a15"]["background_completion"])                                 # the bench's older block
-        self.assertNotIn("why", d)
+        self.assertEqual((d["condition"], d["checker passed"], d["violations"], d["measured"], d["samples"]),
+                         ("background", True, [], True, 50))
+        self.assertEqual(list(d["measures held"].items()), [(c, True) for c in CRITERIA])   # the eight, by name
+        self.assertEqual([k for k in d], ["condition", "seed", "partial score", "checker passed", "violations", "measured",
+                                          "samples", "timed out", "image", "checks", "measures held", "steps",
+                                          "steps_limit", "ended"])
         self.assertEqual((said["condition"], said["seed"], said["score"]), ("background", seed("IR-02", 0), 1.0))
-        self.assertEqual((said["passed"], said["failed"]), (["first", "second"] + [f"measure:{c}" for c in CRITERIA], []))
+        # the pages count the task's checks; the measures are the detail's
+        self.assertEqual((said["passed"], said["failed"]), (["first", "second"], []))
 
     def test_the_background_verdict_uses_a22_and_preserves_a15(self):
         r = bg_row("IR-02", 0, checker=True, disturbed=["pointer"])
         r["a15"]["background_completion"] = True
-        got, _ = self.background(lambda task, i, c: r, participant="control")
+        self.stand.rows = lambda task, i, c: r
+        ws, _ = self.unit("IR-02__background", participant="control")
+        got = driver.score("IR-02__background", ws, [], "")
         self.assertEqual((got["reward"], got["passed"]), (0.0, False))
-        self.assertFalse(got["detail"]["background_completion"])
-        self.assertEqual(got["detail"]["a15"], r["a15"])
+        self.assertEqual(got["detail"]["measures held"]["pointer"], False)
+        with open(self.verifier(ws, os.path.join("cdb", "row.json"))) as f:
+            self.assertEqual(json.load(f)["a15"], r["a15"])                     # the bench's older block, in its row
 
     def test_each_measure_that_does_not_hold_fails_a_passed_check(self):
         for m in CRITERIA:
@@ -744,40 +751,40 @@ class Driver(unittest.TestCase):
                 d = got["detail"]
                 self.assertEqual((got["reward"], got["passed"]), (0.0, False))
                 # the task's own success stays, whatever the disturbance
-                self.assertEqual((d["task_passed"], d["checker_passed"], d["success_regardless_of_focus"]), (True, True, True))
-                self.assertEqual((d["disturbed"], d["criteria"][m], d["user_undisturbed"]), ([m], False, False))
+                self.assertEqual((d["checker passed"], d["violations"]), (True, []))
+                self.assertEqual(d["measures held"], {c: c != m for c in CRITERIA})
                 self.assertEqual(d["why"], f"the simulated user was disturbed: {m}")
-                self.assertEqual(said["failed"], [f"measure:{m}"])
-                self.assertEqual(len(said["passed"]), 2 + 7)
+                self.assertEqual((said["passed"], said["failed"]), (["first", "second"], []))
 
     def test_a_trial_too_short_to_be_measured_fails_as_the_row_has_it(self):
         got, said = self.background(lambda task, i, c: bg_row(task, i, checker=True, measured=False, samples=3))
         d = got["detail"]
-        self.assertEqual((got["passed"], d["measured"], d["user_undisturbed"], d["task_passed"]), (False, False, False, True))
-        self.assertEqual(d["criteria"], {c: True for c in CRITERIA})                       # as the row has them
-        self.assertEqual(d["disturbed"], list(CRITERIA))
+        self.assertEqual((got["passed"], d["measured"], d["samples"], d["checker passed"]), (False, False, 3, True))
+        # the row reads them held; unmeasured, none of them counts, and the page says so
+        self.assertEqual(d["measures held"], {c: "not measured" for c in CRITERIA})
         self.assertEqual(d["why"], "the bench did not measure the simulated user's window (3 samples)")
-        self.assertEqual(said["failed"], [f"measure:{c} (not measured)" for c in CRITERIA])
+        self.assertEqual(said["failed"], [])
         got, said = self.background(lambda task, i, c: bg_row(task, i, checker=True, unmeasured=["typing"]))
-        self.assertEqual((got["passed"], got["detail"]["disturbed"], got["detail"]["criteria"]["typing"]), (False, ["typing"], None))
+        self.assertEqual((got["passed"], got["detail"]["measures held"]), (False, {c: "not measured" if c == "typing" else True
+                                                                                   for c in CRITERIA}))
         self.assertEqual(got["detail"]["why"], "the bench did not take the measure: typing")
-        self.assertEqual(said["failed"], ["measure:typing (not measured)"])
 
     def test_a_failed_check_or_a_violation_fails_the_background_whatever_its_measures(self):
         got, said = self.background(lambda task, i, c: bg_row(task, i))
-        self.assertEqual((got["passed"], got["detail"]["user_undisturbed"]), (False, True))
+        self.assertEqual((got["passed"], got["detail"]["measures held"]), (False, {c: True for c in CRITERIA}))
         self.assertEqual(got["detail"]["why"], "the task's checker did not pass: first")
         self.assertEqual(said["failed"], ["first"])
         front = {"t_s": 3.0, "kind": "front", "detail": "a terminal"}
         got, _ = self.background(lambda task, i, c: bg_row(task, i, checker=True, violations=[front], disturbed=["pointer", "key_focus"]))
-        self.assertEqual((got["passed"], got["detail"]["task_passed"], got["detail"]["disturbed"]), (False, False, ["key_focus", "pointer"]))
+        self.assertEqual((got["passed"], got["detail"]["violations"]), (False, ["front at 3 s: a terminal"]))
+        self.assertEqual([c for c, held in got["detail"]["measures held"].items() if not held], ["key_focus", "pointer"])
         self.assertEqual(got["detail"]["why"], "the guard saw front: a terminal; the simulated user was disturbed: key_focus, pointer")
 
     def test_the_null_control_runs_the_background_with_no_server(self):
         got, said = self.background(lambda task, i, c: bg_row(task, i), participant="control")
         self.assertEqual(self.stand.launched, [("IR-02", 0, "background")])
-        self.assertEqual((got["reward"], got["detail"]["steps"], got["detail"]["user_undisturbed"]), (0.0, 0, True))
-        self.assertEqual(said["passed"][-8:], [f"measure:{c}" for c in CRITERIA])
+        self.assertEqual((got["reward"], got["detail"]["steps"], got["detail"]["measures held"]), (0.0, 0, {c: True for c in CRITERIA}))
+        self.assertEqual(said["passed"], ["second"])
 
     def test_the_launchers_end_ends_the_loop_and_the_calls(self):
         guard = {"t_s": 20.0, "kind": "process", "detail": "a terminal", "pid": 4242}
@@ -898,7 +905,8 @@ class Driver(unittest.TestCase):
         self.stand.fail["collect"] = self.stand.module.DesktopError("a link in the folder")
         ws, _ = self.unit()
         got = driver.score("MB-09__foreground", ws, [], "")
-        self.assertEqual((got["passed"], got["detail"]["kept"]), (True, None))
+        self.assertTrue(got["passed"])
+        self.assertFalse(os.path.lexists(self.verifier(ws, "cdb")))
 
     def test_the_evidence_is_copied_within_the_drivers_bound_and_no_link_is_followed(self):
         self.assertEqual(driver.EVIDENCE_BYTES, 64 * 2 ** 20)
@@ -920,8 +928,9 @@ class Driver(unittest.TestCase):
         with mock.patch.object(driver, "EVIDENCE_BYTES", 4096):
             got = driver.score("MB-09__foreground", ws, [], "")
         self.assertEqual(self.stand.collected, [4096])
-        self.assertEqual(got["detail"]["kept"], ["a.log", "brief.md"])
-        total = sum(os.path.getsize(os.path.join(dest, name)) for name in got["detail"]["kept"])
+        copied = sorted(n for n in os.listdir(dest) if not os.path.islink(os.path.join(dest, n)))   # the planted link stays one
+        self.assertEqual(copied, ["a.log", "brief.md"])
+        total = sum(os.path.getsize(os.path.join(dest, name)) for name in copied)
         self.assertEqual(total, 3072 + len(BRIEF.encode()))
         self.assertLessEqual(total, 4096)
         self.assertFalse(os.path.lexists(os.path.join(dest, "b.log")))
@@ -1188,7 +1197,7 @@ class ThroughARun(unittest.TestCase):
         record, verdict, actions, removed = self.records(job, trial, desk)
         self.assertEqual(record["standard"].get("cut"), "time")              # the agent's time ended its turn
         self.assertEqual((trial.exception_type, trial.reward), ("", 1.0))   # and the row's pass stands
-        self.assertEqual((verdict["reward"], verdict["passed"], verdict["detail"]["checker_passed"]), (1.0, True, True))
+        self.assertEqual((verdict["reward"], verdict["passed"], verdict["detail"]["checker passed"]), (1.0, True, True))
         self.assertEqual((verdict["detail"]["steps"], verdict["detail"]["violations"]), (1, []))
         self.assertEqual([a["step"] for a in actions], [1])                 # the click, the agent's one step
         self.assertEqual(removed, "1\n")
@@ -1202,8 +1211,9 @@ class ThroughARun(unittest.TestCase):
         self.assertEqual(record["standard"]["unit"], "CDB-G02__background")
         self.assertEqual((trial.exception_type, trial.reward, trial.outcome), ("", 0.0, "failed_verification"))
         d = verdict["detail"]
-        self.assertEqual((d["condition"], d["task_passed"], d["disturbed"]), ("background", True, ["pointer"]))
-        self.assertEqual((trial.f2p_pass, trial.f2p_fail, trial.f2p_failures), (9, 1, ["measure:pointer"]))
+        self.assertEqual((d["condition"], d["checker passed"], d["measures held"]["pointer"]), ("background", True, False))
+        # the pages count the task's checks alone: both passed; the measure that failed is the detail's
+        self.assertEqual((trial.f2p_pass, trial.f2p_fail, trial.f2p_failures), (2, 0, []))
         self.assertEqual((trial.p2p_pass, trial.p2p_fail, trial.is_regression), (0, 0, False))
         self.assertEqual(removed, "1\n")
 
