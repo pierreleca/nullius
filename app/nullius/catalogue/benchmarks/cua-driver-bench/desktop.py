@@ -40,6 +40,7 @@ import secrets
 import shutil
 import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 import threading
@@ -447,6 +448,18 @@ class Desktop:
         self._said: Optional[io.BufferedRandom] = None
         self._row: Optional[dict] = None
         self._lock = threading.Lock()
+        self._reaper: Optional[subprocess.Popen] = None
+
+    def _tell(self, word: str) -> None:
+        """A line to this desktop's reaper: the container's id, or ``removed``, which lets the reaper go."""
+        p = self._reaper
+        with contextlib.suppress(AttributeError, OSError, ValueError, subprocess.TimeoutExpired):
+            p.stdin.write(word.encode() + b"\n")
+            p.stdin.flush()
+            if word == "removed":
+                p.stdin.close()
+                p.wait(timeout=5)
+                self._reaper = None
 
     @classmethod
     def start(cls, reference: str, *, job: Optional[str] = None, seconds: float = START_SECONDS,
@@ -454,9 +467,14 @@ class Desktop:
         """Start a desktop of ``reference`` and wait until its window manager runs, at most ``seconds``. ``job``
         labels the container as a unit's are, so a sweep of the job removes it; ``memory_mb`` is the engine's
         memory limit of the container, the machine's own kept where lower. A failed or interrupted start
-        removes what it made."""
+        removes what it made, and a reaper (``reaper.py``) removes the container if this process goes first."""
         end = time.monotonic() + seconds
         d = cls(name or f"nullius-cdb-{secrets.token_hex(4)}")
+        with contextlib.suppress(OSError):
+            d._reaper = subprocess.Popen([sys.executable, "-I", os.path.join(HERE, "reaper.py"), container.DOCKER,
+                                          d.name], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                         stderr=subprocess.DEVNULL, start_new_session=True,
+                                         env=container.client_env({"PATH": os.environ.get("PATH", os.defpath)}))
         label = ["--label", f"{container.LABEL}={job}"] if job else []
         identity = tempfile.TemporaryDirectory(prefix="nullius-cdb-start-")
         cidfile = os.path.join(identity.name, "cid")
@@ -470,6 +488,8 @@ class Desktop:
                 raise DesktopError(f"starting the desktop {d.name}: {container.DOCKER} run did not answer in time")
             if r.returncode != 0:
                 raise DesktopError(f"starting the desktop {d.name}: {_said(r)}")
+            with contextlib.suppress(OSError), open(cidfile) as f:
+                d._tell(f.read().strip())
             left = _left(end)
             try:
                 r = _engine(["exec", "-u", USER, d.name, "python3", "-I", "-c", _SESSION, WINDOW_MANAGER, PORT_PYTHON,
@@ -498,11 +518,13 @@ class Desktop:
             with contextlib.suppress(OSError):
                 with open(cidfile) as f:
                     made = f.read().strip()
+            d._tell(made)
             with contextlib.suppress(DesktopError, subprocess.TimeoutExpired):
                 if made:
                     cls(made).remove()
                 elif name is None:                      # a run cut before it wrote the id: the name is this start's
                     d.remove()
+                d._tell("removed")
             raise
         finally:
             identity.cleanup()
@@ -796,6 +818,7 @@ class Desktop:
             raise DesktopError(f"the desktop {self.name}'s removal could not be checked")
         if r.returncode == 0 or not _absent(r):
             raise DesktopError(f"the desktop {self.name} is still there after its removal: {_said(r)}")
+        self._tell("removed")
 
 
 def _inside(name: str, top: str) -> Optional[str]:

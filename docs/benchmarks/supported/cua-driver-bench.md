@@ -55,6 +55,7 @@ Ten desktop tasks on Linux: three across several applications, three of pointer 
 - The guard ends a trial when a terminal stays in front for three samples or starts outside the launcher. The desktop's panel shows a terminal launcher.
 - Attempts are the bench's trials: attempt k is the launcher's run index k - 1, which sets the seed. Five attempts are the bench's five trials of a task.
 - A trial the launcher marks as a harness error is no one's result; --retries runs it again with the same seed, as the bench does.
+- A trial whose desktop stops working while it runs is not counted against the agent, and --retries runs it again.
 - Desktop image: build makes it once on the machine from the bench's public Linux image and its own provisioning scripts, about 3.5 GB of downloads; or name an image the machine holds.
 - Nothing of the bench is copied into Nullius: the install fetches it at its pinned commit, and each trial copies its folder into the desktop. The bench is under FSL-1.1-MIT.
 
@@ -74,7 +75,7 @@ Ten desktop tasks on Linux: three across several applications, three of pointer 
 - A named image is one the machine holds, by a local name of at most 64 characters, with no registry path.
 - Each trial's desktop has no network. The task with a local site serves it inside the desktop.
 - On the local backend an agent runs as you and can write where you can, the trial's records included.
-- A driver killed outright leaves its trial's desktop running; each desktop has the job's label.
+- When a run stops without removing a trial's desktop, after a Stop too, a process of the desktop's own removes it. A desktop whose process was killed as well stays running; each desktop has the job's label.
 
 ## Cite
 

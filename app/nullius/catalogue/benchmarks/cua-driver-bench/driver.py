@@ -37,7 +37,8 @@ the gate (a terminal in front, or one started outside the launcher's own process
 steps, every call is refused, and the progress file says so, so that the run ends the turn a minute later.
 
 What is left when a unit never reaches score: a new setup ends the unit before it, and this driver's exit (its input
-ended) ends the one still open. A driver killed outright leaves its desktop running; each has the job's label.
+ended) ends the one still open. A driver killed outright leaves its desktop to the desktop's reaper (reaper.py),
+which removes it; each desktop has the job's label.
 """
 import atexit
 import importlib.util
@@ -51,8 +52,8 @@ import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-# driver.py [DESKTOP_PY [DOCKERFILE REQUIREMENTS]]: the definition's command may name the files, so that a host's snapshot
-# takes them; the desktop module finds the other two beside itself
+# driver.py [DESKTOP_PY [REAPER DOCKERFILE REQUIREMENTS]]: the definition's command may name the files, so that a host's
+# snapshot takes them; the desktop module finds the other three beside itself
 DESKTOP_FILE = (sys.argv[1] if len(sys.argv) > 1 and os.path.basename(sys.argv[1]) == "desktop.py"
                 else os.path.join(HERE, "desktop.py"))
 

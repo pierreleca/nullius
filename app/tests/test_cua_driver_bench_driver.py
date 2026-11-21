@@ -332,7 +332,7 @@ class Declarations(unittest.TestCase):
         # then the desktop module, which the driver takes from its first argument
         self.assertEqual(drv["command"][:2], ["python3", "{here}/driver.py"])
         named = [w[len("{here}/"):] for w in drv["command"][2:]]
-        self.assertEqual(named, ["desktop.py", "env/desktop.Dockerfile", "env/desktop-requirements.txt"])
+        self.assertEqual(named, ["desktop.py", "reaper.py", "env/desktop.Dockerfile", "env/desktop-requirements.txt"])
         self.assertTrue(all(os.path.isfile(os.path.join(ENTRY, n)) for n in named), named)
         # a host's snapshot of the entry: the driver loads the desktop module by its path, which no import names, and
         # the module builds its image from the two files of its env folder

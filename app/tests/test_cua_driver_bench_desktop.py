@@ -918,6 +918,45 @@ class Collect(unittest.TestCase):
 
 
 class Remove(unittest.TestCase):
+    def test_a_desktop_whose_process_is_killed_during_its_start_is_removed_by_its_reaper(self):
+        e = Engine(self)
+        child = textwrap.dedent(f"""
+            import importlib.util, sys
+            from nullius.standard import container
+            container.DOCKER, container._context, container.capped = {e.program!r}, lambda: {{}}, lambda task=None: []
+            spec = importlib.util.spec_from_file_location("desktop", {os.path.join(ENTRY, "desktop.py")!r})
+            desktop = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(desktop)
+            desktop.Desktop.start("bench:image", job="job-1", name="cdb-killed", seconds=60)   # no window manager
+            """)
+        app = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        p = subprocess.Popen([sys.executable, "-c", child], cwd=app, env=dict(os.environ, PYTHONPATH=app),
+                             stdin=subprocess.DEVNULL, start_new_session=True)
+        self.addCleanup(p.wait)
+        end = time.monotonic() + 30
+        while not any(c[0] == "exec" for c in e.calls()) and time.monotonic() < end:
+            time.sleep(0.1)
+        self.assertTrue(e.running("cdb-killed"))
+        os.killpg(p.pid, 9)                                         # as a run kills its driver's process group
+        end = time.monotonic() + 10
+        while e.running("cdb-killed") and time.monotonic() < end:
+            time.sleep(0.1)
+        self.assertFalse(e.running("cdb-killed"))
+        cid = next(c for c in e.calls() if c[0] == "rm")[-1]
+        self.assertRegex(cid, r"^[0-9a-f]{64}$")                    # by the id the engine gave
+        while not any(c[:2] == ["container", "inspect"] and c[-1] == cid for c in e.calls()) and time.monotonic() < end:
+            time.sleep(0.1)
+        self.assertTrue(any(c[:2] == ["container", "inspect"] and c[-1] == cid for c in e.calls()))   # and checked
+
+    def test_a_desktop_removed_lets_its_reaper_go(self):
+        e = Engine(self)
+        d = started(self, e)
+        reaper = d._reaper
+        d.remove()
+        self.assertIsNone(d._reaper)
+        self.assertEqual(reaper.returncode, 0)
+        self.assertEqual(len([c for c in e.calls() if c[0] == "rm"]), 1)
+
     def test_removal_and_its_check_still_run_after_clients_close(self):
         e = Engine(self)
         d = started(self, e)

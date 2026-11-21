@@ -19,6 +19,7 @@
       "python3",
       "{here}/driver.py",
       "{here}/desktop.py",
+      "{here}/reaper.py",
       "{here}/env/desktop.Dockerfile",
       "{here}/env/desktop-requirements.txt"
     ],
