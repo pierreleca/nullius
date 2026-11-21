@@ -807,6 +807,19 @@ class Driver(unittest.TestCase):
         self.assertFalse(os.path.exists(s["mcp"][0]["args"][1]))
         self.assertTrue(os.path.isfile(self.verifier(ws, os.path.join("cdb", "brief.md"))))
 
+    def test_a_desktop_gone_between_two_steps_is_the_environments(self):
+        ws, s = self.unit()
+        u = driver.OPEN["foreground__MB-09"]
+        self.stand.fail["finish"] = self.stand.module.DesktopError("the launcher wrote no row.json")
+
+        def gone(code, seconds=90):
+            raise self.stand.module.DesktopError("no such container")
+        u.d.python = gone                                            # no action ran: the loop saw nothing
+        with self.assertRaisesRegex(driver.EnvironmentSetupError, "^the desktop failed during the task: "
+                                                                  ".*no such container"):
+            driver.score("foreground__MB-09", ws, [], "")
+        self.assertEqual(self.stand.made[-1].removes, 1)
+
     def test_a_unit_never_scored_goes_at_its_end_at_the_next_setup_and_at_the_drivers_exit(self):
         ws, s = self.unit()
         self.assertEqual(driver.end("foreground__MB-09", ws), {})

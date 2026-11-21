@@ -553,6 +553,15 @@ def verdict(u, row, kept):
     return {"reward": 1.0 if passed else 0.0, "passed": passed, "detail": detail}
 
 
+def _gone(d):
+    """Why a desktop runs no code any more, or None while it does (an action not ended in time included)."""
+    try:
+        d.python("pass", PYTHON_SECONDS)
+    except Exception as e:
+        return f"{type(e).__name__}: {e}"
+    return None
+
+
 def score(unit, dir, transcript=None, answer=None, **_):
     with OPEN_LOCK:
         u = OPEN.pop(unit, None)
@@ -565,6 +574,8 @@ def score(unit, dir, transcript=None, answer=None, **_):
             row = u.d.finish()
         except Exception as e:
             failed = f"the trial's row could not be read: {e}"
+            if u.error is None:                  # the desktop gone between two steps: the loop saw nothing
+                u.error = _gone(u.d)
         kept = u.keep()
     finally:
         u.remove()
