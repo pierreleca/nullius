@@ -2,7 +2,8 @@
 
 Nullius's own records are ``FILES``. A benchmark may declare its own in its
 ``benchmark.json`` (``records``: each a ``label`` and a ``path`` under the
-trial's ``verifier/``, a file or a folder whose files are listed, one level):
+trial's ``verifier/``, a file or a folder whose files are listed, one level;
+text files alone):
 ``declared`` finds them by the trial's source, and each is addressed by its
 place in that list (``r0``, or ``r0-NAME`` for a file of a folder). A declared
 record is opened one folder at a time from the trial's own, no link followed:
@@ -40,6 +41,7 @@ FILES = {
 CHUNK_SIZE = 8_000
 MAX_READ = 16 * 1024 * 1024
 FOLDER_FILES = 200                     # the most files a declared folder lists
+SNIFF = 8192                           # a declared file with a NUL byte this far in is not text: not a record
 DECLARED_KEY = re.compile(r"r(?P<n>0|[1-9][0-9]{0,2})(?:-(?P<name>.+))?", re.S)
 _DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
@@ -98,10 +100,19 @@ def _open_record(trial_dir, key, records):
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
     else:
         fd = _open_under(trial_dir, _declared(key, records)[1], os.O_RDONLY | os.O_NONBLOCK)
-    if not stat.S_ISREG(os.fstat(fd).st_mode):
+    if not stat.S_ISREG(os.fstat(fd).st_mode) or (key not in FILES and not _text(fd)):
         os.close(fd)
         raise LookupError(key)
     return fd
+
+
+def _text(fd) -> bool:
+    """Whether an open file reads as text: no NUL byte in its first ``SNIFF`` bytes. It is read from its start
+    again after."""
+    try:
+        return b"\0" not in os.pread(fd, SNIFF, 0)
+    except OSError:
+        return False
 
 
 def describe(key, records=()):
@@ -133,18 +144,24 @@ def _declared_rows(trial_dir, records):
         try:
             info = os.fstat(fd)
             if stat.S_ISREG(info.st_mode):
-                rows.append(dict(key=f"r{n}", label=record["label"], filename=record["path"], part="",
-                                 exists=True, size=info.st_size))
+                if _text(fd):
+                    rows.append(dict(key=f"r{n}", label=record["label"], filename=record["path"], part="",
+                                     exists=True, size=info.st_size))
             elif stat.S_ISDIR(info.st_mode):
                 with os.scandir(fd) as entries:
                     names = sorted(e.name for e in entries if e.is_file(follow_symlinks=False))[:FOLDER_FILES]
                 for name in names:
                     try:
-                        size = os.stat(name, dir_fd=fd, follow_symlinks=False).st_size
+                        one = os.open(name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=fd)
                     except OSError:
                         continue
-                    rows.append(dict(key=f"r{n}-{name}", label=record["label"], filename=f"{record['path']}/{name}",
-                                     part=name, exists=True, size=size))
+                    try:
+                        info = os.fstat(one)
+                        if stat.S_ISREG(info.st_mode) and _text(one):
+                            rows.append(dict(key=f"r{n}-{name}", label=record["label"], part=name, exists=True,
+                                             filename=f"{record['path']}/{name}", size=info.st_size))
+                    finally:
+                        os.close(one)
         finally:
             os.close(fd)
     return rows

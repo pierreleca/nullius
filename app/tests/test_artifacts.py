@@ -162,6 +162,20 @@ class DeclaredRecords(unittest.TestCase):
                              env=dict(os.environ, PYTHONPATH=str(Path(artifacts.__file__).parents[2])))
         self.assertEqual(got.stdout.strip(), "refused", got.stderr)
 
+    def test_a_file_that_is_not_text_is_neither_listed_nor_read(self):
+        own = self.trial / "verifier" / "own"
+        (own / "packed.zip").write_bytes(b"PK\x03\x04" + b"\0" * 32)
+        (own / "late.bin").write_bytes(b"x" * artifacts.SNIFF + b"\0")             # a NUL past the look: read as text
+        records = self.RECORDS + [{"label": "Packed", "path": "verifier/own/packed.zip"}]
+        keys = [r["key"] for r in artifacts.listing(self.trial, records)]
+        self.assertNotIn("r1-packed.zip", keys)
+        self.assertNotIn("r3", keys)
+        self.assertIn("r1-late.bin", keys)
+        for key in ("r1-packed.zip", "r3"):
+            with self.subTest(key=key), self.assertRaises(LookupError):
+                artifacts.whole(self.trial, key, records)
+        self.assertEqual(artifacts.whole(self.trial, "r1-row.json", records), ('{"seed": 7}', False))
+
     def test_a_folder_lists_at_most_its_bound(self):
         for i in range(5):
             (self.trial / "verifier" / "own" / f"f{i}.txt").write_text("x")
