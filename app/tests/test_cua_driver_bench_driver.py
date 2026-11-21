@@ -759,12 +759,20 @@ class Driver(unittest.TestCase):
     def test_a_desktop_that_fails_during_the_task_is_the_environments(self):
         ws, s = self.unit()
         self.stand.fail["python"] = self.stand.module.DesktopError("the engine went away")
+        self.stand.fail["finish"] = self.stand.module.DesktopError("the row is gone")
         c = Client(s["mcp"][0]["args"][1])
         self.assertTrue(c.call("click", {"x": 1, "y": 1})[0])
         c.close()
         with self.assertRaisesRegex(RuntimeError, "^EnvironmentSetupError: the desktop failed during the task: "
-                                                  ".*the engine went away"):
+                                                  ".*the engine went away") as got:
             driver.score("foreground__MB-09", ws, [], "")
+        kind = standard_run._kind(Exception(f"RuntimeError: {got.exception}"), "VerifierError")
+        self.assertEqual(kind, "EnvironmentSetupError")
+        self.assertTrue(retries.retryable({"exception_info": {"exception_type": kind}}))
+        self.assertEqual(self.stand.made[-1].removes, 1)
+        self.assertEqual(driver.OPEN, {})
+        self.assertFalse(os.path.exists(s["mcp"][0]["args"][1]))
+        self.assertTrue(os.path.isfile(self.verifier(ws, os.path.join("cdb", "brief.md"))))
 
     def test_a_unit_never_scored_goes_at_its_end_at_the_next_setup_and_at_the_drivers_exit(self):
         ws, s = self.unit()

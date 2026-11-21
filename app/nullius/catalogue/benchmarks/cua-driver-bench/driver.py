@@ -541,10 +541,10 @@ def score(unit, dir, transcript=None, answer=None, **_):
         kept = u.keep()
     finally:
         u.remove()
-    if failed:
-        raise RuntimeError(failed)
     if u.error:
         raise RuntimeError(f"EnvironmentSetupError: the desktop failed during the task: {u.error}")
+    if failed:
+        raise RuntimeError(failed)
     return verdict(u, row, kept)
 
 
