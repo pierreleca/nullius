@@ -623,6 +623,78 @@ class Trial(unittest.TestCase):
 
 
 class Collect(unittest.TestCase):
+    def archive(self, engine, *names):
+        path = os.path.join(engine.root, "input.tar")
+        with tarfile.open(path, "w") as archive:
+            for name in names:
+                info = tarfile.TarInfo("trial/" + name)
+                info.size = len(b"replacement")
+                archive.addfile(info, io.BytesIO(b"replacement"))
+        engine.behave(cp_archive=path)
+
+    def test_an_existing_hardlink_is_replaced_without_changing_its_other_name(self):
+        e = Engine(self)
+        d = started(self, e)
+        dest = os.path.join(e.root, "dest")
+        os.mkdir(dest)
+        outside = os.path.join(e.root, "outside")
+        with open(outside, "wb") as f:
+            f.write(b"original")
+        target = os.path.join(dest, "row.json")
+        os.link(outside, target)
+        self.archive(e, "row.json")
+        self.assertEqual(d.collect(dest), ["row.json"])
+        with open(outside, "rb") as f:
+            self.assertEqual(f.read(), b"original")
+        with open(target, "rb") as f:
+            self.assertEqual(f.read(), b"replacement")
+        self.assertNotEqual(os.stat(outside).st_ino, os.stat(target).st_ino)
+
+    def test_an_existing_fifo_is_replaced_without_opening_it_for_writing(self):
+        e = Engine(self)
+        d = started(self, e)
+        dest = os.path.join(e.root, "dest")
+        os.mkdir(dest)
+        target = os.path.join(dest, "row.json")
+        os.mkfifo(target)
+        self.archive(e, "row.json")
+        real_open = os.open
+
+        def checked_open(path, flags, *args, **kw):
+            if os.fspath(path) in (target, "row.json"):
+                self.assertFalse(flags & (os.O_WRONLY | os.O_RDWR), "the existing FIFO was opened for writing")
+            return real_open(path, flags, *args, **kw)
+        with mock.patch.object(os, "open", checked_open):
+            self.assertEqual(d.collect(dest), ["row.json"])
+        self.assertTrue(stat.S_ISREG(os.lstat(target).st_mode))
+        with open(target, "rb") as f:
+            self.assertEqual(f.read(), b"replacement")
+
+    def test_directory_links_are_refused_before_creating_any_child(self):
+        e = Engine(self)
+        d = started(self, e)
+        dest, outside = os.path.join(e.root, "dest"), os.path.join(e.root, "outside")
+        os.makedirs(os.path.join(dest, "real"))
+        os.mkdir(outside)
+        os.symlink(outside, os.path.join(dest, "escape"))
+        os.symlink(os.path.join(dest, "real"), os.path.join(dest, "alias"))
+        self.archive(e, "escape/new/deep/file", "alias/new/deep/file")
+        self.assertEqual(d.collect(dest), [])
+        self.assertEqual(os.listdir(outside), [])
+        self.assertEqual(os.listdir(os.path.join(dest, "real")), [])
+
+    def test_destination_ancestors_are_checked_before_creating_children(self):
+        e = Engine(self)
+        d = started(self, e)
+        outside = os.path.join(e.root, "outside")
+        os.mkdir(outside)
+        alias = os.path.join(e.root, "alias")
+        os.symlink(outside, alias)
+        self.archive(e, "row.json")
+        with self.assertRaises(desktop.DesktopError):
+            d.collect(os.path.join(alias, "new", "deep"))
+        self.assertEqual(os.listdir(outside), [])
+
     def test_plain_files_alone_within_the_size_and_nothing_outside_dest(self):
         e = Engine(self)
         d = started(self, e)

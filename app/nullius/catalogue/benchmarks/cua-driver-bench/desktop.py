@@ -668,8 +668,12 @@ class Desktop:
         """The trial's folder copied into ``dest`` on this machine: plain files alone, no link followed, nothing
         written outside ``dest``, at most ``max_bytes`` in all (a file that does not fit is left out). The names
         kept, relative to the trial's folder."""
-        os.makedirs(dest, exist_ok=True)
-        root = os.path.realpath(dest)
+        root = os.path.abspath(dest)
+        try:
+            with _directory(root):
+                pass
+        except OSError as e:
+            raise DesktopError(f"the collection destination could not be opened: {e}")
         top = posixpath.basename(OUT)
         errors = tempfile.TemporaryFile()
         p = _spawn(["cp", f"{self.name}:{OUT}", "-"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=errors)
@@ -762,22 +766,42 @@ def _inside(name: str, top: str) -> Optional[str]:
     return "/".join(parts)
 
 
+@contextlib.contextmanager
+def _directory(path: str):
+    """Open each ancestor without following links before making its child."""
+    fd = os.open(os.sep, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in os.path.abspath(path).split(os.sep)[1:]:
+            if not part:
+                continue
+            with contextlib.suppress(FileExistsError):
+                os.mkdir(part, dir_fd=fd)
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        yield fd
+    finally:
+        os.close(fd)
+
+
 def _write_under(root: str, rel: str, src) -> bool:
-    """``src`` written to ``root/rel``, its folders made under ``root``; False, and nothing written, where a folder or
-    the file would not be under ``root`` or is a link."""
+    """Replace ``root/rel`` with a fresh file. Refuse linked ancestors and entries that cannot be replaced."""
     path = os.path.join(root, *rel.split("/"))
-    parent = os.path.dirname(path)
-    try:
-        os.makedirs(parent, exist_ok=True)
-    except OSError:
-        return False
-    real = os.path.realpath(parent)
-    if real != root and not real.startswith(root + os.sep):
-        return False
-    try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o644)
-    except OSError:
-        return False
-    with os.fdopen(fd, "wb") as f:
-        shutil.copyfileobj(src, f, 1 << 20)
+    with contextlib.ExitStack() as stack:
+        try:
+            parent = stack.enter_context(_directory(os.path.dirname(path)))
+            temporary = f".collect-{secrets.token_hex(8)}"
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644, dir_fd=parent)
+        except OSError:
+            return False
+        try:
+            with os.fdopen(fd, "wb") as f:
+                shutil.copyfileobj(src, f, 1 << 20)
+            try:
+                os.replace(temporary, os.path.basename(path), src_dir_fd=parent, dst_dir_fd=parent)
+            except OSError:
+                return False
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temporary, dir_fd=parent)
     return True
