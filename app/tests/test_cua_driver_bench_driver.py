@@ -52,6 +52,9 @@ TASKS = [("CDB-G02", "multi_app"), ("CDB-G03", "multi_app"), ("CDB-G04", "multi_
          ("MB-10", "precision"), ("MB-11", "precision"), ("IR-01", "interruptions"), ("IR-02", "interruptions"),
          ("IR-03", "interruptions"), ("IR-04", "interruptions")]
 UNITS = [f"foreground__{t}" for t, _ in TASKS]
+BACKGROUND = [f"background__{t}" for t, _ in TASKS if t not in ("MB-10", "MB-11")]
+# all of them: each task's foreground unit, then its background unit when it has one
+BOTH = [u for t, _ in TASKS for u in (f"foreground__{t}", f"background__{t}") if u in UNITS + BACKGROUND]
 BRIEF = "A list is open on the screen.\n\nPut its items in the order shown, then press Done.\n"
 
 
@@ -96,6 +99,23 @@ def row(task, run_index, condition="foreground", *, checker=False, score=0.25, c
              a22={"rule": "A22", "condition": condition, "criteria": {c: c != "typing" or None for c in CRITERIA},
                   "unmeasured": ["typing"], "user_undisturbed": False, "background_completion": None},
              finished=1100.0)
+    return r
+
+
+def bg_row(task, run_index, *, checker=False, violations=(), disturbed=(), unmeasured=(), measured=True, samples=50):
+    """A background trial's row as the launcher writes it: the eight measures held but those ``disturbed`` (False)
+    and those ``unmeasured`` (None); ``measured`` False for a trial too short for the bench to measure at all, whose
+    measures still read as held, as the bench writes them. The pass rule is the bench's: the check, no violation, the
+    measures measured and every one held."""
+    r = row(task, run_index, "background", checker=checker, violations=violations)
+    criteria = {c: None if c in unmeasured else c not in disturbed for c in CRITERIA}
+    held = measured and all(v is True for v in criteria.values())
+    r.update(disturbance={"front_changes": 0, "samples": samples, "available": measured},
+             background={"measured": measured, "focus_steals": 0, "clean": measured and not disturbed},
+             a22={"rule": "A22", "condition": "background", "criteria": criteria,
+                  "unmeasured": sorted(unmeasured), "user_undisturbed": held,
+                  "background_completion": bool(r["passed"] and held)})
+    r["a15"].update(background_completion=bool(r["passed"] and held), user_window_held=held)
     return r
 
 
@@ -322,8 +342,15 @@ class Declarations(unittest.TestCase):
         self.assertEqual(definitions.settings_problems([d]), [])
         self.assertEqual(DEFINITION["needs"], ["agent.computer/v1"])
         self.assertEqual(DEFINITION["upstream"]["tested"], "c6350de75e054811c0042da34fc9087b39d63151")
-        self.assertEqual([(x["id"], x["units"], x["path"]) for x in DEFINITION["datasets"]],
-                         [("linux_foreground", 10, "libs/cua-driver-bench/taskpack/v2-taskset.json")])
+        # one dataset of both conditions and the two conditions as its own task sets; the foreground first, a run's
+        # when it names none
+        self.assertEqual([(x["id"], x["units"], x.get("subset_of"), x["path"]) for x in DEFINITION["datasets"]],
+                         [("linux_foreground", 10, "linux", "libs/cua-driver-bench/taskpack/v2-taskset.json"),
+                          ("linux_background", 8, "linux", "libs/cua-driver-bench/taskpack/v2-taskset.json"),
+                          ("linux", 18, None, "libs/cua-driver-bench/taskpack/v2-taskset.json")])
+        self.assertEqual(len({x["sha256"] for x in DEFINITION["datasets"]}), 1)
+        self.assertEqual(list(driver.CONDITIONS), [x["id"] for x in DEFINITION["datasets"]])
+        self.assertEqual(DEFINITION["limits"]["turn_seconds"], driver.AGENT_SECONDS)     # what the builder shows
         drv = DEFINITION["driver"]
         self.assertTrue(drv["participant"] and drv["unit_end"] and drv["describe"] and drv["task_given"])
         self.assertNotIn("install", drv)                             # the standard library and the nullius package
@@ -371,9 +398,16 @@ class Declarations(unittest.TestCase):
         self.assertIn("cua-driver-bench", {x.key for x in cat.listed_benchmarks})
         said = " ".join(LISTING["good_to_know"] + LISTING["limitations"] + LISTING["upstream_limitations"])
         for words in ("any agent that holds the computer port's proof", "published comparison",
-                      "cannot enforce", "FSL-1.1-MIT", "Nothing of the bench is copied"):
+                      "cannot enforce", "FSL-1.1-MIT", "Nothing of the bench is copied",
+                      "simulated user's window stays in front", "The background's pass is the bench's full one",
+                      "adds passes of two different measures", "passes no background task"):
             self.assertIn(words, said)
-        self.assertEqual(LISTING["datasets"][0]["tasks"], 10)
+        self.assertNotIn("not offered yet", said)
+        self.assertEqual(LISTING["datasets"][0]["tasks"], 18)
+        # the pages read each trial's checks, and in the background its measures, by name from the driver's file
+        self.assertEqual(b.report["file"], os.path.join("verifier", "report.json"))
+        self.assertEqual((b.report["gained"], b.report["words"]["gained"]), ({"pass": ["passed"], "fail": ["failed"]}, "Checks"))
+        self.assertNotIn("held", b.report)                               # no tests that a change could break
 
     def test_the_settings_name_where_the_bench_states_its_rules(self):
         rows = {(r["entry"], r["setting"]): r for r in SETTINGS}
@@ -458,17 +492,37 @@ class Driver(unittest.TestCase):
         with self.assertRaises(ValueError):
             driver.units("linux_elsewhere")
 
+    def test_the_eighteen_units_in_pairs_and_the_two_lists_cut_from_them(self):
+        self.assertEqual(driver.units("linux_background"), {"units": BACKGROUND})
+        got = driver.units("linux")["units"]
+        self.assertEqual(got, BOTH)
+        self.assertEqual(got[:5], ["foreground__CDB-G02", "background__CDB-G02", "foreground__CDB-G03",
+                                   "background__CDB-G03", "foreground__CDB-G04"])
+        self.assertEqual(got[8:12], ["foreground__MB-10", "foreground__MB-11", "foreground__IR-01", "background__IR-01"])
+        declared = {x["id"]: x["units"] for x in DEFINITION["datasets"]}
+        self.assertEqual((len(got), len(BACKGROUND)), (declared["linux"], declared["linux_background"]))
+        self.assertEqual(set(UNITS) | set(BACKGROUND), set(got))       # each list inside the whole, nothing more
+        self.assertEqual([u for u in got if u.startswith("background__")], BACKGROUND)
+        said = driver.describe("linux")["units"]
+        self.assertEqual(list(said), BOTH)
+        fg, bg = said["foreground__IR-02"], said["background__IR-02"]
+        self.assertEqual((fg["title"], fg["text"]), (bg["title"], bg["text"]))         # one task, two conditions
+        self.assertEqual((fg["categories"], bg["categories"]), ({"category": "interruptions", "condition": "foreground"},
+                                                                 {"category": "interruptions", "condition": "background"}))
+
     def test_describe_reads_the_task_list_alone(self):
         with mock.patch.object(driver, "_DESKTOP", None), mock.patch.dict(os.environ, {"NULLIUS_UPSTREAM": "/nowhere"}):
             got = driver.describe("linux_foreground")["units"]
             self.assertIsNone(driver._DESKTOP)
         self.assertEqual(list(got), UNITS)
         self.assertEqual(got["foreground__CDB-G02"], {"title": "Task 1 of the list", "text": "Task 1 of the list. "
-                                                      "Applications: App 1; A second app.", "categories": {"category": "multi_app"}})
-        self.assertEqual(got["foreground__IR-04"]["categories"], {"category": "interruptions"})
+                                                      "Applications: App 1; A second app.",
+                                                      "categories": {"category": "multi_app", "condition": "foreground"}})
+        self.assertEqual(got["foreground__IR-04"]["categories"], {"category": "interruptions", "condition": "foreground"})
 
     def test_a_unit_the_task_list_does_not_hold_is_refused_before_any_desktop(self):
-        for unit in ("background__MB-10", "foreground__XX-99", "MB-09", "foreground__../MB-09"):
+        for unit in ("background__MB-10", "background__MB-11", "foreground__XX-99", "MB-09", "foreground__../MB-09",
+                     "sideways__MB-09"):
             with self.subTest(unit=unit), self.assertRaises(ValueError):
                 driver.setup(unit, self.workspace(), attempt=1, participant="agent")
         self.assertEqual((self.stand.images, self.stand.made), ([], []))
@@ -612,6 +666,94 @@ class Driver(unittest.TestCase):
         d = got["detail"]
         self.assertEqual((d["checker_passed"], d["violations"]), (True, [front]))
         self.assertEqual(d["why"], "the guard saw front: a terminal")
+
+    def test_the_foreground_keeps_its_pass_and_its_detail(self):
+        # the row's own pass (the check and no violation), whatever its block of measures says; no background field
+        for checker, completion in ((True, None), (False, True)):
+            with self.subTest(checker=checker):
+                self.stand.rows = lambda task, i, c: dict(row(task, i, c, checker=checker),
+                                                          a22=dict(row(task, i, c)["a22"], background_completion=completion))
+                ws, _, got = self.end_by([("done", {})])
+                self.assertEqual(got["passed"], checker)
+                self.assertEqual(set(got["detail"]) - {"why"}, {
+                    "condition", "task", "run_index", "seed", "score", "checks", "checker_passed", "violations",
+                    "criteria", "unmeasured", "measured", "a15", "success_regardless_of_focus", "timed_out", "image",
+                    "steps", "steps_limit", "ended", "kept"})
+                self.assertEqual(got["detail"]["criteria"], row("MB-09", 0)["a22"]["criteria"])     # as the row has it
+                with open(self.verifier(ws, "report.json")) as f:
+                    said = json.load(f)
+                self.assertEqual((said["passed"], said["failed"]), (["first", "second"] if checker else ["second"],
+                                                                     [] if checker else ["first"]))
+
+    # -- the background ---------------------------------------------------------------------------------------------
+    def background(self, rows, calls=(("done", {}),), **kw):
+        """One trial of background__IR-02 whose launcher writes ``rows``' row: its verdict and what the pages read."""
+        self.stand.rows = rows
+        ws, s = self.unit("background__IR-02", **kw)
+        if "mcp" in s:
+            c = Client(s["mcp"][0]["args"][1])
+            for tool, args in calls:
+                c.call(tool, args)
+            c.close()
+        got = driver.score("background__IR-02", ws, [], "")
+        with open(self.verifier(ws, "report.json")) as f:
+            return got, json.load(f)
+
+    def test_a_background_trial_runs_the_launcher_in_its_condition_and_passes_as_the_bench_does(self):
+        got, said = self.background(lambda task, i, c: bg_row(task, i, checker=True))
+        self.assertEqual(self.stand.launched, [("IR-02", 0, "background")])
+        self.assertEqual((got["reward"], got["passed"]), (1.0, True))
+        d = got["detail"]
+        self.assertEqual((d["condition"], d["task_passed"], d["user_undisturbed"], d["background_completion"], d["measured"]),
+                         ("background", True, True, True, True))
+        self.assertEqual(list(d["criteria"].items()), [(c, True) for c in CRITERIA])        # the eight, by name
+        self.assertEqual((d["disturbed"], d["samples"], d["success_regardless_of_focus"]), ([], 50, True))
+        self.assertTrue(d["a15"]["background_completion"])                                 # the bench's older block
+        self.assertNotIn("why", d)
+        self.assertEqual((said["condition"], said["seed"], said["score"]), ("background", seed("IR-02", 0), 1.0))
+        self.assertEqual((said["passed"], said["failed"]), (["first", "second"] + [f"measure:{c}" for c in CRITERIA], []))
+
+    def test_each_measure_that_does_not_hold_fails_a_passed_check(self):
+        for m in CRITERIA:
+            with self.subTest(measure=m):
+                got, said = self.background(lambda task, i, c: bg_row(task, i, checker=True, disturbed=[m]))
+                d = got["detail"]
+                self.assertEqual((got["reward"], got["passed"]), (0.0, False))
+                # the task's own success stays, whatever the disturbance
+                self.assertEqual((d["task_passed"], d["checker_passed"], d["success_regardless_of_focus"]), (True, True, True))
+                self.assertEqual((d["disturbed"], d["criteria"][m], d["user_undisturbed"]), ([m], False, False))
+                self.assertEqual(d["why"], f"the simulated user was disturbed: {m}")
+                self.assertEqual(said["failed"], [f"measure:{m}"])
+                self.assertEqual(len(said["passed"]), 2 + 7)
+
+    def test_a_trial_too_short_to_be_measured_fails_as_the_row_has_it(self):
+        got, said = self.background(lambda task, i, c: bg_row(task, i, checker=True, measured=False, samples=3))
+        d = got["detail"]
+        self.assertEqual((got["passed"], d["measured"], d["user_undisturbed"], d["task_passed"]), (False, False, False, True))
+        self.assertEqual(d["criteria"], {c: True for c in CRITERIA})                       # as the row has them
+        self.assertEqual(d["disturbed"], list(CRITERIA))
+        self.assertEqual(d["why"], "the bench did not measure the simulated user's window (3 samples)")
+        self.assertEqual(said["failed"], [f"measure:{c} (not measured)" for c in CRITERIA])
+        got, said = self.background(lambda task, i, c: bg_row(task, i, checker=True, unmeasured=["typing"]))
+        self.assertEqual((got["passed"], got["detail"]["disturbed"], got["detail"]["criteria"]["typing"]), (False, ["typing"], None))
+        self.assertEqual(got["detail"]["why"], "the bench did not take the measure: typing")
+        self.assertEqual(said["failed"], ["measure:typing (not measured)"])
+
+    def test_a_failed_check_or_a_violation_fails_the_background_whatever_its_measures(self):
+        got, said = self.background(lambda task, i, c: bg_row(task, i))
+        self.assertEqual((got["passed"], got["detail"]["user_undisturbed"]), (False, True))
+        self.assertEqual(got["detail"]["why"], "the task's checker did not pass: first")
+        self.assertEqual(said["failed"], ["first"])
+        front = {"t_s": 3.0, "kind": "front", "detail": "a terminal"}
+        got, _ = self.background(lambda task, i, c: bg_row(task, i, checker=True, violations=[front], disturbed=["pointer", "key_focus"]))
+        self.assertEqual((got["passed"], got["detail"]["task_passed"], got["detail"]["disturbed"]), (False, False, ["key_focus", "pointer"]))
+        self.assertEqual(got["detail"]["why"], "the guard saw front: a terminal; the simulated user was disturbed: key_focus, pointer")
+
+    def test_the_null_control_runs_the_background_with_no_server(self):
+        got, said = self.background(lambda task, i, c: bg_row(task, i), participant="control")
+        self.assertEqual(self.stand.launched, [("IR-02", 0, "background")])
+        self.assertEqual((got["reward"], got["detail"]["steps"], got["detail"]["user_undisturbed"]), (0.0, 0, True))
+        self.assertEqual(said["passed"][-8:], [f"measure:{c}" for c in CRITERIA])
 
     def test_the_launchers_end_ends_the_loop_and_the_calls(self):
         guard = {"t_s": 20.0, "kind": "process", "detail": "a terminal", "pid": 4242}
@@ -895,51 +1037,72 @@ class ThroughARun(unittest.TestCase):
     """The entry run by Nullius as a whole: its driver a process of its own over the stand-in module, the scripted
     computer agent that looks, clicks once and then holds its turn, and the agent's time cut short."""
 
-    def test_a_check_passed_when_the_agents_time_ran_out_counts(self):
+    def run_one(self, tmp, the_row, dataset="linux_foreground"):
+        """The first unit of ``dataset`` run by Nullius, the launcher's row ``the_row``: the job's trial as the pages
+        parse it, its record, its verdict, its actions and how often its desktop was removed."""
         from nullius.runs import parse
         from nullius.standard import install
+        entry, desk, up = (os.path.join(tmp, n) for n in ("entry", "desktop", "upstream"))
+        for d in (entry, os.path.join(desk, "stub"), os.path.join(up, "libs", "cua-driver-bench", "taskpack")):
+            os.makedirs(d)
+        with open(os.path.join(desk, "stub", "pyautogui.py"), "w") as f:
+            f.write(STUB)
+        shutil.copyfile(os.path.join(ENTRY, "driver.py"), os.path.join(entry, "driver.py"))
+        with open(os.path.join(entry, "desktop.py"), "w") as f:
+            f.write(MODULE.replace("__ROOT__", repr(desk)).replace("__ROW__", repr(json.dumps(the_row))))
+        data = os.path.join(up, DEFINITION["datasets"][0]["path"])
+        with open(data, "w") as f:
+            json.dump(task_list(), f)
+        spec = os.path.join(up, driver.TASK_SPECS, "CDB-G02")
+        os.makedirs(spec)
+        with open(os.path.join(spec, "task.json"), "w") as f:
+            json.dump({"id": "CDB-G02", "timeout_s": 360, "max_turns": 45}, f)
+        bench = dict(DEFINITION, _here=entry, datasets=[dict(x, sha256=install.sha256_of(data)) for x in DEFINITION["datasets"]],
+                     driver=dict(DEFINITION["driver"], command=[sys.executable, "{here}/driver.py", "{here}/desktop.py"]),
+                     mcp_servers={"computer": dict(DEFINITION["mcp_servers"]["computer"], command=[sys.executable])})
+        other = definitions.get("agent", "fake", os.path.join(FIXTURES, "catalogue"))
+        other = dict(other, _here=FIXTURES, start={"acp": [sys.executable, "{here}/fake_computer_agent.py", "hang"]})
+        with mock.patch.object(install, "HOME", os.path.join(tmp, "install")), \
+                mock.patch.object(install, "upstream_dir", return_value=up), \
+                mock.patch.object(install, "upstream", return_value=up):
+            job = standard_run.run(bench, other, model="m", provider="custom", jobs_root=os.path.join(tmp, "jobs"),
+                                   dataset=dataset, limit=1, concurrency=1, proving=True, unsandboxed=True, retries=0,
+                                   timeouts={"setup": 60, "agent": 3}, bench_options={"desktop_image": "cdb-stand-in"},
+                                   env={"MODEL_API_URL": "http://127.0.0.1:9/v1"}, say=lambda _: None)
+        trial = parse.parse_job(job).trials[0]
+        folder = os.path.join(job, trial.trial_name)
+        with open(os.path.join(folder, "result.json")) as f:
+            record = json.load(f)
+        with open(os.path.join(folder, "verifier", "computer-actions.jsonl")) as f:
+            actions = [json.loads(line) for line in f]
+        with open(os.path.join(folder, "verifier", "score.json")) as f:
+            verdict = json.load(f)
+        with open(os.path.join(desk, "removed")) as f:
+            removed = f.read()
+        return trial, record, verdict, actions, removed
+
+    def test_a_check_passed_when_the_agents_time_ran_out_counts(self):
         with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as tmp:
-            entry, desk, up = (os.path.join(tmp, n) for n in ("entry", "desktop", "upstream"))
-            for d in (entry, os.path.join(desk, "stub"), os.path.join(up, "libs", "cua-driver-bench", "taskpack")):
-                os.makedirs(d)
-            with open(os.path.join(desk, "stub", "pyautogui.py"), "w") as f:
-                f.write(STUB)
-            shutil.copyfile(os.path.join(ENTRY, "driver.py"), os.path.join(entry, "driver.py"))
-            with open(os.path.join(entry, "desktop.py"), "w") as f:
-                f.write(MODULE.replace("__ROOT__", repr(desk)).replace("__ROW__", repr(json.dumps(row("CDB-G02", 0, checker=True)))))
-            data = os.path.join(up, DEFINITION["datasets"][0]["path"])
-            with open(data, "w") as f:
-                json.dump(task_list(), f)
-            spec = os.path.join(up, driver.TASK_SPECS, "CDB-G02")
-            os.makedirs(spec)
-            with open(os.path.join(spec, "task.json"), "w") as f:
-                json.dump({"id": "CDB-G02", "timeout_s": 360, "max_turns": 45}, f)
-            bench = dict(DEFINITION, _here=entry, datasets=[dict(DEFINITION["datasets"][0], sha256=install.sha256_of(data))],
-                         driver=dict(DEFINITION["driver"], command=[sys.executable, "{here}/driver.py", "{here}/desktop.py"]),
-                         mcp_servers={"computer": dict(DEFINITION["mcp_servers"]["computer"], command=[sys.executable])})
-            other = definitions.get("agent", "fake", os.path.join(FIXTURES, "catalogue"))
-            other = dict(other, _here=FIXTURES, start={"acp": [sys.executable, "{here}/fake_computer_agent.py", "hang"]})
-            with mock.patch.object(install, "HOME", os.path.join(tmp, "install")), \
-                    mock.patch.object(install, "upstream_dir", return_value=up), \
-                    mock.patch.object(install, "upstream", return_value=up):
-                job = standard_run.run(bench, other, model="m", provider="custom", jobs_root=os.path.join(tmp, "jobs"),
-                                       limit=1, concurrency=1, proving=True, unsandboxed=True, retries=0,
-                                       timeouts={"setup": 60, "agent": 3}, bench_options={"desktop_image": "cdb-stand-in"},
-                                       env={"MODEL_API_URL": "http://127.0.0.1:9/v1"}, say=lambda _: None)
-            trial = parse.parse_job(job).trials[0]
-            with open(os.path.join(job, trial.trial_name, "result.json")) as f:
-                record = json.load(f)
-            with open(os.path.join(job, trial.trial_name, "verifier", "computer-actions.jsonl")) as f:
-                actions = [json.loads(line) for line in f]
-            with open(os.path.join(job, trial.trial_name, "verifier", "score.json")) as f:
-                verdict = json.load(f)
-            with open(os.path.join(desk, "removed")) as f:
-                removed = f.read()
+            trial, record, verdict, actions, removed = self.run_one(tmp, row("CDB-G02", 0, checker=True))
         self.assertEqual(record["standard"].get("cut"), "time")              # the agent's time ended its turn
         self.assertEqual((trial.exception_type, trial.reward), ("", 1.0))   # and the row's pass stands
         self.assertEqual((verdict["reward"], verdict["passed"], verdict["detail"]["checker_passed"]), (1.0, True, True))
         self.assertEqual((verdict["detail"]["steps"], verdict["detail"]["violations"]), (1, []))
         self.assertEqual([a["step"] for a in actions], [1])                 # the click, the agent's one step
+        self.assertEqual(removed, "1\n")
+        # the pages read the task's checks by name, from the entry's report block
+        self.assertEqual((trial.f2p_pass, trial.f2p_fail, trial.vocab.gained), (2, 0, "Checks"))
+
+    def test_a_background_trial_whose_click_moved_the_users_pointer_fails_with_its_check_passed(self):
+        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as tmp:
+            trial, record, verdict, actions, removed = self.run_one(
+                tmp, bg_row("CDB-G02", 0, checker=True, disturbed=["pointer"]), dataset="linux_background")
+        self.assertEqual(record["standard"]["unit"], "background__CDB-G02")
+        self.assertEqual((trial.exception_type, trial.reward, trial.outcome), ("", 0.0, "failed_verification"))
+        d = verdict["detail"]
+        self.assertEqual((d["condition"], d["task_passed"], d["disturbed"]), ("background", True, ["pointer"]))
+        self.assertEqual((trial.f2p_pass, trial.f2p_fail, trial.f2p_failures), (9, 1, ["measure:pointer"]))
+        self.assertEqual((trial.p2p_pass, trial.p2p_fail, trial.is_regression), (0, 0, False))
         self.assertEqual(removed, "1\n")
 
 

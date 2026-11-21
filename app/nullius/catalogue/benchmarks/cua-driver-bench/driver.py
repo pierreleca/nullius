@@ -8,9 +8,10 @@ it, with the shared code of the nullius package (standard/computer_port.py), and
 The desktop's container is ``desktop.py``'s (the definition's command names it first, then the files its image is
 built from); this driver calls it alone, never the engine.
 
-units    - every task of the dataset's condition, in the bench's task list's order (taskpack/v2-taskset.json), as
-           CONDITION__ID: foreground__CDB-G02, ...
-describe - each task's title, its applications and its category, from the task list alone
+units    - every task of the dataset's conditions, in the bench's task list's order (taskpack/v2-taskset.json), as
+           CONDITION__ID: foreground__CDB-G02, ...; the dataset of both conditions gives each task's foreground unit
+           then its background unit, so that a task's two trials stand side by side
+describe - each task's title, its applications, its category and its condition, from the task list alone
 setup    - the desktop's image (the option desktop_image), a container of it, the pin's bench folder copied in, and
            the launcher started on the task with the run index of the attempt (attempt - 1), the condition and the
            gate. Once the gate runs, the prompt: the task's text as the launcher wrote it (brief.md), a sentence that
@@ -20,9 +21,12 @@ setup    - the desktop's image (the option desktop_image), a container of it, th
            agent's time (the task's own, 360 s) and, as progress, the port's progress file inside the trial
 task_given - the agent is about to be given its task: the window before it closes
 score    - the turn's end; the loop ends, the gate's input closes, the launcher disarms its witness window, runs the
-           task's checker and writes the row. The verdict is the row's: passed, with the checker's partial score, its
-           named checks, the guard's violations and the eight measures of the user's window in the detail, beside the
-           steps taken, the budget and what ended the loop. A row with a harness error is raised as the environment's
+           task's checker and writes the row. The verdict is the row's: in the foreground its passed (the check and
+           no violation), in the background its background completion (that, and the eight measures of the
+           simulated user's window measured and held). The detail holds the checker's partial score, its named
+           checks, the guard's violations, the eight measures and whether they were measured, beside the steps taken,
+           the budget and what ended the loop; verifier/report.json names the checks that passed and failed, and in
+           the background the measures, for the pages. A row with a harness error is raised as the environment's
            error, run again by --retries; a row of another trial, or none, as the verifier's. The trial's folder in
            the desktop is copied to verifier/cdb (plain files, 64 MiB at most), and the desktop removed
 end      - an agent's unit has ended, scored or not: its desktop, if it still has one, goes
@@ -57,7 +61,12 @@ DESKTOP_FILE = (sys.argv[1] if len(sys.argv) > 1 and os.path.basename(sys.argv[1
 
 BENCH_DIR = os.path.join("libs", "cua-driver-bench")                          # the bench's folder in the upstream
 TASK_SPECS = os.path.join(BENCH_DIR, "automated-eval", "macos_bench", "probes")  # TASK/task.json: its limits, its site
-CONDITIONS = {"linux_foreground": "foreground"}       # each dataset's condition, as the launcher's --condition names it
+# each dataset's conditions, as the launcher's --condition names them; the first dataset is a run's when it names none
+CONDITIONS = {"linux_foreground": ("foreground",), "linux_background": ("background",),
+              "linux": ("foreground", "background")}
+BACKGROUND = "background"
+# the bench's eight measures of the simulated user's window in the background, in the order its scoring lists them
+MEASURES = ("key_focus", "window_raised", "typing", "pointer", "clipboard", "space", "dialog", "activation")
 TASK_ID = re.compile(r"^[A-Z][A-Z0-9]*-[A-Z0-9-]+$")
 STEPS, PAUSE = "45", "1.0"                            # the options' defaults, as standard.json declares them
 AGENT_SECONDS = 360                                   # the agent's time on a task, when its spec gives none
@@ -70,6 +79,7 @@ CALLS = os.path.join("verifier", "computer-calls.jsonl")        # the port's cal
 PREPARED = os.path.join("verifier", "computer-prepare.jsonl")   # each prepare call's actions
 ACTIONS = os.path.join("verifier", "computer-actions.jsonl")    # each step's actions, as the loop ran them
 EVIDENCE = os.path.join("verifier", "cdb")                      # the launcher's trial folder
+REPORT = os.path.join("verifier", "report.json")                # what the pages read: the checks and measures by name
 HELD = os.path.join(".work", "cdb-held")              # in the job: the run's files sent once (computer_port.Held)
 LAUNCHER = "launcher"                                 # what ended the loop when the launcher ended the trial first
 USE = "Use the tools of the MCP server named computer, given to this session: they show and drive a desktop."
@@ -116,7 +126,7 @@ def manifest():
     return m
 
 
-def _condition(dataset):
+def _conditions(dataset):
     if dataset is None:
         return next(iter(CONDITIONS.values()))
     if dataset not in CONDITIONS:
@@ -124,24 +134,28 @@ def _condition(dataset):
     return CONDITIONS[dataset]
 
 
-def _tasks(condition):
-    return [t for t in manifest()["tasks"] if condition in (t.get("conditions") or [])]
+def _units(dataset):
+    """``(unit id, condition, the task's entry)`` of each unit of the dataset: task by task in the list's order, and
+    within a task its conditions in the dataset's order."""
+    conditions = _conditions(dataset)
+    return [(f"{c}__{t['id']}", c, t) for t in manifest()["tasks"] for c in conditions
+            if c in (t.get("conditions") or [])]
 
 
 def units(dataset=None, **_):
-    condition = _condition(dataset)
-    return {"units": [f"{condition}__{t['id']}" for t in _tasks(condition)]}
+    return {"units": [u for u, _, _ in _units(dataset)]}
 
 
 def describe(dataset=None, **_):
-    """Each task from the task list alone: its title, its applications in the text, its category."""
-    condition, out = _condition(dataset), {}
-    for t in _tasks(condition):
+    """Each unit from the task list alone: its task's title, its applications in the text, its category and the
+    condition it runs under."""
+    out = {}
+    for unit, condition, t in _units(dataset):
         title = " ".join(str(t.get("title") or t["id"]).split())
         apps = [" ".join(str(a).split()) for a in t.get("apps") or [] if str(a).strip()]
         text = title + "." + (" Applications: " + "; ".join(apps) + "." if apps else "")
-        out[f"{condition}__{t['id']}"] = {"title": title, "text": text,
-                                          "categories": {"category": str(t.get("category") or "")}}
+        out[unit] = {"title": title, "text": text,
+                     "categories": {"category": str(t.get("category") or ""), "condition": condition}}
     return {"units": out}
 
 
@@ -149,7 +163,8 @@ def _task(unit):
     """``(condition, task id, the task's entry)`` of a unit id; a unit the task list does not hold is refused."""
     condition, _, task = str(unit).partition("__")
     entry = next((t for t in manifest()["tasks"] if t["id"] == task), None) if TASK_ID.match(task) else None
-    if entry is None or condition not in CONDITIONS.values() or condition not in (entry.get("conditions") or []):
+    known = {c for cs in CONDITIONS.values() for c in cs}
+    if entry is None or condition not in known or condition not in (entry.get("conditions") or []):
         raise ValueError(f"no unit {unit!r}")
     return condition, task, entry
 
@@ -271,7 +286,7 @@ class Unit:
     def start(self):
         desk = desktop()
         os.makedirs(self.path("verifier"), exist_ok=True)
-        for name in (PROGRESS, CALLS, PREPARED, ACTIONS):        # an earlier try's, in the same folder
+        for name in (PROGRESS, CALLS, PREPARED, ACTIONS, REPORT):   # an earlier try's, in the same folder
             if os.path.lexists(self.path(name)):
                 os.remove(self.path(name))
         upstream = os.environ["NULLIUS_UPSTREAM"]
@@ -490,6 +505,59 @@ def _checks(evaluation):
     return {str(n): bool(c.get("passed")) if isinstance(c, dict) else bool(c) for n, c in raw.items()}
 
 
+def _measures(a22, measured):
+    """The eight measures as the row's A22 block gives them, each True (held), False (the user was disturbed) or
+    None (not measured), and the names of those that do not count as held: all eight when the bench could not
+    measure the user's window at all."""
+    criteria = a22.get("criteria") if isinstance(a22.get("criteria"), dict) else {}
+    named = {m: criteria.get(m) for m in MEASURES}
+    if measured is not True:
+        return named, list(MEASURES)
+    return named, [m for m in MEASURES if named[m] is not True]
+
+
+def report(detail, background):
+    """What the pages read of a trial (the ``report`` block of benchmark.json): the task's checks that passed and
+    failed by name and, in the background, the eight measures, each named ``measure:NAME``; one not measured is
+    failed with that said, as the bench fails it."""
+    checks = detail.get("checks") or {}
+    out = {"condition": detail.get("condition"), "seed": detail.get("seed"), "score": detail.get("score"),
+           "passed": [n for n, ok in checks.items() if ok], "failed": [n for n, ok in checks.items() if not ok]}
+    if background:
+        named, failing = detail.get("criteria") or {}, set(detail.get("disturbed") or ())
+        unmeasured = detail.get("measured") is not True
+        for m in MEASURES:
+            if m not in failing:
+                out["passed"].append(f"measure:{m}")
+            else:
+                out["failed"].append(f"measure:{m}" + (" (not measured)" if unmeasured or named.get(m) is None else ""))
+    return out
+
+
+def _why(detail, background):
+    """Why a trial did not pass, in a line: the guard's violations, else the checks that failed; in the background
+    also the measures that did not hold, or that the bench could not measure the user's window."""
+    said = []
+    if detail["violations"]:
+        said.append("the guard saw " + "; ".join(f"{v.get('kind')}: {v.get('detail')}" for v in
+                                                 detail["violations"][:3] if isinstance(v, dict)))
+    if not detail["violations"] and not background or background and detail["checker_passed"] is not True:
+        failed = [n for n, ok in detail["checks"].items() if not ok]
+        said.append("the task's checker did not pass" + (f": {', '.join(failed)}" if failed else ""))
+    if background:
+        if detail["measured"] is not True:
+            said.append("the bench did not measure the simulated user's window"
+                        + (f" ({detail['samples']} samples)" if isinstance(detail.get("samples"), int) else ""))
+        else:
+            disturbed = [m for m in detail["disturbed"] if detail["criteria"].get(m) is False]
+            untaken = [m for m in detail["disturbed"] if detail["criteria"].get(m) is not False]
+            if disturbed:
+                said.append("the simulated user was disturbed: " + ", ".join(disturbed))
+            if untaken:
+                said.append(f"the bench did not take the measure{'s' if len(untaken) > 1 else ''}: " + ", ".join(untaken))
+    return "; ".join(said)
+
+
 def verdict(u, row, kept):
     """The row's verdict and its detail; a harness error is the environment's, a row of another trial the
     verifier's."""
@@ -506,7 +574,10 @@ def verdict(u, row, kept):
     a15 = row.get("a15") if isinstance(row.get("a15"), dict) else {}
     a22 = row.get("a22") if isinstance(row.get("a22"), dict) else {}
     measured = row.get("background") if isinstance(row.get("background"), dict) else {}
-    passed = row.get("passed") is True
+    background = u.condition == BACKGROUND
+    # the foreground's pass is the check and no violation; the background's, the bench's background completion: that,
+    # with the eight measures measured and held
+    passed = (a22.get("background_completion") is True) if background else row.get("passed") is True
     b = u.bridge
     detail = {"condition": u.condition, "task": u.task, "run_index": u.run_index, "seed": row.get("seed"),
               "score": evaluation.get("score"), "checks": _checks(evaluation),
@@ -516,13 +587,14 @@ def verdict(u, row, kept):
               "timed_out": row.get("timed_out"), "image": u.image_id,
               "steps": b.used if b is not None else 0, "steps_limit": b.steps if b is not None else u.steps,
               "ended": b.ended_by if b is not None else "", "kept": kept}
+    if background:
+        disturbance = row.get("disturbance") if isinstance(row.get("disturbance"), dict) else {}
+        detail["criteria"], disturbed = _measures(a22, measured.get("measured"))
+        detail.update(task_passed=row.get("passed") is True, user_undisturbed=a22.get("user_undisturbed"),
+                      background_completion=a22.get("background_completion"), disturbed=disturbed,
+                      samples=disturbance.get("samples"))
     if not passed:
-        if detail["violations"]:
-            detail["why"] = "the guard saw " + "; ".join(f"{v.get('kind')}: {v.get('detail')}" for v in
-                                                         detail["violations"][:3] if isinstance(v, dict))
-        else:
-            failed = [n for n, ok in detail["checks"].items() if not ok]
-            detail["why"] = "the task's checker did not pass" + (f": {', '.join(failed)}" if failed else "")
+        detail["why"] = _why(detail, background)
     return {"reward": 1.0 if passed else 0.0, "passed": passed, "detail": detail}
 
 
@@ -545,7 +617,13 @@ def score(unit, dir, transcript=None, answer=None, **_):
         raise RuntimeError(failed)
     if u.error:
         raise RuntimeError(f"EnvironmentSetupError: the desktop failed during the task: {u.error}")
-    return verdict(u, row, kept)
+    said = verdict(u, row, kept)
+    try:
+        with open(u.path(REPORT), "w", encoding="utf-8") as f:
+            json.dump(report(said["detail"], u.condition == BACKGROUND), f, indent=1)
+    except OSError as e:                                     # what the pages read; it cannot change the verdict
+        sys.stderr.write(f"cua-driver-bench: {unit}: the checks' names were not written: {e}\n")
+    return said
 
 
 def end(unit, dir, **_):

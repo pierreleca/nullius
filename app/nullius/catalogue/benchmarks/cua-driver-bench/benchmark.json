@@ -2,7 +2,7 @@
   "key": "cua-driver-bench",
   "title": "Cua Driver Bench",
   "category": "Computer use",
-  "domain": "Ten desktop tasks on Linux: three across several applications, three of pointer precision, four through an interruption, each checked from the applications' own state.",
+  "domain": "Ten desktop tasks on Linux: three across several applications, three of pointer precision, four through an interruption, each checked from the applications' own state; eight of them also in the background, beside a simulated user.",
   "scoring": "Bench checker and guard",
   "harness": [
     "standard"
@@ -10,6 +10,9 @@
   "origin": "official",
   "good_to_know": [
     "Runs any agent that holds the computer port's proof on the bench's tasks. The bench's own launcher runs each trial unchanged and holds its agent's slot open while the agent acts through the port. Each acting call is one step.",
+    "Each task runs under the bench's two conditions as two tasks: foreground__ID, where the agent may take the focus, and background__ID, where a simulated user's window stays in front and types while the agent works. Eight of the ten tasks have a background condition.",
+    "The background's pass is the bench's full one: the task's check passes, the guard sees no violation, and the bench's eight measures show the user undisturbed (keyboard focus, a window raised over theirs, their typing, the pointer, the clipboard, the workspace, a dialog on their window, their window's activation). A measure the bench could not take fails the trial. The check's own result stays in the trial's detail.",
+    "Which tasks: Foreground (10) and Background (8) are the benchmark's own task sets, each run as a job of its own; a run that names no dataset takes Foreground. All tasks (18) lists each task's foreground then its background, side by side. A job of all 18 adds passes of two different measures into one total, so its rate is neither condition's.",
     "The bench's published comparison runs one fixed agent and model on each computer-use tool. This setup does not repeat that comparison.",
     "The agent is told the task as the launcher writes it, the name of the computer server, and the bench's two rules as its runner states them: operate only the applications the task names and stay off the network, in about 6 minutes and at most 45 turns.",
     "Each task has 6 minutes from the moment it is given, and 45 steps (Steps per task). A task cut by the time, by a run's cap of model calls, or a minute after its loop ended is checked as the desktop then stands; a check that passes at the time limit counts, as in the launcher's own row.",
@@ -24,7 +27,7 @@
     "The desktop's build installs the latest Google Chrome and GnuCash. A later build can differ from the one a score was made with."
   ],
   "limitations": [
-    "Only the foreground condition runs, where the agent may take the focus. The background condition is not offered yet.",
+    "An agent that acts through the port's pointer and keyboard alone disturbs the simulated user at its first pointer or key action (the real pointer moves, or the keys land in the user's window), and so passes no background task. The background suits an agent with a driver that acts on a window behind; the port lets such a driver be sent and started before the task, and its start is measured like any other input.",
     "The port cannot enforce the bench's rule of acting through the screen alone. A step's code runs as the desktop's user, who can read the task's checker and the trial's files, write an application's store and use sudo. The guard still ends a trial on a terminal. The trial's records list every action's code.",
     "The bench's scan of its agent's tool calls for code that runs outside the screen does not run here. It reads a transcript that an agent through the port does not write.",
     "The bench counts its own agent's turns, those with no action included; the port counts acting calls. 45 steps can therefore be more model turns than the bench's 45.",
@@ -39,15 +42,31 @@
     {
       "key": "cua-driver-bench",
       "title": "Cua Driver Bench v2, Linux",
-      "tasks": 10,
+      "tasks": 18,
       "official": "https://github.com/trycua/cua/tree/main/libs/cua-driver-bench",
       "source": "GitHub",
       "registry": "",
       "hub": "",
-      "verifier": "Each task's own checker on the applications' state and event logs, and the launcher's guard, as the trial's row gives them.",
-      "notes": "10 tasks: 3 multi-app, 3 precision, 4 interruptions. FSL-1.1-MIT."
+      "verifier": "Each task's own checker on the applications' state and event logs, the launcher's guard and, in the background, the bench's eight measures of the simulated user's window, as the trial's row gives them.",
+      "notes": "10 tasks (3 multi-app, 3 precision, 4 interruptions) in the foreground and 8 of them in the background: 18 units. FSL-1.1-MIT."
     }
   ],
+  "report": {
+    "file": "verifier/report.json",
+    "succeeded": "reward",
+    "gained": {
+      "pass": [
+        "passed"
+      ],
+      "fail": [
+        "failed"
+      ]
+    },
+    "words": {
+      "gained": "Checks",
+      "gained_term": "The task's named checks and, in the background, the eight measures of the simulated user's window:"
+    }
+  },
   "citation": "@misc{Cua,\n  title = {Cua},\n  author = {{Cua AI}},\n  year = {2025},\n  publisher = {GitHub},\n  journal = {GitHub repository},\n  howpublished = {\\url{https://github.com/trycua/cua}},\n  url = {https://github.com/trycua/cua}\n}",
   "citation_source": "https://github.com/trycua/cua/blob/main/CITATION.cff"
 }

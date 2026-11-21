@@ -2,7 +2,7 @@
 
 # Cua Driver Bench
 
-Ten desktop tasks on Linux: three across several applications, three of pointer precision, four through an interruption, each checked from the applications' own state.
+Ten desktop tasks on Linux: three across several applications, three of pointer precision, four through an interruption, each checked from the applications' own state; eight of them also in the background, beside a simulated user.
 
 <table>
 <tbody>
@@ -10,7 +10,7 @@ Ten desktop tasks on Linux: three across several applications, three of pointer 
 <tr><th>Category</th><td>Computer use</td></tr>
 <tr><th>Origin</th><td><a href="https://github.com/trycua/cua/blob/main/CITATION.cff">Official</a></td></tr>
 <tr><th>Runs on</th><td>Nullius</td></tr>
-<tr><th>Tasks</th><td>10</td></tr>
+<tr><th>Tasks</th><td>18</td></tr>
 <tr><th>Paper</th><td><a href="https://github.com/trycua/cua">Cua</a>, GitHub repository · 2025</td></tr>
 <tr><th>Needs, ports proven</th><td><code>agent.<wbr>computer/<wbr>v1</code></td></tr>
 </tbody></table>
@@ -19,7 +19,7 @@ Ten desktop tasks on Linux: three across several applications, three of pointer 
 
 | Dataset | Key | Tasks | From | Verifier |
 |---|---|---|---|---|
-| Cua Driver Bench v2, Linux | `cua-driver-bench` | 10 | GitHub [trycua/cua](https://github.com/trycua/cua/tree/c6350de75e054811c0042da34fc9087b39d63151) | Each task's own checker on the applications' state and event logs, and the launcher's guard, as the trial's row gives them. |
+| Cua Driver Bench v2, Linux | `cua-driver-bench` | 18 | GitHub [trycua/cua](https://github.com/trycua/cua/tree/c6350de75e054811c0042da34fc9087b39d63151) | Each task's own checker on the applications' state and event logs, the launcher's guard and, in the background, the bench's eight measures of the simulated user's window, as the trial's row gives them. |
 
 ## On the standard
 
@@ -48,6 +48,9 @@ Ten desktop tasks on Linux: three across several applications, three of pointer 
 ## Good to know
 
 - Runs any agent that holds the computer port's proof on the bench's tasks. The bench's own launcher runs each trial unchanged and holds its agent's slot open while the agent acts through the port. Each acting call is one step.
+- Each task runs under the bench's two conditions as two tasks: foreground__ID, where the agent may take the focus, and background__ID, where a simulated user's window stays in front and types while the agent works. Eight of the ten tasks have a background condition.
+- The background's pass is the bench's full one: the task's check passes, the guard sees no violation, and the bench's eight measures show the user undisturbed (keyboard focus, a window raised over theirs, their typing, the pointer, the clipboard, the workspace, a dialog on their window, their window's activation). A measure the bench could not take fails the trial. The check's own result stays in the trial's detail.
+- Which tasks: Foreground (10) and Background (8) are the benchmark's own task sets, each run as a job of its own; a run that names no dataset takes Foreground. All tasks (18) lists each task's foreground then its background, side by side. A job of all 18 adds passes of two different measures into one total, so its rate is neither condition's.
 - The bench's published comparison runs one fixed agent and model on each computer-use tool. This setup does not repeat that comparison.
 - The agent is told the task as the launcher writes it, the name of the computer server, and the bench's two rules as its runner states them: operate only the applications the task names and stay off the network, in about 6 minutes and at most 45 turns.
 - Each task has 6 minutes from the moment it is given, and 45 steps (Steps per task). A task cut by the time, by a run's cap of model calls, or a minute after its loop ended is checked as the desktop then stands; a check that passes at the time limit counts, as in the launcher's own row.
@@ -64,7 +67,7 @@ Ten desktop tasks on Linux: three across several applications, three of pointer 
 
 ## Nullius limitations
 
-- Only the foreground condition runs, where the agent may take the focus. The background condition is not offered yet.
+- An agent that acts through the port's pointer and keyboard alone disturbs the simulated user at its first pointer or key action (the real pointer moves, or the keys land in the user's window), and so passes no background task. The background suits an agent with a driver that acts on a window behind; the port lets such a driver be sent and started before the task, and its start is measured like any other input.
 - The port cannot enforce the bench's rule of acting through the screen alone. A step's code runs as the desktop's user, who can read the task's checker and the trial's files, write an application's store and use sudo. The guard still ends a trial on a terminal. The trial's records list every action's code.
 - The bench's scan of its agent's tool calls for code that runs outside the screen does not run here. It reads a transcript that an agent through the port does not write.
 - The bench counts its own agent's turns, those with no action included; the port counts acting calls. 45 steps can therefore be more model turns than the bench's 45.
