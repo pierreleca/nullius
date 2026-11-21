@@ -808,6 +808,21 @@ class Driver(unittest.TestCase):
         self.assertIn("process: a terminal", got["detail"]["why"])
         self.assertEqual(len(self.stand.input()), 1)
 
+    def test_the_launchers_end_reads_on_the_pages_in_the_form_of_their_other_ends(self):
+        from nullius.runs import parse
+        trial = os.path.join(self.tmp, "parsed", "MB-09__foreground__0001")
+        os.makedirs(os.path.join(trial, "verifier"))
+        with open(os.path.join(trial, "verifier", "score.json"), "w") as f:
+            json.dump({"reward": 0.0, "detail": {"ended": driver.LAUNCHER}}, f)
+        with open(os.path.join(trial, "result.json"), "w") as f:
+            json.dump({"task_name": "cua-driver-bench/MB-09__foreground", "trial_name": "MB-09__foreground__0001",
+                       "source": "cua-driver-bench", "standard": {"benchmark": "cua-driver-bench"},
+                       "verifier_result": {"rewards": {"reward": 0.0}}}, f)
+        t = parse.parse_trial("job", trial)
+        self.assertEqual((t.ended_by, t.ended_label), (driver.LAUNCHER, driver.LAUNCHER))
+        self.assertEqual(driver.LAUNCHER[:1], driver.LAUNCHER[:1].upper())     # as Done, Step limit, Task end read
+        self.assertNotIn(driver.LAUNCHER.lower(), parse.ENDED_LABELS)
+
     def test_the_launchers_end_stops_a_step_between_its_actions(self):
         ws, s = self.unit()
         u = driver.OPEN["MB-09__foreground"]
