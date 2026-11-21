@@ -2,7 +2,7 @@
   "schema": "nullius.benchmark/v1",
   "key": "cua-driver-bench",
   "label": "Cua Driver Bench",
-  "summary": "Each task is a unit: one trial of the bench's own Linux launcher, run whole and unchanged in a container of its XFCE desktop. The launcher resets the task, places its windows, arms its witness window and its guard, then holds its agent's slot open while an agent acts through the computer port, one step for each acting call; at the end it runs the task's own checker and writes the trial's row. The row gives the verdict.",
+  "summary": "Each unit is one task of the bench under one of its two conditions: one trial of the bench's own Linux launcher, run whole and unchanged in a container of its XFCE desktop. The launcher resets the task, places its windows, arms its witness window and its guard (in the background condition that window is a simulated user who types in front), then holds its agent's slot open while an agent acts through the computer port, one step for each acting call; at the end it runs the task's own checker and writes the trial's row. The row gives the verdict.",
   "family": "agent",
   "needs": [
     "agent.computer/v1"
@@ -38,6 +38,7 @@
   },
   "limits": {
     "setup_seconds": 14400,
+    "turn_seconds": 360,
     "score_seconds": 900,
     "attempts": "The bench's run index: attempt k is run index k - 1, from which its launcher draws the trial's seed (the first 8 hex digits of the sha256 of task:index, modulo 10^6), the same for a retried attempt.",
     "scored_cuts": [
@@ -49,11 +50,29 @@
   "datasets": [
     {
       "id": "linux_foreground",
-      "label": "Linux, foreground",
+      "label": "Foreground",
+      "subset_of": "linux",
       "summary": "The bench's ten core tasks (taskpack/v2-taskset.json) in its foreground condition on its Linux desktop: the agent may take the focus.",
       "path": "libs/cua-driver-bench/taskpack/v2-taskset.json",
       "sha256": "32e3a962b282899c20840acd3926f3c284fdb19fa231c86f0c1074b4d6e141c2",
       "units": 10
+    },
+    {
+      "id": "linux_background",
+      "label": "Background",
+      "subset_of": "linux",
+      "summary": "The eight of those tasks the task list gives a background condition: a simulated user's window stays in front and types; a trial passes when the task's check passes, the guard saw no violation and the bench's eight measures show that user undisturbed.",
+      "path": "libs/cua-driver-bench/taskpack/v2-taskset.json",
+      "sha256": "32e3a962b282899c20840acd3926f3c284fdb19fa231c86f0c1074b4d6e141c2",
+      "units": 8
+    },
+    {
+      "id": "linux",
+      "label": "All tasks",
+      "summary": "Each task of the list under each of its conditions, its foreground unit then its background unit: 18 units, two pass rules. Its total adds passes of both.",
+      "path": "libs/cua-driver-bench/taskpack/v2-taskset.json",
+      "sha256": "32e3a962b282899c20840acd3926f3c284fdb19fa231c86f0c1074b4d6e141c2",
+      "units": 18
     }
   ],
   "units": {
@@ -62,7 +81,7 @@
   },
   "score": {
     "kind": "pass",
-    "says": "the bench's own verdict as its launcher writes it in the trial's row: passed when the task's checker passed and the guard saw no violation of acting through the screen alone; the checker's partial score and named checks are in the detail. A check that passes when the agent's time runs out counts, as in the launcher's row"
+    "says": "the bench's own verdict as its launcher writes it in the trial's row. Foreground: passed when the task's checker passed and the guard saw no violation of acting through the screen alone. Background: the bench's background completion, which also needs its eight measures of the simulated user's window measured and held. The checker's partial score, its named checks and the eight measures are in the detail. A check that passes when the agent's time runs out counts, as in the launcher's row"
   },
   "options": {
     "max_steps": {

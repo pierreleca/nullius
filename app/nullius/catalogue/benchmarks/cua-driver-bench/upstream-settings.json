@@ -4,7 +4,7 @@
   "setting": "--task",
   "values": "the ten task ids of the task list",
   "default": "none: required",
-  "nullius": "dataset:linux_foreground"
+  "nullius": "dataset:linux"
  },
  {
   "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/xfce_session.py",
@@ -18,7 +18,7 @@
   "setting": "--condition",
   "values": "foreground, background",
   "default": "none: required",
-  "nullius": "fixed:foreground - the condition of the dataset linux_foreground; the background is not offered yet"
+  "nullius": "dataset:linux"
  },
  {
   "entry": "libs/cua-driver-bench/automated-eval/macos_bench/launch/xfce_session.py",
