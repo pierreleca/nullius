@@ -413,6 +413,11 @@ class Declarations(unittest.TestCase):
         self.assertEqual((b.report["gained"], b.report["words"]["gained"]), ({"pass": ["passed"], "fail": ["failed"]}, "Checks"))
         self.assertEqual(b.report["words"]["gained_term"], "The task's named checks:")
         self.assertNotIn("held", b.report)                               # no tests that a change could break
+        # the Artifacts tab lists the launcher's folder copied into the trial and the loop's two records of actions
+        self.assertEqual([(r["label"], r["path"]) for r in b.records], [
+            ("Launcher's records", "verifier/cdb"), ("Actions run", "verifier/computer-actions.jsonl"),
+            ("Actions before the task", "verifier/computer-prepare.jsonl")])
+        self.assertEqual({r["path"] for r in b.records}, {driver.EVIDENCE, driver.ACTIONS, driver.PREPARED})
 
     def test_the_settings_name_where_the_bench_states_its_rules(self):
         rows = {(r["entry"], r["setting"]): r for r in SETTINGS}

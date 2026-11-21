@@ -68,6 +68,20 @@
       "gained_term": "The task's named checks:"
     }
   },
+  "records": [
+    {
+      "label": "Launcher's records",
+      "path": "verifier/cdb"
+    },
+    {
+      "label": "Actions run",
+      "path": "verifier/computer-actions.jsonl"
+    },
+    {
+      "label": "Actions before the task",
+      "path": "verifier/computer-prepare.jsonl"
+    }
+  ],
   "citation": "@misc{Cua,\n  title = {Cua},\n  author = {{Cua AI}},\n  year = {2025},\n  publisher = {GitHub},\n  journal = {GitHub repository},\n  howpublished = {\\url{https://github.com/trycua/cua}},\n  url = {https://github.com/trycua/cua}\n}",
   "citation_source": "https://github.com/trycua/cua/blob/main/CITATION.cff"
 }
