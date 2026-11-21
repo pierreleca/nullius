@@ -26,13 +26,14 @@ score    - the turn's end; the loop ends, the gate's input closes, the launcher 
            task's checker and writes the row. The verdict is the row's: in the foreground its passed (the check and
            no violation), in the background its background completion (that, and the eight measures of the
            simulated user's window measured and held). The detail, which the trial's page shows under its names,
-           holds why a trial that did not pass failed, first, then the condition, the seed, the checker's partial score and its own pass, its named checks, the
-           guard's violations, in the background the eight measures (held, not held or not measured) and whether
-           the window was measured, beside the steps taken, the budget and what ended the loop; the launcher's whole
-           row stays in verifier/cdb. verifier/report.json names the task's checks that passed and failed, for the
-           pages' count of checks. A row with a harness error is raised as the environment's
-           error, run again by --retries; a row of another trial, or none, as the verifier's. The trial's folder in
-           the desktop is copied to verifier/cdb (plain files, 64 MiB at most), and the desktop removed
+           holds why a trial that did not pass failed, first, then the condition, the seed, the checker's partial
+           score and its own pass, its named checks, the guard's violations, in the background the eight measures
+           (held, not held or not measured) and whether the window was measured, beside the steps taken, the budget
+           and what ended the loop; the launcher's whole row stays in verifier/cdb. verifier/report.json names the
+           task's checks that passed and failed, for the pages' count of checks. A row with a harness error is
+           raised as the environment's error, run again by --retries; a row of another trial, or none, as the
+           verifier's. The trial's folder in the desktop is copied to verifier/cdb (plain files, 64 MiB at most),
+           and the desktop removed
 end      - an agent's unit has ended, scored or not: its desktop, if it still has one, goes
 
 The loop. One step at a time from the port's bridge: each action runs as the desktop's user with pyautogui and time
