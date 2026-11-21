@@ -31,13 +31,14 @@ Ten desktop tasks on Linux: three across several applications, three of pointer 
 
 | Version | Setups as published, whose model | Options |
 |---|---|---|
-| `cua-driver-bench` | none | `desktop_image`, `max_steps`, `pause` |
+| `cua-driver-bench` | none | `desktop_image`, `desktop_memory`, `max_steps`, `pause` |
 
 ## Options
 
 | Option | Values, default in bold | What it sets | Setups |
 |---|---|---|---|
 | `desktop_image` | e.g. `cdb-desktop:1`, default `build` | The image each trial's desktop runs: build, the entry's recipe on the bench's public Linux image, made once on the machine; or the name of an image already on the machine (it is not pulled). | yours |
+| `desktop_memory` | e.g. `4g`, default `8g` | The most memory each trial's desktop may use, given to the container engine as its memory limit, in gigabytes or megabytes. A program left running in the desktop then cannot take the machine's memory. | yours |
 | `max_steps` | e.g. `30`, default `45` | The most acting calls an agent may make on a task: the port's step budget. 45, the bench's limit of 45 turns; the bench counts its own agent's turns, the port counts acting calls. | `agent` |
 | `pause` | e.g. `2.0`, default `1.0` | How long the loop waits after each action before the step's picture is taken, to let the screen settle. 1 second, the pause of the port's conformance kit. | `agent` |
 

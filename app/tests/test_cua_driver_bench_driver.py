@@ -163,9 +163,10 @@ class StandIn:
 
         class Desktop:
             @classmethod
-            def start(cls, reference, *, job, seconds=180):
+            def start(cls, reference, *, job, seconds=180, memory_mb=None):
                 stand.raise_if("start")                     # a failed start leaves nothing
                 d = cls(reference, job)
+                d.memory_mb = memory_mb
                 stand.made.append(d)
                 return d
 
@@ -347,9 +348,11 @@ class Declarations(unittest.TestCase):
     def test_the_options_and_their_defaults(self):
         opts = DEFINITION["options"]
         self.assertEqual({n: o["default"] for n, o in opts.items()}, {"max_steps": driver.STEPS, "pause": driver.PAUSE,
-                                                                     "desktop_image": "build"})
+                                                                     "desktop_image": "build",
+                                                                     "desktop_memory": driver.MEMORY})
         for name, good, bad in (("max_steps", ("1", "45", "999"), ("0", "1000", "default")),
                                 ("pause", ("0", "1.0", "2.5"), ("10", "-1", "1.234")),
+                                ("desktop_memory", ("8g", "1g", "512m", "999g"), ("0g", "8", "8G", "50m", "1000g", "8gb")),
                                 ("desktop_image", ("build", "desktop-copy:7", "cdb-desktop"), ("ghcr.io/trycua/linux:24.04", "Build", ""))):
             for v in good:
                 self.assertIsNone(definitions.option_problem(opts[name], v), (name, v))
@@ -358,8 +361,9 @@ class Declarations(unittest.TestCase):
         self.assertTrue(opts["max_steps"]["limit"])
         self.assertEqual((opts["max_steps"]["setups"], opts["pause"]["setups"]), (["agent"], ["agent"]))
         self.assertNotIn("setups", opts["desktop_image"])            # the null control's desktop too
+        self.assertNotIn("setups", opts["desktop_memory"])
         vals, bad = definitions.bench_options_of(DEFINITION, "linux_foreground", {}, "yours", kind="control")
-        self.assertEqual((vals, bad), ({"desktop_image": "build"}, []))
+        self.assertEqual((vals, bad), ({"desktop_image": "build", "desktop_memory": "8g"}, []))
         self.assertEqual(definitions.option_needs(DEFINITION, {"desktop_image": "build"})["host"], ["docker"])
 
     def test_the_page_says_what_the_entry_runs_and_what_it_cannot_enforce(self):
@@ -405,7 +409,7 @@ class Driver(unittest.TestCase):
             self.spec(t)
         self.enterContext(mock.patch.dict(os.environ, {"NULLIUS_DATASET": self.dataset, "NULLIUS_UPSTREAM": up,
                                                        "NULLIUS_OPTION_PAUSE": "0"}))
-        for name in ("NULLIUS_OPTION_MAX_STEPS", "NULLIUS_OPTION_DESKTOP_IMAGE"):
+        for name in ("NULLIUS_OPTION_MAX_STEPS", "NULLIUS_OPTION_DESKTOP_IMAGE", "NULLIUS_OPTION_DESKTOP_MEMORY"):
             os.environ.pop(name, None)
         self.enterContext(mock.patch.object(driver, "_DESKTOP", self.stand.module))
         self.enterContext(mock.patch.object(driver, "WATCH_SECONDS", 0.02))
@@ -550,14 +554,22 @@ class Driver(unittest.TestCase):
         self.assertEqual((u.bridge.steps, u.bridge.pause), (7, 0.05))
         self.assertEqual(self.stand.images[-1][0], "desktop-copy:7")
         self.assertEqual(self.stand.made[-1].reference, "image-desktop-copy:7")
+        self.assertEqual(self.stand.made[-1].memory_mb, 8192)        # the engine's memory limit, by default
         c = Client(s["mcp"][0]["args"][1])
         self.assertEqual(c.call("info")[1]["steps"], 7)
         c.close()
         driver.score("foreground__MB-09", ws, [], "")
+        os.environ["NULLIUS_OPTION_DESKTOP_MEMORY"] = "512m"
+        ws, _ = self.unit(participant="control")
+        self.assertEqual(self.stand.made[-1].memory_mb, 512)
+        driver.score("foreground__MB-09", ws, [], "")
         os.environ["NULLIUS_OPTION_MAX_STEPS"] = "0"
         with self.assertRaises(ValueError):
             self.unit()
-        self.assertEqual(len(self.stand.made), 1)                    # refused before any desktop
+        os.environ.update(NULLIUS_OPTION_MAX_STEPS="7", NULLIUS_OPTION_DESKTOP_MEMORY="8")
+        with self.assertRaises(ValueError):
+            self.unit(participant="control")
+        self.assertEqual(len(self.stand.made), 2)                    # refused before any desktop
 
     def test_the_pause_follows_each_action_and_each_wait(self):
         os.environ["NULLIUS_OPTION_PAUSE"] = "0.3"
@@ -867,7 +879,7 @@ def end_clients(closing=True):
 
 class Desktop:
     @classmethod
-    def start(cls, reference, *, job=None, seconds=180):
+    def start(cls, reference, *, job=None, seconds=180, memory_mb=None):
         return cls()
 
     def put_bench(self, folder):

@@ -11,10 +11,11 @@ built from); this driver calls it alone, never the engine.
 units    - every task of the dataset's condition, in the bench's task list's order (taskpack/v2-taskset.json), as
            CONDITION__ID: foreground__CDB-G02, ...
 describe - each task's title, its applications and its category, from the task list alone
-setup    - the desktop's image (the option desktop_image), a container of it, the pin's bench folder copied in, and
-           the launcher started on the task with the run index of the attempt (attempt - 1), the condition and the
-           gate. Once the gate runs, the prompt: the task's text as the launcher wrote it (brief.md), a sentence that
-           names the computer server, and the bench's two rules as its runner tells its agent. For an agent (not the
+setup    - the desktop's image (the option desktop_image), a container of it (its memory limit the option
+           desktop_memory), the pin's bench folder copied in, and the launcher started on the task with the run
+           index of the attempt (attempt - 1), the condition and the gate. Once the gate runs, the prompt: the task's
+           text as the launcher wrote it (brief.md), a sentence that names the computer server, and the bench's two
+           rules as its runner tells its agent. For an agent (not the
            null control) also the port's server over the desktop, in this process, its window before the task open,
            and the loop that runs each step; the reply names the server (the port's pipe joined to its socket), the
            agent's time (the task's own, 360 s) and, as progress, the port's progress file inside the trial
@@ -59,7 +60,7 @@ BENCH_DIR = os.path.join("libs", "cua-driver-bench")                          # 
 TASK_SPECS = os.path.join(BENCH_DIR, "automated-eval", "macos_bench", "probes")  # TASK/task.json: its limits, its site
 CONDITIONS = {"linux_foreground": "foreground"}       # each dataset's condition, as the launcher's --condition names it
 TASK_ID = re.compile(r"^[A-Z][A-Z0-9]*-[A-Z0-9-]+$")
-STEPS, PAUSE = "45", "1.0"                            # the options' defaults, as standard.json declares them
+STEPS, PAUSE, MEMORY = "45", "1.0", "8g"              # the options' defaults, as standard.json declares them
 AGENT_SECONDS = 360                                   # the agent's time on a task, when its spec gives none
 PYTHON_SECONDS = 90                                   # one action, or one of the bridge's own calls of the desktop
 LOOP_SECONDS = PYTHON_SECONDS + 40                    # the loop's end, once the turn has ended (and its last pause)
@@ -189,6 +190,13 @@ def _pause():
     return float(v)
 
 
+def _memory_mb():
+    v = _option("desktop_memory", MEMORY)
+    if not re.fullmatch(r"[1-9][0-9]{0,2}g|[1-9][0-9]{2,5}m", v):
+        raise ValueError(f"desktop_memory: {v!r} is not a size such as 8g or 512m")
+    return int(v[:-1]) * (1024 if v.endswith("g") else 1)
+
+
 def job_of(dir):
     """The job a unit's folder belongs to: <job>/<trial>/workspace."""
     return os.path.basename(os.path.dirname(os.path.dirname(os.path.abspath(dir)))) or None
@@ -258,6 +266,7 @@ class Unit:
         self.seconds = _seconds(self.spec, manifest().get("limits"))
         self.steps = _steps() if self.agent else int(STEPS)
         self.pause = _pause() if self.agent else float(PAUSE)
+        self.memory_mb = _memory_mb()
         self.d = self.bridge = self.server = self.loop = self.watch = self.folder = None
         self.image_id, self.brief, self.error = None, "", None
         self.ending, self.stopped = threading.Event(), threading.Event()
@@ -276,7 +285,7 @@ class Unit:
                 os.remove(self.path(name))
         upstream = os.environ["NULLIUS_UPSTREAM"]
         reference, self.image_id = desk.image(_option("desktop_image", "build"), upstream, self.path("verifier"))
-        self.d = desk.Desktop.start(reference, job=self.job)
+        self.d = desk.Desktop.start(reference, job=self.job, memory_mb=self.memory_mb)
         self.d.put_bench(os.path.join(upstream, BENCH_DIR))
         self.brief = self.d.launch(self.task, self.run_index, self.condition)
         if self.agent:

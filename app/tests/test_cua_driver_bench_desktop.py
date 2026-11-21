@@ -22,6 +22,7 @@ import time
 import unittest
 from unittest import mock
 
+from nullius import constraints
 from nullius.standard import container, definitions
 
 ENTRY = os.path.join(os.path.dirname(definitions.KITS), os.pardir, "catalogue", "benchmarks", "cua-driver-bench")
@@ -303,6 +304,15 @@ class Start(unittest.TestCase):
         self.assertEqual(d.env, {k: v for k, v in WM_ENV.items() if k not in ("_", "PWD", "SHLVL")})
         self.assertEqual(d.port_env()["XAUTHORITY"], desktop.PORT_XAUTHORITY)
         self.assertEqual(out.getvalue(), "")                       # the driver's channel is never written
+        self.assertNotIn("--memory", run)
+
+    def test_a_desktop_gets_the_engines_memory_limit_it_is_given(self):
+        e = Engine(self)
+        with e.window_manager(self), mock.patch.object(container, "capped", lambda task=None: constraints.argv({}, task)):
+            desktop.Desktop.start("bench:image", job="job-1", name="cdb-test-1", memory_mb=8192).remove()
+        run = next(c for c in e.calls() if c[0] == "run")
+        self.assertIn(["--memory", "8192m"], [run[i:i + 2] for i in range(len(run) - 1)])
+        self.assertLess(run.index("--memory"), run.index("bench:image"))
 
     def test_a_failed_start_removes_what_it_made(self):
         e = Engine(self)

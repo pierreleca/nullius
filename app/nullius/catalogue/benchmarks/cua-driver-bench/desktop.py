@@ -450,9 +450,10 @@ class Desktop:
 
     @classmethod
     def start(cls, reference: str, *, job: Optional[str] = None, seconds: float = START_SECONDS,
-              name: Optional[str] = None) -> "Desktop":
+              name: Optional[str] = None, memory_mb: Optional[int] = None) -> "Desktop":
         """Start a desktop of ``reference`` and wait until its window manager runs, at most ``seconds``. ``job``
-        labels the container as a unit's are, so a sweep of the job removes it. A failed or interrupted start
+        labels the container as a unit's are, so a sweep of the job removes it; ``memory_mb`` is the engine's
+        memory limit of the container, the machine's own kept where lower. A failed or interrupted start
         removes what it made."""
         end = time.monotonic() + seconds
         d = cls(name or f"nullius-cdb-{secrets.token_hex(4)}")
@@ -462,7 +463,8 @@ class Desktop:
         try:
             try:
                 r = _engine(["run", "-d", "--name", d.name, "--network", "none", "-e", "CUA_RESOLUTION=1920x1080",
-                             *label, "--cidfile", cidfile, *container.capped(), reference],
+                             *label, "--cidfile", cidfile,
+                             *container.capped({"memory_mb": memory_mb} if memory_mb else None), reference],
                             timeout=min(RUN_SECONDS, _left(end)))
             except subprocess.TimeoutExpired:
                 raise DesktopError(f"starting the desktop {d.name}: {container.DOCKER} run did not answer in time")
