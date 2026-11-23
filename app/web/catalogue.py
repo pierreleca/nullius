@@ -214,7 +214,7 @@ def benchmark_tasks(key, dataset):
                            made_at=sets.version_label(bench, entry["version"]) if entry and entry.get("version") else "",
                            broken=broken, nouns=(bench.get("units") or {}).get("nouns", "units"),
                            noun=(bench.get("units") or {}).get("noun", "unit"), csrf=shared._csrf_token(),
-                           writable=settings_web._local_client())
+                           writable=shared._local_client())
 
 
 @app.route("/benchmarks/<key>/tasks/<dataset>/listing")
@@ -260,7 +260,7 @@ def benchmark_tasks_prepare(key, dataset):
     """Make a listing the state function calls light, out of this request: it fetches what the state named and
     starts the light listing command. A listing that needs the driver's full environment is never started here."""
     shared._require_csrf()
-    if not settings_web._local_client():
+    if not shared._local_client():
         abort(403, description="Listings are prepared from a browser on the application host only.")
     bench, _ = _std_dataset(key, dataset, request.args.get("version", ""))
     options = _listing_options()
@@ -313,7 +313,7 @@ def benchmark_tasks_save(key, dataset):
     the name typed is its label, and the name commands take is made from it. A set is never changed: the page of
     one saves another."""
     shared._require_csrf()
-    if not settings_web._local_client():
+    if not shared._local_client():
         abort(403, description="Task sets are saved from a browser on the application host only.")
     body = request.get_json(silent=True) or {}
     bench, _ = _std_dataset(key, dataset, str(body.get("version") or ""))
@@ -335,7 +335,7 @@ def benchmark_tasks_save(key, dataset):
 def _set_guard(key: str, dataset: str) -> str:
     """Every change to a set from its page: the form token and a browser on this machine; the set's name."""
     shared._require_csrf()
-    if not settings_web._local_client():
+    if not shared._local_client():
         abort(403, description="Task sets are changed from a browser on the application host only.")
     _std_dataset(key, dataset)
     return (request.form.get("set") or "").strip()

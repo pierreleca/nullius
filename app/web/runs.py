@@ -686,7 +686,7 @@ def _set_link(j) -> dict:
 def _set_saving(j) -> bool:
     """Whether the job page offers "Save as task set": a standard job of a benchmark in the catalogue, whose trials
     record their units, on a browser of this machine."""
-    if not j.standard or not settings_web._local_client():
+    if not j.standard or not shared._local_client():
         return False
     try:
         with open(os.path.join(j.dir, "config.json"), encoding="utf-8") as f:
@@ -701,7 +701,7 @@ def job_task_set(job_id):
     """Keep the units of the trials the outcome filter shows (every trial without one) as a new task set: each by
     the full unit id its trial records (standard/runner/sets.py, ``from_job``); then the set's page."""
     shared._require_csrf()
-    if not settings_web._local_client():
+    if not shared._local_client():
         abort(403, description="Task sets are saved from a browser on the application host only.")
     j = shared._find_job(shared._jobs_for_request(), job_id)
     if j is None or not _set_saving(j):

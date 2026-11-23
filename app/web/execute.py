@@ -246,7 +246,7 @@ def job_rerun(job_id):
     Refused, and nothing started, for a job the page offers no button for (``again_offer``), a trial the job
     does not hold, a host that no longer holds the job, or a provider whose key is not set here."""
     shared._require_csrf()
-    if not settings_web._local_client():
+    if not shared._local_client():
         abort(403, description="Runs are started from a browser on the application host only.")
     j = shared._find_job(shared._jobs_for_request(), job_id)
     if j is None:
@@ -310,7 +310,7 @@ def job_cap_change(job_id):
     handed to that part as ``rerun --max-usd``. Refused where the page offers no next part (``again_offer``: a part
     running among them), and for a cap at or under what the job has spent."""
     shared._require_csrf()
-    if not settings_web._local_client():
+    if not shared._local_client():
         abort(403, description="Runs are started from a browser on the application host only.")
     j = shared._find_job(shared._jobs_for_request(), job_id)
     if j is None:
