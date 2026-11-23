@@ -16,9 +16,7 @@ job id printed here is the one ``/job/<id>`` opens, and the outcomes are the
 ones its table shows — from the files on disk, never from a workspace cache.
 With a trial name, ``show`` reads that trial the way the trial page does —
 the outcome and checks, the usage and cost, the exception, and the steps of
-``agent/trajectory.json`` through ``traces.trajectory`` (already redacted on
-the way in; the calls' arguments and observations, which can be the whole
-patch, are left to the page's conversation browser). With ``--call N
+``agent/trajectory.json`` through ``traces.trajectory``. With ``--call N
 --request`` it prints the request the trial's agent sent in its call N, put
 back together from the relay's store of its exchanges
 (``standard/exchanges.py``) as the bytes sent, unredacted, and says on stderr
@@ -43,8 +41,7 @@ from nullius.runs import parse
 from nullius.standard import exchanges
 from nullius.traces import calls as by_call, trajectory
 
-# Exit codes — docs/cli.md is the contract; the other two CLIs use the same
-# numbers. 1 is left to Python itself: an uncaught exception is a bug, and
+# Exit codes — docs/cli.md is the contract. 1 is left to Python itself: an uncaught exception is a bug, and
 # its traceback is the report.
 EXIT_OK = 0
 EXIT_NOT_FOUND = 3
@@ -391,7 +388,7 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":  # pragma: no cover - entry point
-    # Run as `PYTHONPATH=app python3 -m nullius.runs.cli`. A module, not a
+    # A module, not a
     # script, like its two siblings: without this guard `-m` imports the
     # module, runs nothing and exits 0, which reads exactly like success.
     raise SystemExit(main())

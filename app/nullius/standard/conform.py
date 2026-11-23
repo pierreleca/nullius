@@ -8,7 +8,7 @@ passes. Its **skills** (``definitions.skills_of``: the harder uses of the same
 contract a kit may name) are recorded one by one, shown or not, and never take
 the port away - a benchmark that relies on one says so in its
 ``needs_skills``. A kit that names no skill is every check basic: it passes
-when every check has reward 1, as before skills existed.
+when every check has reward 1.
 
 ``repeat``: each check run that many times, for confidence; a check, basic or
 a skill, passes when it passes in a majority of its runs, and the record
@@ -17,10 +17,10 @@ counts them (``2/3``). One run each by default.
 The record keeps the date, the score, the model it passed on, the version of
 the agent, the version of the kit (``kit_version``: a kit grows stronger under
 the same port, and a proof says which one it passed), the skills it showed or
-missed, and the job that shows it - a claim anyone can open and read.
+missed, and the job that shows it.
 
 A port whose kit fails is taken out of ``offers`` when the definition is
-written back: a claim that stopped being true does not stay.
+written back.
 """
 from __future__ import annotations
 
@@ -148,7 +148,7 @@ def check(other: dict, *, model: str, provider: str, which: Optional[List[str]] 
             refused[p] = str(e)
             continue
         o = outcome(kit, _runs(parse.parse_job(job_dir)), repeat)
-        got[p] = {"passed": o["passed"], "ok": o["ok"], "on": time.strftime("%Y-%m-%d"), "model": model, "provider": provider,
+        got[p] = {"passed": o["passed"], "ok": o["ok"], "model": model, "provider": provider,
                   "version": str((other.get("upstream") or {}).get("version") or ""),
                   "kit_version": definitions.kit_version(kit), "backend": backend, "job": os.path.basename(job_dir),
                   **{k: o[k] for k in ("repeat", "checks", "skills") if k in o}}
@@ -167,7 +167,7 @@ def check(other: dict, *, model: str, provider: str, which: Optional[List[str]] 
             # was refused here, is not this run's to take back
             proven = {p: r for p, r in (cur.get("proven") or {}).items()
                       if p in offers or p in refused or not ports.known(p)}
-            proven.update({p: {k: v for k, v in r.items() if k != "ok"} for p, r in got.items() if r["ok"]})
+            proven.update({p: {k: v for k, v in r.items() if k not in ("ok", "job")} for p, r in got.items() if r["ok"]})
             cur["offers"] = [p for p in ports.PORTS if p in offers]
             cur["proven"] = proven
         definitions.save(other, change)

@@ -63,10 +63,10 @@ The rules and the record: [`nullius standard rerun`](cli/rerun.md).
 
 ## Compare runs
 
-1. Open **Compare**: pick a workspace and a run in each column, **Add a run** for another, then choose **Matched tasks**. The first column is the baseline; every other number shows its difference from it.
+1. Open **Compare**, choose the runs, then **Matched tasks**. The first column is the baseline; every other number shows its difference from it.
 
 2. Choose **Task by task**, start with the tasks whose outcomes differ and open the attempts side by side.
-3. Choose **Chart** to draw the summary rows: each chart card picks its style (bars, dots or a scatter) and its metrics, and **Add chart** adds one.
+3. Choose **Chart** to draw the summary rows.
 4. Check dataset, model, agent and setup before attributing a change.
 
 !!! warning "Different task sets move the aggregate"
@@ -79,13 +79,13 @@ The rules and the record: [`nullius standard rerun`](cli/rerun.md).
 3. Read disagreements with the recorded outcome in **Reconcile**.
 
 !!! warning "A judgement is a paid model call"
-    Start with one trial; a batch button names how many calls it makes.
+    Start with one trial.
 
 Questions, records and cost: [Judgement](judgement.md).
 
 ## Look up a metric
 
-[Metric field guide](field-guide.md), under **Reference → Metrics** on the documentation website.
+[Metric field guide](field-guide.md).
 
 <div class="grid cards" markdown>
 

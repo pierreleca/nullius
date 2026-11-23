@@ -1,8 +1,6 @@
 """Fidelity: driving an agent over ACP sends the model what its own CLI sends.
 
-An agent reached through an adapter is not obviously the agent as its users
-run it: the adapter may choose a setting the CLI leaves to the provider, or
-leave out a tool. This puts the two side by side. The agent's definition names
+The agent's definition names
 its own non-interactive command (``fidelity.command``, a template carrying
 ``{prompt}``); the same units - the workspace kit's - are run both ways, each
 unit at the same paths every time, its calls on a route of its own on a relay
@@ -198,8 +196,8 @@ def check(agent: dict, *, model: str, provider: str, jobs_root: str = "jobs", pa
         json.dump(result, f, indent=2)
     say(table(result))
     if write:
-        rec = {"verdict": result["verdict"], "on": time.strftime("%Y-%m-%d"), "model": model, "provider": provider,
-               "version": result["version"], "job": os.path.basename(r.job_dir), "passes": passes,
+        rec = {"verdict": result["verdict"], "model": model, "provider": provider,
+               "version": result["version"], "passes": passes,
                "differs": result["differing"]}
         changed = {k: v for k, v in r.options.items() if v != ((agent.get("options") or {}).get(k) or {}).get("default")}
         if changed:
