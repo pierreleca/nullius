@@ -71,7 +71,7 @@ class MeetingPoints(unittest.TestCase):
                    "return ['yours', 'setup', 'shared'].map(s => benchOptions(r, b, s)).join('') + benchLimits(r, b);"
                    "})));")
         result = subprocess.run(["node", "-e", program], stdin=subprocess.DEVNULL, capture_output=True, text=True, check=True)
-        for page, default in zip(json.loads(result.stdout), ("15", "default", "default")):
+        for page, default in zip(json.loads(result.stdout), ("15", "100", "default")):
             self.assertEqual(page.count('data-bench-opt-select="max_steps"'), 1)
             field = page.split('data-bench-opt-select="max_steps"', 1)[1].split('>', 1)[0]
             self.assertIn('value=""', field)
