@@ -1,4 +1,4 @@
-"""Task sets (``standard/sets.py``): a named list of a benchmark's units in the
+"""Task sets (``standard/runner/sets.py``): a named list of a benchmark's units in the
 user catalogue, with an id, a label and the name made from it, the version it
 was made at, and no option. The content hash says the same for the same ids in
 any order and changes with an id or the dataset; a set is frozen: nothing adds
@@ -25,7 +25,10 @@ from unittest import mock
 
 from nullius import progress
 from nullius.harbor import feed
-from nullius.standard import cli, definitions, install, job, merge, run, sets, shard
+from nullius.standard import cli
+from nullius.standard.contract import definitions
+from nullius.standard.requirements import install
+from nullius.standard.runner import job, merge, run, sets, shard
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "standard", "catalogue")
 NOP = {"nop": {"source": "nullius", "from": "nothing said"}}

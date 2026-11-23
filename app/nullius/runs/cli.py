@@ -19,7 +19,7 @@ the outcome and checks, the usage and cost, the exception, and the steps of
 ``agent/trajectory.json`` through ``traces.trajectory``. With ``--call N
 --request`` it prints the request the trial's agent sent in its call N, put
 back together from the relay's store of its exchanges
-(``standard/exchanges.py``) as the bytes sent, unredacted, and says on stderr
+(``standard/calls/exchanges.py``) as the bytes sent, unredacted, and says on stderr
 whether their sha256 is the one recorded. With ``--calls`` it prints the
 trial's model calls as the Conversation tab shows them (``traces.calls``):
 what each sent that the call before had not, its answer whole, the steps
@@ -38,7 +38,7 @@ from dataclasses import asdict
 from datetime import datetime
 
 from nullius.runs import parse
-from nullius.standard import exchanges
+from nullius.standard.calls import exchanges
 from nullius.traces import calls as by_call, trajectory
 
 # Exit codes — docs/cli.md is the contract. 1 is left to Python itself: an uncaught exception is a bug, and

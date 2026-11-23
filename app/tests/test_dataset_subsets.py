@@ -7,7 +7,8 @@ from __future__ import annotations
 import copy
 import unittest
 
-from nullius.standard import definitions, recipe
+from nullius.standard.contract import definitions
+from nullius.standard.pages import recipe
 
 
 def clean(d: dict) -> dict:

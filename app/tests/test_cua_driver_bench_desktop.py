@@ -23,7 +23,8 @@ import unittest
 from unittest import mock
 
 from nullius import constraints
-from nullius.standard import container, definitions
+from nullius.standard.backends import container
+from nullius.standard.contract import definitions
 
 ENTRY = os.path.join(os.path.dirname(definitions.KITS), os.pardir, "catalogue", "benchmarks", "cua-driver-bench")
 ENTRY = os.path.normpath(ENTRY)
@@ -979,7 +980,7 @@ class Remove(unittest.TestCase):
         e = Engine(self)
         child = textwrap.dedent(f"""
             import importlib.util, sys
-            from nullius.standard import container
+            from nullius.standard.backends import container
             container.DOCKER, container._context, container.capped = {e.program!r}, lambda: {{}}, lambda task=None: []
             spec = importlib.util.spec_from_file_location("desktop", {os.path.join(ENTRY, "desktop.py")!r})
             desktop = importlib.util.module_from_spec(spec)

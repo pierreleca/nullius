@@ -42,7 +42,7 @@
       {%- macro vattr(y, cls='') %} class="{{ (cls ~ ' std-version')|trim }}"{% if y.version %} data-version="{{ y.version }}"{% endif %}{% if not y.current %} hidden{% endif %}{% endmacro %}
 
       {% if std %}
-      {#- The standard's proofs of it, per dataset (standard/prove.py): its controls as chips, their source in the title, then its units and leak checks; and Prove it, cli prove as a run. -#}
+      {#- The standard's proofs of it, per dataset (standard/proofs/prove.py): its controls as chips, their source in the title, then its units and leak checks; and Prove it, cli prove as a run. -#}
       {% macro proof(rec, failed, expect, short='') -%}
         {%- if rec %}{% set notes = [short, ('over the first ' ~ rec.limit) if rec.limit, ('shard ' ~ rec.shard) if rec.shard]|select|list %}<span class="std-proof std-proof-{{ 'part' if short else 'ok' }}"{% if notes %} title="{{ notes|join(' · ') }}"{% endif %}>✓ {{ rec.passed }}{% if rec.limit %} · first {{ rec.limit }}{% endif %}</span>
         {%- elif failed and failed.value is defined %}{% set e = (failed.expect or expect or {'at_least': 1}) %}{% set k = e|list|first %}<span class="std-proof std-proof-no" title="not proven: {{ ([failed.passed] + (failed.problems or []))|select|join(' · ') }}">✕ {{ failed.value }} {{ '>' if k == 'at_most' else '<' }} {{ e[k] }}</span>
@@ -208,7 +208,7 @@
 
       {% if std %}
       {#- The benchmark's own task sets, its lists cut from another (subset_of), as the builder draws them; then the user's
-          task sets of it (standard/sets.py), each with the version it was made at; and each dataset's tasks to choose from. -#}
+          task sets of it (standard/runner/sets.py), each with the version it was made at; and each dataset's tasks to choose from. -#}
       {% set cuts = std.datasets|selectattr('subset_of')|list %}{% set wholes = std.datasets|rejectattr('subset_of')|list %}
       <section class="bench-section" id="task-sets" aria-labelledby="task-sets-title">
         <div class="bench-section-head"><h2 id="task-sets-title">Task sets{% if task_sets or cuts %} <span class="bench-n">{{ task_sets|length + cuts|length }}</span>{% endif %}</h2>

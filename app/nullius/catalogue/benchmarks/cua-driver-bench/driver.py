@@ -4,7 +4,7 @@ An agent benchmark on agent.computer/v1. Everything that sets a task up, guards 
 code at the tested commit ($NULLIUS_UPSTREAM): its Linux launcher (automated-eval/macos_bench/launch/xfce_session.py),
 run whole and unchanged inside one container of its desktop for each trial. The launcher's agent slot holds a gate, a
 command that keeps the trial open while an agent acts through the computer port; this driver serves the port beside
-it, with the shared code of the nullius package (standard/computer_port.py), and reads the row the launcher writes.
+it, with the shared code of the nullius package (standard/protocols/computer_port.py), and reads the row the launcher writes.
 The desktop's container is ``desktop.py``'s (the definition's command names it first, then the files its image is
 built from); this driver calls it alone, never the engine.
 
@@ -114,7 +114,7 @@ def desktop():
 
 
 def _port():
-    from nullius.standard import computer_port
+    from nullius.standard.protocols import computer_port
     return computer_port
 
 
@@ -710,7 +710,7 @@ HANDLERS = {"units": units, "describe": describe, "setup": setup, "task_given": 
 
 
 def main():
-    from nullius.standard.jsonl import serve
+    from nullius.standard.protocols.jsonl import serve
     atexit.register(close_all)
     serve(HANDLERS)
 

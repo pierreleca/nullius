@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from nullius import migrate, paths, settings
-from nullius.standard import sets
+from nullius.standard.runner import sets
 
 
 class Migration(unittest.TestCase):

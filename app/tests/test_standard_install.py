@@ -10,7 +10,8 @@ import threading
 import unittest
 from unittest import mock
 
-from nullius.standard import install
+from nullius import ondisk
+from nullius.standard.requirements import install
 
 
 class UpstreamTest(unittest.TestCase):
@@ -49,7 +50,7 @@ class UpstreamTest(unittest.TestCase):
 
     def test_a_dataset_is_checked_by_its_digest(self):
         up = install.upstream(self.bench, os.path.join(self.tmp, "home"))
-        right = install.sha256_of(os.path.join(up, "data", "items.json"))
+        right = ondisk.sha256_of(os.path.join(up, "data", "items.json"))
         self.assertTrue(install.dataset(self.bench, {"id": "d", "path": "data/items.json", "sha256": right}, up))
         with self.assertRaisesRegex(install.InstallFailed, "sha256"):
             install.dataset(self.bench, {"id": "d", "path": "data/items.json", "sha256": "0" * 64}, up)
@@ -264,6 +265,24 @@ class WheelsTest(unittest.TestCase):
         wheel = os.path.join(where, install.WHEELS, "model-1.0-py3-none-any.whl")
         self.assertEqual(open(wheel, "rb").read(), self.body)
         self.assertEqual(runs[-1][-2:], ["lib==1.0", wheel])          # one resolution: the wheel's dependencies are pip's
+
+    def test_install_commands_run_last_in_the_install_folder(self):
+        runs = []
+        d = {"key": "a", "_kind": "agent", "install": {"pip": ["lib==1.0"], "commands": [["{install}/.venv/bin/python", "{install}/setup.py"]]}}
+        with mock.patch.object(install, "_run", side_effect=lambda cmd, *a, **k: runs.append(cmd)):
+            where = install.packages(d, self.home)
+        self.assertEqual(runs[-1], [os.path.join(where, ".venv/bin/python"), os.path.join(where, "setup.py")])
+        self.assertIn(["uv", "pip", "install", "--quiet", "--python", os.path.join(where, ".venv", "bin", "python"), "lib==1.0"], runs[:-1])
+        self.assertTrue(os.path.exists(os.path.join(where, install.MARK)))
+
+    def test_a_failed_install_command_leaves_no_marker(self):
+        d = {"key": "a", "_kind": "agent", "install": {"commands": [["{install}/missing"]]}}
+        def run(cmd, *a, **k):
+            raise install.InstallFailed("missing: exit 1")
+        with mock.patch.object(install, "_run", side_effect=run):
+            with self.assertRaises(install.InstallFailed):
+                install.packages(d, self.home)
+        self.assertFalse(os.path.exists(os.path.join(install.packages_dir(d, self.home), install.MARK)))
 
     def test_a_wheel_whose_digest_differs_is_refused_and_not_kept(self):
         with mock.patch.object(install, "_run"):

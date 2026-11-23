@@ -19,14 +19,17 @@ from http.server import ThreadingHTTPServer
 from unittest import mock
 
 from nullius.runs import classify, parse
-from nullius.standard import definitions, install, pace as pacing, relay, run
+from nullius.standard.calls import relay
+from nullius.standard.contract import definitions
+from nullius.standard.requirements import install
+from nullius.standard.runner import pace as pacing, run
 from tests.test_standard_run import CALLING_CHAT_DRIVER, ROOT, Echo
 
 # One unit per case. Each keeps a progress file in its trial as a desktop port does: its steps, and what ended the
 # benchmark's own loop (empty while it runs). The score reads it back as the benchmark's detail; ``turn``: the
 # agent's turn ended first.
 CUT_DRIVER = '''import json, os
-from nullius.standard.jsonl import serve
+from nullius.standard.protocols.jsonl import serve
 CASES = {"stuck": (2, "", "hang"), "busy": (0, "", "loop"), "idle": (0, "", "hang"), "refused": (2, "", "loop"),
          "over": (1, "", "loop"), "ended": (3, "done", "hang"), "quick": (1, "", "model hi")}
 def progress(dir):

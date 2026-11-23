@@ -17,7 +17,8 @@ from unittest.mock import patch
 
 from nullius import workspace
 from nullius.runs import launches, parse
-from nullius.standard import job, merge, prove, rerun, shard
+from nullius.standard.proofs import prove
+from nullius.standard.runner import job, merge, rerun, shard
 
 BENCH = {"key": "fakebench", "_ref": "fakebench", "family": "agent", "needs": ["agent.workspace/v1"],
          "units": {"noun": "task", "nouns": "tasks"}, "score": {"kind": "pass", "says": "the tests pass"}}

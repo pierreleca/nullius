@@ -16,7 +16,8 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
-from nullius.standard import cli as standard_cli, replay, study
+from nullius.standard import cli as standard_cli
+from nullius.standard.runner import replay, study
 from tests.test_standard_replay import APP, KEY, KeylessCase, ReplayCase, Upstream, reply_of, tree
 
 TWO = replay.replace_text("one tool call", "one or two tool calls")     # the second arm's change

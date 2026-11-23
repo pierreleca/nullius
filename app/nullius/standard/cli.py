@@ -27,14 +27,14 @@ An agent runs commands as you on the local backend, which is not a sandbox:
 an agent's run or conformance check there is refused without ``--unsandboxed``.
 ``--backend container`` (``docker`` alias) runs each unit's agent or capability in a container whose
 only way out is the unit's relay, or a public web proxy when its environment
-declares ``network`` (``standard/container.py``), and needs no such yes.
+declares ``network`` (``standard/backends/container.py``), and needs no such yes.
 ``--backend boat`` runs each unit's agent or capability in a boat.dev VM of its
 own, whose only way out is a tunnel to the unit's relay on this machine
-(``standard/boat.py``); its API key is Settings → Sandbox's, or ``BOAT_API_KEY``.
+(``standard/backends/boat.py``); its API key is Settings → Sandbox's, or ``BOAT_API_KEY``.
 A benchmark's control (``nop``, ``oracle``: its ``controls``) runs no agent
 and calls no model - only a judged benchmark's judge - so it asks for neither.
 ``prove`` runs a benchmark's controls and checks its units and that nothing
-leaks, and writes what passed into its ``proven`` (``standard/prove.py``).
+leaks, and writes what passed into its ``proven`` (``standard/proofs/prove.py``).
 
 A benchmark, an agent or a capability is named by its key (its default
 version) or ``key@version``. ``list`` shows every definition - each version - and which
@@ -47,30 +47,30 @@ definition - the port, and each skill of its kit shown or not (``--attempts K``:
 each check K times, held by a majority); ``run`` runs a benchmark into a job under ``--jobs`` (``jobs_standard/``);
 ``fidelity`` drives an agent over
 ACP and through its own command, compares the requests its model was sent, and
-writes the verdict into the definition (``standard/fidelity.py``); ``replay`` sends one
+writes the verdict into the definition (``standard/proofs/fidelity.py``); ``replay`` sends one
 recorded call of a trial again K times under a spending cap, as it was or changed, and
-counts the answers (``standard/replay.py``); ``study`` does it for calls of several trials under named arms of
+counts the answers (``standard/runner/replay.py``); ``study`` does it for calls of several trials under named arms of
 changes, one cap for all, and compares the arms call by call, and ``recount`` reads a kept study or replay
-again by another rule (``standard/study.py``). ``--shard I/N`` runs one
-shard of the dataset's units (``standard/shard.py``: by the unit id's hash, then
+again by another rule (``standard/runner/study.py``). ``--shard I/N`` runs one
+shard of the dataset's units (``standard/runner/shard.py``: by the unit id's hash, then
 ``--limit``), the job recording its shard and its launch (``--launch``); ``--units FILE``
 runs only the units a file lists (``run.units_file``: one id a line), read on
 the machine the command runs on, ``--from-run`` or not; ``merge``
-puts a launch's shard jobs together into one job (``standard/merge.py``); ``rerun`` runs
+puts a launch's shard jobs together into one job (``standard/runner/merge.py``); ``rerun`` runs
 chosen tasks of an ended job again in that job, with its settings, each earlier
-try kept (``standard/rerun.py``). ``run --start-with`` plans the whole and
+try kept (``standard/runner/rerun.py``). ``run --start-with`` plans the whole and
 begins a part of it; ``rerun --next``, ``--set`` or ``--unfinished`` runs the
 rest in the job later. ``set``
 keeps a named list of a benchmark's units in the user catalogue, frozen once
-made (``standard/sets.py``), and ``run --set NAME`` runs one: its dataset taken
+made (``standard/runner/sets.py``), and ``run --set NAME`` runs one: its dataset taken
 from it, the job recording which set ran. ``units`` lists a
-dataset's tasks, searched and counted by category (``standard/units.py``). ``--option``
+dataset's tasks, searched and counted by category (``standard/runner/units.py``). ``--option``
 sets one of the agent's or capability's options (``options`` in its definition);
 the rest keep the vendor's defaults, and the job's config records them all.
 ``--served-by [MODEL=]SLUG[,SLUG...]`` lets only those serving providers answer
 a model on OpenRouter, in that order (``run.served_by``); each call's record
 names the provider that served it. ``--exchanges`` says what each unit's relay
-keeps of its agent's calls (``standard/exchanges.py``): ``whole`` by default,
+keeps of its agent's calls (``standard/calls/exchanges.py``): ``whole`` by default,
 ``text`` without the pictures' bytes, or ``off``; ``--exchanges-max-mb`` bounds
 a unit's.
 A run says each stage before its first unit, and each unit's end, as one
@@ -78,7 +78,7 @@ A run says each stage before its first unit, and each unit's end, as one
 (``nullius/progress.py``).
 
 Keys come from the process environment, then the saved user settings. Nothing is printed of them. With ``--from-run`` (a run
-the builder or a page started, ``standard/recipe.py``) saved settings are not
+the builder or a page started, ``standard/pages/recipe.py``) saved settings are not
 read: the key is the one the run was handed, ``OPENAI_API_KEY``, the
 endpoint ``OPENAI_BASE_URL`` when it names one, and the provider's record
 when the launcher exported one (``run_env``). The licences a
@@ -99,15 +99,19 @@ import sys
 import tempfile
 import time
 
-from nullius.standard.retries import MAX_RETRIES, RETRIES
+from nullius.standard.runner.retries import MAX_RETRIES, RETRIES
 from nullius import constraints as limits, paths, prices as price_list, progress, providers, secrets, settings
 # The legacy module command needs saved path overrides before install.HOME
 # and other runtime defaults are computed.
 if __name__ == "__main__" and "--from-run" not in sys.argv[1:]:
     settings.load(paths.settings_file())
 
-from nullius.standard import boat, conform, definitions, exchanges, fidelity, job, match, merge, pins, ports, prove, rerun, run, sets, shard
-from nullius.standard import units as unit_list
+from nullius.standard.backends import boat
+from nullius.standard.calls import exchanges
+from nullius.standard.contract import definitions, match, ports
+from nullius.standard.proofs import conform, fidelity, pins, prove
+from nullius.standard.runner import job, merge, rerun, run, sets, shard
+from nullius.standard.runner import units as unit_list
 
 ENV_FILE = paths.settings_file()
 
@@ -174,7 +178,7 @@ def older(d: dict, ports_=None) -> list:
 def skills(d: dict, ports_=None) -> list:
     """``agent.tools/v1 skills: decoys ✗ · chain ✓ · retry ✗``, for each port
     ``d`` offers (of ``ports_``, when given) whose kit has skills."""
-    from nullius.standard.recipe import skills_of
+    from nullius.standard.pages.recipe import skills_of
     proven, out = d.get("proven") or {}, []
     for p in d.get("offers") or []:
         got = skills_of(p, proven.get(p)) if ports_ is None or p in ports_ else []
@@ -685,7 +689,7 @@ def boat_credentials(a, bench, other, vals) -> dict:
 
 def _boat_units(a, b, other) -> int:
     """A benchmark whose units boot VMs of their own, on Boat: each unit whole in a Boat VM (``boat_units``)."""
-    from nullius.standard import boat_units
+    from nullius.standard.runner import boat_units
     if a.units or a.shard:
         print("refused: whole-task Boat runs do not accept --units or --shard; choose a dataset and --limit")
         return 2
@@ -1116,7 +1120,7 @@ With --json, stdout is exactly one JSON document; everything else goes to stderr
 
 def _text_arg(v: str) -> str:
     """An option's text, or the text of the file it names after ``@``."""
-    from nullius.standard import replay as rp
+    from nullius.standard.runner import replay as rp
     if not v.startswith("@"):
         return v
     try:
@@ -1128,7 +1132,7 @@ def _text_arg(v: str) -> str:
 
 def replay_changes(a) -> list:
     """The changes a replay's options name, in the order the help gives."""
-    from nullius.standard import replay as rp
+    from nullius.standard.runner import replay as rp
     out = []
     if a.through:
         out.append(rp.through(a.through))
@@ -1169,7 +1173,7 @@ def _cut_line(text: str, n: int = 150) -> str:
 
 
 def _said_replay(doc: dict, dry: bool) -> None:
-    from nullius.standard.ledger import usd
+    from nullius.standard.calls.ledger import usd
     s, r = doc["source"], doc["request"]
     print(("dry run, nothing sent: " if dry else "") + f"call {s['call']} of {s['trial']}, POST {r['path']}, "
           f"{r['bytes']} bytes, sha256 {r['sha256'][:16]}" + (" (the recorded one)" if r["unchanged"] else " (changed)"))
@@ -1193,7 +1197,7 @@ def _said_replay(doc: dict, dry: bool) -> None:
 
 
 def cmd_replay(a):
-    from nullius.standard import replay as rp
+    from nullius.standard.runner import replay as rp
     try:
         if a.list:
             rows = rp.calls(a.job_dir, a.trial, rule=rp.command_rule(a.read) if a.read else None)
@@ -1279,7 +1283,7 @@ With --json, stdout is exactly one JSON document; everything else goes to stderr
 
 
 def _prices_given(given) -> dict:
-    from nullius.standard import replay as rp
+    from nullius.standard.runner import replay as rp
     out = {}
     for p in given or []:
         try:
@@ -1311,7 +1315,7 @@ def _said_table(doc: dict) -> None:
 
 
 def _said_study(doc: dict) -> None:
-    from nullius.standard.ledger import usd
+    from nullius.standard.calls.ledger import usd
     if doc.get("dry_run"):
         s = doc["sends"]
         print(f"dry run, nothing sent: {len(doc['targets'])} targets x {len(doc['arms'])} arms x {doc['times']} sends = {s['all']}; "
@@ -1341,7 +1345,7 @@ def _on_term_interrupt():
 
 
 def cmd_study(a):
-    from nullius.standard import replay as rp, study as sd
+    from nullius.standard.runner import replay as rp, study as sd
     try:
         rule = rp.command_rule(a.read) if a.read else None
         targets = sd.read_targets(a.targets) if a.targets else []
@@ -1384,7 +1388,7 @@ def cmd_study(a):
 
 
 def cmd_recount(a):
-    from nullius.standard import replay as rp, study as sd
+    from nullius.standard.runner import replay as rp, study as sd
     try:
         doc = sd.recount(a.folder, rule=rp.command_rule(a.read) if a.read else None, yes=a.yes, compare=a.compare)
     except rp.NotFound as e:

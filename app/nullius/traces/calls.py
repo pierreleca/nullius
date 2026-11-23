@@ -5,7 +5,7 @@ under it.
 Read from the trial's own records: the relay's call record
 (``agent/calls.jsonl``, else ``.work/relay/<unit>.jsonl``) and, when the run
 kept one, the store of its exchanges (``.work/relay/exchanges``,
-``nullius.standard.exchanges``). Calls are in the order they started. A call
+``nullius.standard.calls.exchanges``). Calls are in the order they started. A call
 is numbered as the cap on a unit's calls counts them: each the provider
 answered; a refused or failed call keeps its place, unnumbered.
 
@@ -44,7 +44,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from nullius.redact import redact
-from nullius.standard import exchanges, relay
+from nullius.standard.calls import exchanges, relay
 from nullius.traces import conversation, trajectory
 
 CALLS = os.path.join("agent", "calls.jsonl")

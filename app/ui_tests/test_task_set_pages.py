@@ -22,7 +22,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from nullius import workspace
-from nullius.standard import definitions, install, job, jsonl, recipe, sets, units
+from nullius.standard.contract import definitions
+from nullius.standard.pages import recipe
+from nullius.standard.protocols import jsonl
+from nullius.standard.requirements import install
+from nullius.standard.runner import job, sets, units
 from tests.test_standard_units_listing import DRIVER, MODE
 from .test_routes import web
 

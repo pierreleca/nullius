@@ -1,4 +1,4 @@
-"""Chosen tasks of an ended job run again in that job (``standard/rerun.py``),
+"""Chosen tasks of an ended job run again in that job (``standard/runner/rerun.py``),
 against the fake benchmark and agent: the new try takes the trial's place,
 the earlier tries stay readable, the job's result is recomputed and each
 re-run recorded. No key, no network: the provider is a local fake endpoint."""
@@ -17,7 +17,11 @@ from unittest import mock
 
 from nullius.harbor import feed
 from nullius.runs import classify, live, parse
-from nullius.standard import acp, definitions, install, job, ledger, merge, pace as pacing, rerun, run
+from nullius.standard.calls import ledger
+from nullius.standard.contract import definitions
+from nullius.standard.protocols import acp
+from nullius.standard.requirements import install
+from nullius.standard.runner import job, merge, pace as pacing, rerun, run
 from tests import test_standard_run as base
 
 ROOT = base.ROOT
@@ -682,7 +686,7 @@ class OwnAgent(unittest.TestCase):
 
 
 # five units, each one model call of 0.00003 USD (3 tokens out at 10 USD a million), each scored a pass
-FIVE_DRIVER = '''from nullius.standard.jsonl import serve
+FIVE_DRIVER = '''from nullius.standard.protocols.jsonl import serve
 serve({"units": lambda dataset: {"units": [f"t{i}" for i in range(5)]}, "setup": lambda unit, dir: {"prompt": "model hi"},
        "score": lambda unit, dir, transcript, answer: {"reward": 1.0, "passed": True, "detail": {}}})
 '''

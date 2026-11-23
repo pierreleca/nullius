@@ -378,10 +378,9 @@
   // Harbor's own mark where Harbor fetches the tasks; a plain icon where no one's mark belongs. Square tiles, so
   // a mark is never read as a second radio button.
   const HARBOR_MARK = '<svg class="nb-radio-mark" aria-hidden="true"><use href="/static/brand/marks.svg#harbor"/></svg>';
-  const iconTile = d => `<span class="nb-radio-mark nb-radio-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="${d}"/></svg></span>`;
+  const iconTile = name => `<span class="nb-radio-mark nb-radio-icon" aria-hidden="true"><svg><use href="#i-${name}"/></svg></span>`;
   const SOURCE_MARK = { hub: HARBOR_MARK, registry: HARBOR_MARK,
-    local: iconTile('M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'),
-    generate: iconTile('M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8 19 13M15 9h.01M17.8 6.2 19 5M3 21l9-9M12.2 6.2 11 5') };
+    local: iconTile('folder'), generate: iconTile('wand') };
   const SOURCE_HINT = { hub: 'Harbor fetches the tasks when the run starts.', registry: 'Harbor fetches the tasks when the run starts.',
     local: 'Task folders already on disk. A run on a host is sent them.', generate: "Built first with the benchmark's own generator, into a folder you name." };
   const segmented = (name, label, segments) => `<div class="nb-seg" role="radiogroup" aria-label="${esc(label)}" data-seg="${name}"><span class="nb-seg-thumb" aria-hidden="true"></span>${segments}</div>`;
@@ -426,7 +425,7 @@
   // an option's key read as words: reasoning_effort -> Reasoning effort
   const words = k => { const t = String(k).replace(/[_-]+/g, ' ').trim(); return t.charAt(0).toUpperCase() + t.slice(1); };
   // A control's proof on a dataset: ✓ with what passed (when, in its title), ✕ with the value the last try
-  // reached against its bound, or not run. Its source (nullius/standard/definitions.py, SOURCES) is in its title.
+  // reached against its bound, or not run. Its source (nullius/standard/contract/definitions.py, SOURCES) is in its title.
   const SOURCE_SAYS = {official: 'from the authors', adapter: 'from Harbor\'s adapter', nullius: 'made by Nullius'};
   const bound = e => { const [k, v] = Object.entries(e || {})[0] || ['at_least', 1]; return [k === 'at_most' ? '>' : '<', v]; };
   // short: a proof that met a bound short of the full mark (prove.short_of) - its tick is not green, its bound on hover
@@ -449,7 +448,7 @@
   const bootsVms = b => Object.values((b || {}).options || {}).some(o => o.step === 'where' && Object.values(o.needs || {}).some(n => n && n.vm));
   const vmMemory = (rec, b) => Math.max(0, ...Object.entries((b || {}).options || {}).filter(([, o]) => o.step === 'where')
     .map(([n, o]) => (((o.needs || {})[(rec.bench_options || {})[n] ?? o.default] || {}).vm || {}).memory_gb || 0));
-  // Boat's sizes as the account offers them (nullius/standard/boat.py, SIZES), each with why it cannot be chosen:
+  // Boat's sizes as the account offers them (nullius/standard/backends/boat.py, SIZES), each with why it cannot be chosen:
   // the account cannot start one, or it is too small to boot the unit's own VM (boat.fits).
   const boatSizes = (rec, b) => { const mem = vmMemory(rec, b);
     return ((schema.standardHere || {}).boatSizes || []).map(z => z.why ? {...z, note: 'Not on this account', why: 'Not on this account: ' + z.why}
@@ -464,7 +463,7 @@
     const backend = rec.backend || 'local';
     const selected = C.standardOthers(rec).filter(o => C.chosenOf(rec).includes(o.key));
     const dockerWhy = list.includes('local') && here.docker ? 'Not on this machine: ' + here.docker : '';
-    // Review's rule (nullius/standard/recipe.py): a setup's image installs what has an install; nothing else reaches its container
+    // Review's rule (nullius/standard/pages/recipe.py): a setup's image installs what has an install; nothing else reaches its container
     const cannot = selected.some(o => o.setup) ? optionNeeds(rec).host.filter(n => (b.host || {})[n] && !b.host[n].install.length) : [];
     const containerWhy = dockerWhy || (cannot.length ? cannot.join(', ') + ' cannot be provided in a container: choose local processes.' : '');
     const agentRun = b && b.family === 'agent' && selected.some(o => !o.control && !o.setup);
@@ -631,7 +630,7 @@
     + (t.meta || t.foot ? `<span class="nb-tile-foot">${t.meta ? `<span>${esc(t.meta)}</span>` : ''}${t.foot || ''}</span>` : '') + '</button>';
   // a machine to run on: this one or a host, its connection state filled in by Test connection
   const icon = name => `<svg class="ic" aria-hidden="true"><use href="#i-${name}"/></svg>`;
-  const machineTile = (attr, v, t, sub, on) => tile({attr, key: v, on, mark: icon(v === 'local' ? 'machine' : 'network'), title: t, tip: sub,
+  const machineTile = (attr, v, t, sub, on) => tile({attr, key: v, on, mark: v === 'local' ? icon('machine') : icon('network'), title: t, tip: sub,
     foot: v !== 'local' ? `<span class="nb-state nb-hoststate" data-host-state="${esc(v)}"></span>` : ''});
   // The grids drawn by the server and run by the card toolkit (tables.js): the Benchmark step's (/new-run/benchmarks,
   // one choice) and the standard's Agent step's for its benchmark (/new-run/agents, from the Agents page's entries).

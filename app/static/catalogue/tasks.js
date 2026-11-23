@@ -1,5 +1,5 @@
 // A dataset's tasks (templates/catalogue/tasks.html): the server gives a page of 100 tasks for a search and category
-// values (web/catalogue.py, standard/units.py); this page keeps the chosen ids alone. The listing is asked for once the
+// values (web/catalogue.py, standard/runner/units.py); this page keeps the chosen ids alone. The listing is asked for once the
 // page has loaded: in the cache, it shows at once; one that can be made lightly is started out of the request and
 // the page asks again until it is ready; one that needs the benchmark's full environment is never started here.
 // The run builder mounts the same list in a dialog (nulliusTasks, data-manual): the tasks of a dataset or of one of

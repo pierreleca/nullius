@@ -12,7 +12,7 @@ import unittest
 from unittest import mock
 
 from nullius.runs import classify, parse
-from nullius.standard import job as std_job, merge, shard
+from nullius.standard.runner import job as std_job, merge, shard
 
 
 def _write_json(path, data):

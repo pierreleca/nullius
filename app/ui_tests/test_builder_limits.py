@@ -104,7 +104,7 @@ class LimitsStep(CompilerCase):
 
     def test_a_click_on_a_card_of_what_the_record_keeps_reaches_the_command_line(self):
         # each card clicked as a person clicks it, through the builder's own handler, and the recipe it leaves compiled
-        from nullius.standard import recipe
+        from nullius.standard.pages import recipe
         edit = ("Object.assign(r,{name:'t',title:'t',datasets:['test'],others:['original'],model_choice:'any',"
                 "provider:'openrouter',model:'vendor/m',limit:1,concurrency:1,where:'local'});")
         got = self.click("gsm8k", edit, ["Nothing", "Text alone", "Pictures and text"])

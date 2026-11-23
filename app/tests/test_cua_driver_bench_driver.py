@@ -24,9 +24,10 @@ import unittest
 from unittest import mock
 
 from nullius.catalogue import catalog
-from nullius.standard import computer_port as port
-from nullius.standard import definitions, payload, retries
-from nullius.standard import run as standard_run
+from nullius.standard.protocols import computer_port as port
+from nullius.standard.contract import definitions
+from nullius.standard.runner import payload, retries
+from nullius.standard.runner import run as standard_run
 
 ENTRY = os.path.join(definitions.CATALOGUE, "benchmarks", "cua-driver-bench")
 
@@ -1230,7 +1231,7 @@ class ThroughARun(unittest.TestCase):
         """The first unit of ``dataset`` run by Nullius, the launcher's row ``the_row``: the job's folder, its trial
         as the pages parse it and the stand-in's folder."""
         from nullius.runs import parse
-        from nullius.standard import install
+        from nullius.standard.requirements import install
         tmp = tempfile.mkdtemp(dir=os.environ.get("TMPDIR"))
         self.addCleanup(shutil.rmtree, tmp, True)
         entry, desk, up = (os.path.join(tmp, n) for n in ("entry", "desktop", "upstream"))

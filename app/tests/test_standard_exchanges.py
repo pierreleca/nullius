@@ -24,7 +24,13 @@ from pathlib import Path
 from unittest import mock
 
 from nullius.runs import cli as runs_cli, parse
-from nullius.standard import cli as standard_cli, container, definitions, exchanges, install, pace as pacing, recipe, relay, replay, run
+from nullius.standard import cli as standard_cli
+from nullius.standard.backends import container
+from nullius.standard.calls import exchanges, relay
+from nullius.standard.contract import definitions
+from nullius.standard.pages import recipe
+from nullius.standard.requirements import install
+from nullius.standard.runner import pace as pacing, replay, run
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "standard", "catalogue")
 APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -807,7 +813,7 @@ class TheSidecar(WithUpstream):
         key, record = os.path.join(self.tmp, "key"), os.path.join(self.tmp, "rec")
         with open(key, "w") as f:
             f.write(KEY)
-        command = [sys.executable, "-m", "nullius.standard.relay", "serve", "--listen", "127.0.0.1:0", "--base", self.base,
+        command = [sys.executable, "-m", "nullius.standard.calls.relay", "serve", "--listen", "127.0.0.1:0", "--base", self.base,
                    "--record", record, "--key-file", key]
         env = dict(os.environ, PYTHONPATH=APP)
         bad = subprocess.run(command + ["--exchanges-max-mb", "0"], cwd=APP, env=env, capture_output=True, text=True, timeout=20)

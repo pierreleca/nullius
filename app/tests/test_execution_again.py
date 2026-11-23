@@ -11,7 +11,9 @@ from pathlib import Path
 from unittest import mock
 
 from nullius import execution, hosts
-from nullius.standard import definitions, recipe, run
+from nullius.standard.contract import definitions
+from nullius.standard.pages import recipe
+from nullius.standard.runner import run
 
 from tests.execution_support import Base, HostBase
 
@@ -82,7 +84,7 @@ class Here(Base):
         spec["controls"] = {"nop": {"source": "nullius", "from": "Empty answer."}}
         (dest / "standard.json").write_text(json.dumps(spec))
         (dest / "driver.py").write_text(
-            'from nullius.standard.jsonl import serve\n'
+            'from nullius.standard.protocols.jsonl import serve\n'
             'serve({"units": lambda dataset: {"units": ["t1", "t 2", "untouched"]}, '
             '"setup": lambda unit, dir: {"prompt": ""}, '
             '"score": lambda **kw: {"reward": 0.0}})\n')

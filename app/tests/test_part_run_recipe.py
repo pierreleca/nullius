@@ -13,7 +13,10 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from nullius.standard import cli, definitions, payload, recipe, rerun, run, sets, units
+from nullius.standard import cli
+from nullius.standard.contract import definitions
+from nullius.standard.pages import recipe
+from nullius.standard.runner import payload, rerun, run, sets, units
 from tests.test_task_set_recipe import NOP, ROOT, Scratch
 
 

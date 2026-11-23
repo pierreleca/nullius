@@ -47,7 +47,7 @@ import threading
 import time
 from typing import Dict, List, Optional, Tuple
 
-from nullius.standard import container
+from nullius.standard.backends import container
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCREEN = (1920, 1080)

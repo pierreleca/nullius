@@ -22,7 +22,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
-from nullius.standard import cli as standard_cli, exchanges, relay, replay
+from nullius.standard import cli as standard_cli
+from nullius.standard.calls import exchanges, relay
+from nullius.standard.runner import replay
 
 APP = Path(__file__).resolve().parents[1]
 KEY = "sk-or-replay-0123456789abcdefXYZ"
@@ -398,7 +400,7 @@ class Changes(ReplayCase):
 
 class Sends(ReplayCase):
     def test_whole_replies_survive_the_exchange_store_limit(self):
-        from nullius.standard import study
+        from nullius.standard.runner import study
         original = exchanges.Store.__init__
         body = dict(reply_of(3), extra="whole-provider-field" + "x" * 600000)
 

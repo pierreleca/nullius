@@ -15,7 +15,11 @@ from pathlib import Path
 from unittest import mock
 
 from nullius import progress
-from nullius.standard import cli, definitions, install, payload, recipe, sets
+from nullius.standard import cli
+from nullius.standard.contract import definitions
+from nullius.standard.pages import recipe
+from nullius.standard.requirements import install
+from nullius.standard.runner import payload, sets
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "standard", "catalogue")
 NOP = {"nop": {"source": "nullius", "from": "nothing said"}}

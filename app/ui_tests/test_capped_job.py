@@ -13,7 +13,8 @@ from unittest.mock import patch
 
 from nullius import workspace
 from nullius.runs import classify
-from nullius.standard import job, ledger
+from nullius.standard.calls import ledger
+from nullius.standard.runner import job
 from ui_tests.builder_support import AGENT as CUSTOM_AGENT, APP, PIN, CompilerCase
 from .test_routes import web
 
@@ -178,7 +179,7 @@ class RunFactsOnTheJobPage(unittest.TestCase):
 
     def test_a_job_that_records_no_version_is_named_by_the_one_its_benchmark_had_before_versions(self):
         # a job written before OSWorld1 had versions ran main (044bc33), not the version a bare key resolves to now
-        from nullius.standard import definitions
+        from nullius.standard.contract import definitions
         from web import runs as runs_web
         earlier = definitions.title(definitions.get("benchmark", "osworld1@044bc33"))
         self.assertEqual(runs_web._identity_names({"benchmark": "osworld1"})["benchmark"], earlier)

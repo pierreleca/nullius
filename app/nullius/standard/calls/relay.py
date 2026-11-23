@@ -1,0 +1,1319 @@
+"""The model endpoint every agent, driver and capability of a run is given.
+
+It listens on 127.0.0.1, holds the real key and adds it on the way out, so
+what it relays for never holds one: their requests carry a placeholder. Each
+unit has a route of its own, ``http://127.0.0.1:<port>/<tag>/v1``, so a call is
+known by the unit that made it without reading its content.
+
+A reply is passed through as it arrives - a streamed one (server-sent events)
+byte for byte - and recorded once it is complete, one line per call in
+``<record_dir>/<tag>.jsonl``: when it started and ended, the model, the status,
+the tokens, and an abridged request and reply. Three API shapes are read,
+Chat Completions, Responses and Anthropic's Messages, streamed or not. :func:`reply_facts` extracts ``served_by``, ``end`` and errors on successful HTTP responses. This leaves the caller's reply unchanged and affects only the cost of failed Responses. The
+cost is the provider's when it says it (OpenRouter's ``usage.cost``), else an
+estimate from ``prices`` when one is given for exactly that model (the
+user's price list, ``nullius.prices``), marked as an estimate. A Responses object answered 200 that failed (its ``end``) with no usage
+costs 0, marked as failed: the provider keeps no generation for it, and a
+key's usage compared with the relay's sum would show one billed after all.
+
+What the relay changes on the way is kept small, so a call through it costs
+what the same call made directly would: the connection to the provider is
+kept open between calls; the caller's headers go on as they came - an agent's session
+and capability headers are the provider's to read - except the credentials,
+which the relay replaces with its own key, and the headers of the hop itself;
+the provider's headers come back the same way (its request id, its rate
+limits). It never answers for the provider: a 429 reaches the caller and the
+record as it was sent, which is what makes rate limits measurable.
+
+Another is a run's cap on a unit's model calls (``max_calls``): the agent's
+own route (the unit's tag alone, never its judge's or its simulated user's)
+counts each call the provider answered, and once the count reaches the cap
+the next call is refused with a 402 the record says ``refused: calls``. A
+call the provider refused (a 429, an error) is not counted, so a rate limit
+never reads as the agent's steps. Calls in flight together may pass it by
+the few that were already sent.
+
+A run may pin, for a model, the serving providers that may answer it
+(``serving``, OpenRouter's routing): the relay then puts
+``provider: {order, allow_fallbacks: false}`` on every request it sends as
+that model, in place of the caller's own, and records both, cleaned of
+credentials. Without a pin a request's body goes on as it did.
+
+A run may also keep each call of an agent's route whole (``exchanges``):
+the request as sent, by part, and the reply as it arrived, beside the call
+record, which then numbers those calls (``n``). It is written before the
+caller has the end of its reply, and a failure to write it never changes
+nor stops that reply.
+
+One answer is the relay's own: a run with a spending cap (``ledger``) books
+each call before it goes out, and a call that does not fit is not sent. Its
+caller gets a 402 that names the relay and the cap, and the record says
+``refused``, so it never reads as the provider's error.
+"""
+from __future__ import annotations
+
+import base64
+import binascii
+import hashlib
+import http.client
+import json
+import os
+import re
+import select
+import socket
+import threading
+import time
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Dict, List, Optional
+
+from nullius.redact import redact
+from nullius.standard.calls import exchanges as exchange_store, ledger as ledgers
+
+PLACEHOLDER_KEY = "nullius-relay"
+_TAG = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+TIMEOUT = 900                       # one call, streamed or not: a long reasoning turn is still one call
+# The headers of one hop, which a proxy never passes on (RFC 9110, 7.6.1).
+_HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "proxy-connection", "te", "trailer",
+        "trailers", "transfer-encoding", "upgrade"}
+# Not passed on from the caller: the hop's, the ones the relay sets itself
+# (the body it may have rewritten has a length of its own; it asks for an
+# uncompressed reply so it can read the reply), and cookies.
+_NOT_SENT = _HOP | {"host", "content-length", "accept-encoding", "cookie", "cookie2"}
+# A credential, whatever the vendor calls it: the relay's key replaces it.
+# The account headers go with them - the relay's key says whose account it is.
+_CREDENTIAL = re.compile(r"authorization|api[-_]?key|auth|token|secret|password|credential|"
+                         r"^openai-organization$|^openai-project$", re.I)
+# Not passed back: the hop's, cookies, and what this server writes itself.
+_NOT_RETURNED = _HOP | {"set-cookie", "set-cookie2", "content-length", "date", "server"}
+# A kept connection the provider closed while it sat idle fails like this on
+# its next use, before any of the reply is read: worth one new connection.
+_STALE = (http.client.RemoteDisconnected, ConnectionResetError, BrokenPipeError, ConnectionAbortedError)
+ANTHROPIC_VERSION = "2023-06-01"
+CONTEXT_ERROR = "ContextWindowExceededError"
+STOP = "stop"
+OVERFLOW = "context window"
+COMPLETION = re.compile(r"^/(?:chat/completions|completions|messages|responses)$")
+_WHOLE = ((b"\x89PNG\r\n\x1a\n", b"IEND\xaeB`\x82", "image/png"), (b"\xff\xd8\xff", b"\xff\xd9", "image/jpeg"),
+          (b"GIF87a", b";", "image/gif"), (b"GIF89a", b";", "image/gif"))
+_CONTEXT = re.compile(r"context[ _-]?(length|window|limit)|prompt is too long|token count .{0,40}exceeds", re.I)
+
+
+def _cut(text, n=4000):
+    if not isinstance(text, str) or n is None or len(text) <= n:
+        return text
+    return text[: n // 4] + f"\n[... {len(text) - n} characters left out ...]\n" + text[-(3 * n // 4):]
+
+
+def _said(status: int, body: bytes) -> str:
+    try:
+        e = json.loads(body).get("error") or {}
+        m = e.get("message") if isinstance(e, dict) else str(e)
+    except Exception:
+        m = body[:200].decode("utf-8", "replace")
+    return f"HTTP {status}: {m or ''}".strip()[:300]
+
+
+def _code(body: bytes) -> Optional[str]:
+    """An error reply's own code (OpenAI's ``code`` or ``type``), None when it gives none."""
+    try:
+        e = json.loads(body).get("error")
+    except Exception:
+        return None
+    if not isinstance(e, dict):
+        return None
+    code = e.get("code") if isinstance(e.get("code"), str) else e.get("type")
+    return code[:80] if isinstance(code, str) and code else None
+
+
+def _retry_after(headers) -> Optional[float]:
+    """Seconds the provider says to wait (``Retry-After``, in seconds or as a date; ``retry-after-ms``), None when unsaid."""
+    got = {n.lower(): v for n, v in headers or ()}
+    try:
+        if "retry-after-ms" in got:
+            return max(0.0, float(got["retry-after-ms"]) / 1000)
+        if "retry-after" in got:
+            v = got["retry-after"].strip()
+            try:
+                return max(0.0, float(v))
+            except ValueError:
+                from email.utils import parsedate_to_datetime
+                return max(0.0, parsedate_to_datetime(v).timestamp() - time.time())
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return None
+
+
+# a provider's words for a model it does not have: no second call finds it
+_NO_MODEL = re.compile(r"\b(not a valid model|invalid model|unknown model|no such model)\b"
+                       r"|\bmodels?\b[^.]{0,80}?\b(does not exist|not exist|not found)\b", re.I)
+
+
+def _usage(u: Optional[dict]) -> Optional[dict]:
+    """Chat Completions', Responses' and Messages' usage, in one shape:
+    ``input`` counts every prompt token, ``cached`` those of them a cache
+    served. ``cache_write`` counts writes separately; ``cache_write_1h`` is
+    their one-hour subset when reported. Anthropic's ``input_tokens`` excludes
+    cache reads and writes, so both are added to input, once. Chat Completions
+    already includes both in ``prompt_tokens``."""
+    if not isinstance(u, dict):
+        return None
+    inp = u.get("prompt_tokens", u.get("input_tokens")) or 0
+    out = u.get("completion_tokens", u.get("output_tokens")) or 0
+    det = u.get("prompt_tokens_details") or u.get("input_tokens_details") or {}
+    rdet = u.get("completion_tokens_details") or u.get("output_tokens_details") or {}
+    cached = (det or {}).get("cached_tokens") or 0
+    written = u.get("cache_creation_input_tokens") or 0
+    if "cache_read_input_tokens" in u or "cache_creation_input_tokens" in u:
+        cached = u.get("cache_read_input_tokens") or 0
+        inp += cached + written
+    else:
+        written = (det or {}).get("cache_write_tokens") or 0
+    got = {"input": inp, "output": out, "cached": cached, "reasoning": (rdet or {}).get("reasoning_tokens") or (rdet or {}).get("thinking_tokens") or 0}
+    if written:
+        got["cache_write"] = written
+        hour = (u.get("cache_creation") or {}).get("ephemeral_1h_input_tokens") or 0
+        if hour:
+            got["cache_write_1h"] = min(hour, written)
+    if isinstance(u.get("cost"), (int, float)):
+        got["cost"] = u["cost"]
+    return got
+
+
+def _text_of_responses(resp: dict, limit: Optional[int] = 2000) -> (str, List[dict]):
+    text, calls = [], []
+    for item in resp.get("output") or []:
+        if item.get("type") == "message":
+            for c in item.get("content") or []:
+                if c.get("type") in ("output_text", "text"):
+                    text.append(c.get("text") or "")
+        elif item.get("type") in ("function_call", "custom_tool_call", "local_shell_call"):
+            calls.append({"name": item.get("name") or item.get("type"),
+                          "arguments": _cut(item.get("arguments") or item.get("input") or json.dumps(item.get("action")), limit)})
+    return "".join(text), calls
+
+
+def _reasoning_of_responses(resp: dict) -> str:
+    """A Responses object's reasoning items: their text, else their summary."""
+    out = []
+    for item in resp.get("output") or []:
+        if isinstance(item, dict) and item.get("type") == "reasoning":
+            said = [c.get("text") or "" for c in item.get("content") or [] if isinstance(c, dict) and c.get("type") == "reasoning_text"]
+            out += said or [c.get("text") or "" for c in item.get("summary") or [] if isinstance(c, dict)]
+    return "".join(out)
+
+
+def _text_of_messages(msg: dict, limit: Optional[int] = 2000) -> (str, List[dict]):
+    text, calls = [], []
+    for c in msg.get("content") or []:
+        if c.get("type") == "text":
+            text.append(c.get("text") or "")
+        elif c.get("type") in ("tool_use", "server_tool_use"):
+            calls.append({"name": c.get("name"), "arguments": _cut(json.dumps(c.get("input")), limit)})
+    return "".join(text), calls
+
+
+def _chat_reasoning(m: dict) -> str:
+    """A chat message's or delta's reasoning: OpenRouter's ``reasoning``, or ``reasoning_content``."""
+    said = m.get("reasoning") if isinstance(m.get("reasoning"), str) else m.get("reasoning_content")
+    return said if isinstance(said, str) else ""
+
+
+def _hollow(path: str, body: bytes) -> Optional[tuple]:
+    """A 200 to a model call that holds no reply: the status it stands for, 429 or 402 when an error it held says so, else
+    502, and its kind alone, since its words can quote the request."""
+    if not COMPLETION.search(path.split("?")[0]):
+        return None
+    try:
+        got = json.loads(body)
+    except ValueError:
+        return 502, "no reply"
+    if not isinstance(got, dict):
+        return 502, "no reply"
+    if read_reply(path, body, False):
+        return None
+    code = got["error"].get("code") if isinstance(got.get("error"), dict) else None
+    code = code if isinstance(code, int) and not isinstance(code, bool) and 400 <= code < 600 else None
+    return ((code if code in (402, 429) else 502), "an error" + (f" {code}" if code else "")) if got.get("error") \
+        else (502, "no reply")
+
+
+def read_reply(path: str, body: bytes, streamed: bool, reasoning: bool = False, whole: bool = False) -> dict:
+    """What a reply said: its text, its tool calls, its usage; with
+    ``reasoning``, also the reasoning text it gave (chat's ``reasoning`` or
+    ``reasoning_content``, Messages' thinking blocks, a Responses reasoning
+    item's text or summary). A tool call's arguments are cut to 2,000
+    characters, as the call record keeps them, unless ``whole``."""
+    got = _read_reply(path, body, streamed, reasoning, None if whole else 2000)
+    if not reasoning:
+        got.pop("reasoning", None)
+    return got
+
+
+def _read_reply(path: str, body: bytes, streamed: bool, reasoning: bool, limit: Optional[int]) -> dict:
+    if not streamed:
+        try:
+            got = json.loads(body)
+        except ValueError:
+            return {}
+        if "choices" in got:
+            m = ((got.get("choices") or [{}])[0].get("message")) or {}
+            calls = [{"name": (c.get("function") or {}).get("name"), "arguments": _cut((c.get("function") or {}).get("arguments"), limit)}
+                     for c in m.get("tool_calls") or []]
+            return {"text": m.get("content"), "tool_calls": calls, "usage": _usage(got.get("usage")), "reasoning": _chat_reasoning(m)}
+        if got.get("type") == "message" and isinstance(got.get("content"), list):
+            text, calls = _text_of_messages(got, limit)
+            return {"text": text, "tool_calls": calls, "usage": _usage(got.get("usage")),
+                    "reasoning": "".join(c.get("thinking") or "" for c in got["content"] if isinstance(c, dict) and c.get("type") == "thinking")}
+        if got.get("object") == "response" or "output" in got:
+            text, calls = _text_of_responses(got, limit)
+            return {"text": text, "tool_calls": calls, "usage": _usage(got.get("usage")), "reasoning": _reasoning_of_responses(got)}
+        if got.get("object") == "list" and path.split("?")[0].endswith("/embeddings"):     # how many inputs, and the usage: never the vectors
+            return {"embeddings": len(got.get("data") or []), "usage": _usage(got.get("usage"))}
+        return {}
+    text, calls, usage, args, thought = [], {}, None, {}, []
+    told = None                                  # Messages: the usage of message_start, then message_delta's on it
+    for line in body.decode("utf-8", "replace").splitlines():
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if not data or data == "[DONE]":
+            continue
+        try:
+            ev = json.loads(data)
+        except ValueError:
+            continue
+        kind = ev.get("type")
+        if kind == "message_start":
+            told = dict(((ev.get("message") or {}).get("usage")) or {})
+            continue
+        if kind == "message_delta":
+            told = {**(told or {}), **{k: v for k, v in (ev.get("usage") or {}).items() if v is not None}}
+            continue
+        if kind == "content_block_start":
+            b, i = ev.get("content_block") or {}, ev.get("index", 0)
+            if b.get("type") in ("tool_use", "server_tool_use"):
+                calls[i], args[i] = b.get("name"), ""
+            elif b.get("text"):
+                text.append(b["text"])
+            elif b.get("type") == "thinking" and isinstance(b.get("thinking"), str):
+                thought.append(b["thinking"])
+            continue
+        if kind == "content_block_delta":
+            d, i = ev.get("delta") or {}, ev.get("index", 0)
+            if d.get("type") == "text_delta":
+                text.append(d.get("text") or "")
+            elif d.get("type") == "input_json_delta":
+                args[i] = args.get(i, "") + (d.get("partial_json") or "")
+            elif d.get("type") == "thinking_delta":
+                thought.append(d.get("thinking") or "")
+            continue
+        if kind in ("response.completed", "response.done", "response.incomplete", "response.failed"):
+            t, c = _text_of_responses(ev.get("response") or {}, limit)
+            return {"text": t, "tool_calls": c, "usage": _usage((ev.get("response") or {}).get("usage")),
+                    "reasoning": _reasoning_of_responses(ev.get("response") or {})}
+        for ch in ev.get("choices") or []:
+            d = ch.get("delta") or {}
+            if d.get("content"):
+                text.append(d["content"])
+            if reasoning:
+                thought.append(_chat_reasoning(d))
+            for tc in d.get("tool_calls") or []:
+                i = tc.get("index", 0)
+                f = tc.get("function") or {}
+                if f.get("name"):
+                    calls[i] = f["name"]
+                args[i] = args.get(i, "") + (f.get("arguments") or "")
+        if ev.get("usage"):
+            usage = _usage(ev["usage"])
+    return {"text": "".join(text), "tool_calls": [{"name": calls[i], "arguments": _cut(args.get(i, ""), limit)} for i in sorted(calls)],
+            "usage": _usage(told) if told is not None else usage, "reasoning": "".join(thought)}
+
+
+# -- serving providers: the pin a run sets, and what a reply says of who served it --
+SLUG = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9._-]+)*")
+
+
+def routing(slugs) -> dict:
+    """OpenRouter's routing field for a strict pin: these serving providers,
+    tried in this order, and no other."""
+    return {"order": list(slugs), "allow_fallbacks": False}
+
+
+def serving_problems(serving) -> List[str]:
+    """What is wrong with a pin by model (``{model: [slug, ...]}``)."""
+    if not isinstance(serving, dict):
+        return ["the serving providers are given by model: {MODEL: [SLUG, ...]}"]
+    bad = []
+    for model, slugs in serving.items():
+        if not isinstance(model, str) or not model.strip():
+            bad.append("a pin names no model")
+            continue
+        if not isinstance(slugs, (list, tuple)) or not slugs:
+            bad.append(f"{model}: no serving provider")
+            continue
+        wrong = [s for s in slugs if not isinstance(s, str) or not SLUG.fullmatch(s)]
+        if wrong:
+            bad.append(f"{model}: {', '.join(repr(s) for s in wrong)} is not a serving provider's slug "
+                       "(as a model's page names it: deepinfra, deepinfra/fp8)")
+        elif len(set(slugs)) != len(slugs):
+            bad.append(f"{model}: a serving provider is named twice")
+    return bad
+
+
+def parse_served_by(given, model: str) -> tuple:
+    """``--served-by [MODEL=]SLUG[,SLUG...]``, repeatable, as ``({model: [slug, ...]}, problems)``. Without
+    ``MODEL=`` it is ``model``, the run's. A model named twice is a problem; so is each of :func:`serving_problems`."""
+    out: Dict[str, List[str]] = {}
+    bad = []
+    for g in given or []:
+        name, eq, listed = str(g).rpartition("=")
+        name = name.strip() if eq else (model or "")
+        if not name:
+            bad.append(f"--served-by {g!r}: MODEL=SLUG[,SLUG...], or SLUG[,SLUG...] for the run's model")
+            continue
+        if name in out:
+            bad.append(f"--served-by names {name} twice: list its serving providers once, in the order they are tried")
+            continue
+        out[name] = [s.strip() for s in listed.split(",")]
+    return out, bad + serving_problems(out)
+
+
+def _clean(value, secrets=()):
+    """A recorded copy, never what is sent: a value under a credential's name
+    replaced, the relay's own key cut out of every string - a key of a
+    mapping as much as a value - then ``redact``."""
+    if isinstance(value, dict):
+        return {_clean(k, secrets): "[REDACTED]" if isinstance(k, str) and _CREDENTIAL.search(k) else _clean(v, secrets)
+                for k, v in value.items()}
+    if isinstance(value, list):
+        return [_clean(v, secrets) for v in value]
+    if isinstance(value, str):
+        for s in exchange_store.secret_keys(secrets):
+            value = value.replace(s, "[REDACTED]")
+        return redact(value)
+    return value
+
+
+def _name(v) -> Optional[str]:
+    return v if isinstance(v, str) and v else None
+
+
+def _an_error(e) -> Optional[dict]:
+    """An error object, in one shape: its code (a word or a number), type and
+    message (words), as given; None when it has none of them of that kind.
+    Nothing else of the object is kept."""
+    if not isinstance(e, dict) or not e:
+        return None
+    got = {k: e[k] for k in ("code", "type") if isinstance(e.get(k), (str, int)) and not isinstance(e.get(k), bool)}
+    if isinstance(e.get("message"), str):
+        got["message"] = _cut(e["message"], 500)
+    return got or None
+
+
+def _routing_facts(obj) -> Optional[list]:
+    """The serving endpoints OpenRouter's routing facts (``openrouter_metadata``)
+    list as available, in an object of a reply, its ``message`` or its
+    ``response``; None when none of them holds such a list."""
+    if not isinstance(obj, dict):
+        return None
+    for o in (obj, obj.get("message"), obj.get("response")):
+        meta = o.get("openrouter_metadata") if isinstance(o, dict) else None
+        endpoints = meta.get("endpoints") if isinstance(meta, dict) else None
+        available = endpoints.get("available") if isinstance(endpoints, dict) else None
+        if isinstance(available, list):
+            return available
+    return None
+
+
+def _provider(obj) -> Optional[str]:
+    """The serving provider an object of a reply names: its own ``provider``,
+    its ``message``'s or its ``response``'s, else the one endpoint OpenRouter's
+    routing facts mark ``selected`` among the available ones (asked for with
+    ``X-OpenRouter-Metadata``; a Responses reply names its provider there
+    alone). Facts that mark no single named endpoint give none."""
+    if not isinstance(obj, dict):
+        return None
+    for o in [obj] + [o for o in (obj.get("message"), obj.get("response")) if isinstance(o, dict)]:
+        if _name(o.get("provider")):
+            return o["provider"]
+    chosen = [a for a in _routing_facts(obj) or () if isinstance(a, dict) and a.get("selected") is True]
+    return _name(chosen[0].get("provider")) if len(chosen) == 1 else None
+
+
+def _choices(choices, ends: dict, errors: dict) -> None:
+    """Each choice's end and error, by its index."""
+    if not isinstance(choices, list):
+        return
+    for n, ch in enumerate(choices):
+        if not isinstance(ch, dict):
+            continue
+        i = ch.get("index") if isinstance(ch.get("index"), int) and not isinstance(ch.get("index"), bool) else n
+        if _name(ch.get("finish_reason")):
+            ends[i] = ch["finish_reason"]
+        e = _an_error(ch.get("error"))
+        if e and i not in errors:
+            errors[i] = e
+
+
+def _status(resp) -> Optional[str]:
+    """A Responses object's end: its status, and why when it is incomplete."""
+    if not isinstance(resp, dict) or not _name(resp.get("status")):
+        return None
+    why = resp.get("incomplete_details")
+    why = _name(why.get("reason")) if isinstance(why, dict) else None
+    return f"{resp['status']}: {why}" if why else resp["status"]
+
+
+def _facts(path: str, body: bytes, streamed: bool) -> dict:
+    served, end, error, ends, errors = None, None, None, {}, {}
+    if not streamed:
+        got = json.loads(body)
+        if not isinstance(got, dict):
+            return {}
+        served, error = _provider(got), _an_error(got.get("error"))
+        _choices(got.get("choices"), ends, errors)
+        if got.get("type") == "message":
+            end = _name(got.get("stop_reason"))
+        elif got.get("object") == "response" or "output" in got:
+            end = _status(got)
+    else:
+        for line in body.decode("utf-8", "replace").splitlines():
+            if not line.startswith("data:"):
+                continue
+            try:
+                ev = json.loads(line[5:].strip())
+            except ValueError:
+                continue
+            if not isinstance(ev, dict):
+                continue
+            # the latest event that names one; routing facts that mark no single named endpoint leave none
+            served = _provider(ev) if _routing_facts(ev) is not None else (_provider(ev) or served)
+            kind = ev.get("type")
+            if kind == "error":                  # Messages' error event, or a Responses one
+                error = error or _an_error(ev.get("error")) or _an_error({k: v for k, v in ev.items() if k != "type"})
+            elif isinstance(ev.get("error"), dict):     # an error chunk under a 200
+                error = error or _an_error(ev["error"])
+            if kind == "message_delta" and isinstance(ev.get("delta"), dict):
+                end = _name(ev["delta"].get("stop_reason")) or end
+            if kind in ("response.completed", "response.done", "response.incomplete", "response.failed"):
+                resp = ev.get("response")
+                end = _status(resp) or end
+                error = error or _an_error(resp.get("error") if isinstance(resp, dict) else None)
+            _choices(ev.get("choices"), ends, errors)
+    if ends:
+        end = ends[min(ends)] if len(ends) == 1 else {str(i): ends[i] for i in sorted(ends)}
+    if error is None and errors:
+        i = min(errors)
+        error = dict(errors[i], choice=i)
+    return {k: v for k, v in (("served_by", served), ("end", end), ("error", error)) if v is not None}
+
+
+def reply_facts(path: str, body: bytes, streamed: bool) -> dict:
+    """What a reply says besides what :func:`read_reply` reads, read apart from
+    it: the serving provider that answered (``served_by``), how it ended
+    (``end``: ``finish_reason``, ``stop_reason`` or a Responses status; one per
+    choice, by index, when there are several) and an error it holds though its
+    status was a success (``error``: code, type and message; a top-level one
+    whatever else the reply holds, else a choice's). A fact of the wrong type
+    is left out, and a reply that cannot be read gives none: nothing here can
+    stop a reply reaching its caller."""
+    try:
+        return _facts(path, body, streamed)
+    except Exception:
+        return {}
+
+
+def _request_tail(req: dict) -> dict:
+    """The part of a request a reader needs: the model, how many messages,
+    the last two, abridged, and the reasoning effort it asked for (chat's
+    ``reasoning_effort``, the Responses API's ``reasoning.effort``; None when
+    it sent none). A coding
+    agent resends its whole context on every call; the trajectory comes from
+    the session, not from here."""
+    items = req.get("messages") if isinstance(req.get("messages"), list) else req.get("input")
+    if isinstance(items, str):
+        items = [{"role": "user", "content": items}]
+    items = items if isinstance(items, list) else []
+    tail = []
+    for m in items[-2:]:
+        if isinstance(m, dict):
+            c = m.get("content")
+            if isinstance(c, list):
+                c = " ".join(str(x.get("text") or "") for x in c if isinstance(x, dict))
+            tail.append({"role": m.get("role") or m.get("type"), "content": _cut(c if isinstance(c, str) else json.dumps(c) if c else "", 2000)})
+    effort = req.get("reasoning_effort")
+    if effort is None and isinstance(req.get("reasoning"), dict):
+        effort = req["reasoning"].get("effort")
+    return {"n_messages": len(items), "last": tail, "stream": bool(req.get("stream")),
+            "reasoning_effort": effort if isinstance(effort, str) else None}
+
+
+def _image(data: str) -> Optional[str]:
+    """An inline image's type when its bytes show a whole one: its head, and its end after it."""
+    try:
+        raw = base64.b64decode(data, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "image/webp" if int.from_bytes(raw[4:8], "little") + 8 <= len(raw) else None
+    if raw[:2] == b"BM":
+        return "image/bmp" if int.from_bytes(raw[2:6], "little") <= len(raw) else None
+    return next((t for head, tail, t in _WHOLE if raw.startswith(head) and tail in raw[len(head):]), None)
+
+
+def _images(x) -> List[dict]:
+    """Each inline image a request carries, as Messages or chat sends one: its declared type, the type its bytes
+    show whole (None when they show none) and its size, never a byte of it."""
+    if isinstance(x, list):
+        return [i for v in x for i in _images(v)]
+    if not isinstance(x, dict):
+        return []
+    src, url = x.get("source"), x.get("image_url")
+    url = url.get("url") if isinstance(url, dict) else url
+    if x.get("type") == "image" and isinstance(src, dict) and src.get("type") == "base64" and isinstance(src.get("data"), str):
+        said, data = src.get("media_type"), src["data"]
+    elif isinstance(url, str) and url.startswith("data:") and ";base64," in url:
+        said, data = url[5:].split(";", 1)[0], url.split(";base64,", 1)[1]
+    else:
+        return _images(list(x.values()))
+    return [{"type": str(said)[:40] if said else None, "is": _image(data), "bytes": len(data)}]
+
+
+def _digest(obj) -> str:
+    text = obj if isinstance(obj, str) else json.dumps(obj, sort_keys=True)
+    return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def request_fields(req: dict) -> dict:
+    """Every top-level field of a request, for ``fidelity`` to compare two
+    ways of driving one agent - and no prompt: ``instructions``, each tool
+    and each ``input``/``messages`` item are kept as a digest and a length (an
+    item with its type and role, digested without its own ``id``), the rest as
+    sent, a large value digested too."""
+    out = {}
+    for k, v in req.items():
+        if k in ("input", "messages"):
+            items = [{"role": "user", "content": v}] if isinstance(v, str) else v if isinstance(v, list) else []
+            items = [{n: x for n, x in i.items() if n != "id"} if isinstance(i, dict) else i for i in items]   # an item's own id
+            out[k] = [{"type": i.get("type"), "role": i.get("role"), "sha256": _digest(i), "chars": len(json.dumps(i))}
+                      if isinstance(i, dict) else {"sha256": _digest(i)} for i in items]
+        elif k == "tools" and isinstance(v, list):
+            out[k] = [{"name": t.get("name") or (t.get("function") or {}).get("name") or t.get("type"), "sha256": _digest(t)}
+                      if isinstance(t, dict) else {"sha256": _digest(t)} for t in v]
+        elif k == "instructions" or len(json.dumps(v)) > 600:
+            out[k] = {"sha256": _digest(v), "chars": len(v) if isinstance(v, str) else len(json.dumps(v))}
+        else:
+            out[k] = v
+    return out
+
+
+def forwarded(headers) -> Dict[str, str]:
+    """The caller's request headers the relay passes on: all of them but the
+    hop's, the ones it sets itself, cookies and every credential."""
+    named = {n.strip().lower() for n in (headers.get("Connection") or "").split(",")}     # hop headers by name
+    out = {}
+    for name, value in headers.items():
+        low = name.lower()
+        if low in _NOT_SENT or low in named or low.startswith("proxy-") or _CREDENTIAL.search(low):
+            continue
+        out[name] = value
+    return out
+
+
+def returned(headers) -> List[tuple]:
+    """The provider's reply headers passed back to the caller."""
+    named = {n.strip().lower() for n in (headers.get("Connection") or "").split(",")}
+    return [(n, v) for n, v in headers.items() if n.lower() not in _NOT_RETURNED and n.lower() not in named]
+
+
+class _Pool:
+    """Kept connections to the provider. A connection is taken for one call
+    and given back once its reply was read to the end, so no two calls ever
+    share one at a time; calls made one after another, from whichever
+    thread, reuse it. (The relay's server starts a thread for each of its
+    callers' connections, so a pool per thread would rarely be reused.)"""
+
+    KEEP = 16                                    # idle connections kept per provider; more are closed
+
+    def __init__(self, base: str, timeout: float = TIMEOUT):
+        u = urllib.parse.urlsplit(base)
+        self.timeout = timeout
+        self.https = u.scheme == "https"
+        self.host, self.port = u.hostname, u.port or (443 if self.https else 80)
+        self.prefix = u.path.rstrip("/")
+        self.idle: List[http.client.HTTPConnection] = []
+        self.lock = threading.Lock()
+        self.opened = 0                          # connections made, for a test to count
+
+    def take(self, fresh: bool = False):
+        if not fresh:
+            with self.lock:
+                if self.idle:
+                    return self.idle.pop(), True
+        kind = http.client.HTTPSConnection if self.https else http.client.HTTPConnection
+        with self.lock:
+            self.opened += 1
+        return kind(self.host, self.port, timeout=self.timeout), False
+
+    def give(self, conn, r):
+        """Back to the pool when the reply was read whole and the provider
+        keeps the connection open; else closed."""
+        if r.isclosed() and not r.will_close:
+            with self.lock:
+                if len(self.idle) < self.KEEP:
+                    self.idle.append(conn)
+                    return
+        conn.close()
+
+    def send(self, method: str, path: str, body: Optional[bytes], headers: Dict[str, str]):
+        """The connection and the provider's response, its headers read. A
+        kept connection found closed is replaced once - only before any of
+        the reply was read, so a call is never sent twice for an answer."""
+        conn, reused = self.take()
+        while True:
+            try:
+                if conn.sock is None:
+                    try:
+                        conn.connect()           # the address, the connection, TLS: a failure here is before anything was sent
+                    except Exception as e:
+                        e.unsent = True
+                        raise
+                conn.request(method, self.prefix + path, body=body, headers=headers)
+                return conn, conn.getresponse()
+            except _STALE:
+                conn.close()
+                if not reused:
+                    raise
+                conn, reused = self.take(fresh=True)
+            except BaseException:
+                conn.close()
+                raise
+
+    def close(self):
+        with self.lock:
+            idle, self.idle = self.idle, []
+        for c in idle:
+            c.close()
+
+
+class Relay:
+    def __init__(self, base: str, key: str, record_dir: str, prices: Optional[Dict[str, dict]] = None,
+                 model: Optional[str] = None, side_models=(), key_header: str = "authorization", fields: bool = False,
+                 ledger: Optional[str] = None, unit_caps: bool = True, serving: Optional[Dict[str, List[str]]] = None,
+                 facts: Optional[bool] = None, timeout: float = TIMEOUT, max_calls: Optional[int] = None,
+                 exchanges: str = "off", exchanges_max_mb: int = exchange_store.MAX_MB):
+        """``base``: the provider's endpoint (``https://api.openai.com/v1``).
+        ``model``: when given, every call is sent as this model, whatever the
+        caller named - the run's model is the recipe's, not the agent's. A
+        route of its own may name another (``url(tag, model=...)``): a
+        benchmark's judge is asked as the judge, not as the run's model.
+        ``side_models``: the models an agent's own side jobs ask for (a
+        review, a summary) that it may call besides the run's model - its
+        definition's ``model.side_models``, or a setup's: the upstream's
+        code asking a model of its own besides the answerer. Each is a name,
+        sent as asked, or ``asked=sent``, sent as the provider names it; a
+        side call is recorded ``side``. Any other model is replaced by the
+        run's, recorded with ``model_asked``. ``key_header``: how the provider takes its key - a
+        bearer ``authorization``, or Anthropic's ``x-api-key``.
+        ``fields``: each record also holds the request's fields as sent
+        (:func:`request_fields`) - ``fidelity``'s, never a normal run's.
+        ``ledger``: the file of the run's spending cap (``ledger``). ``serving``: by model, the serving
+        providers that may answer a request sent as that model (:func:`routing`),
+        put on every such request in place of the caller's own. ``facts``: a
+        pinned Chat Completions or Responses request asks OpenRouter for its
+        routing facts, where its reply names who served it; by default when
+        ``base`` is OpenRouter's. ``timeout``: the seconds one call may wait.
+        ``max_calls``: the most model calls the agent's own route of a unit
+        may make (:func:`agent_route`), each answered call counted.
+        ``exchanges``: ``whole`` or ``text`` keeps each call of an agent's
+        route whole in ``<record_dir>/exchanges`` (``exchanges``), bounded at
+        ``exchanges_max_mb``, and numbers its calls in the record (``n``);
+        ``off``, the default, keeps the call record alone."""
+        self.fields = fields
+        self.max_calls = max_calls
+        if exchanges not in exchange_store.MODES:
+            raise ValueError(f"exchanges {exchanges!r}: one of {', '.join(exchange_store.MODES)}")
+        self.exchanges = (exchange_store.Store(record_dir, exchanges, exchanges_max_mb, (key, (key or "").strip()))
+                          if exchanges != "off" else None)
+        self.numbered: Dict[str, int] = {}       # the calls each agent route was sent, for the record's n
+        self.answered: Dict[str, int] = {}       # the calls each agent route had answered, for max_calls
+        self.serving = {m: list(s) for m, s in (serving or {}).items()}
+        host = (urllib.parse.urlsplit(base).hostname or "").lower()
+        self.facts = (host == "openrouter.ai" or host.endswith(".openrouter.ai")) if facts is None else bool(facts)
+        self.ledger = ledgers.Ledger(ledger) if ledger else None
+        # False for the benchmark's own relay: its calls (an option's embeddings) are no one unit's, so only the run's cap holds them
+        self.unit_caps = unit_caps
+        self.stopping = threading.Event()        # said by stop(): a call waiting for room gives up
+        self.base, self.key, self.dir = base.rstrip("/"), key, record_dir
+        self.prices, self.model = prices or {}, model
+        self.side_models = {a: (b or a) for a, _, b in (str(m).partition("=") for m in side_models or ())}
+        self.key_header = key_header.lower()
+        self.models: Dict[str, str] = {}
+        self.embedding_models: Dict[str, str] = {}
+        self.lock = threading.Lock()
+        self.pool = _Pool(self.base, timeout)
+        self.server: Optional[ThreadingHTTPServer] = None
+        os.makedirs(record_dir, exist_ok=True)
+
+    def url(self, tag: str, model: Optional[str] = None, *, embeddings: Optional[str] = None) -> str:
+        """A route's model pin, with an optional override only for /embeddings requests on this tag.
+        Reusing the URL without new pins preserves them; other tags keep their own routing."""
+        if not _TAG.match(tag):
+            raise ValueError(f"tag {tag!r}")
+        if model:
+            self.models[tag] = model
+        if embeddings:
+            self.embedding_models[tag] = embeddings
+        return f"{self.public or self._own()}/{tag}/v1"
+
+    def _own(self) -> str:
+        host, port = self.server.server_address[:2]
+        return f"http://{'127.0.0.1' if host in ('0.0.0.0', '') else host}:{port}"
+
+    def calls(self, tag: str) -> List[dict]:
+        try:
+            with open(os.path.join(self.dir, tag + ".jsonl")) as f:
+                return [json.loads(l) for l in f if l.strip()]
+        except OSError:
+            return []
+
+    def _cost(self, model: str, usage: Optional[dict]):
+        if not usage:
+            return None, None
+        if "cost" in usage:
+            return usage["cost"], "provider"
+        p = self.prices.get(model)                # exactly this model: one whose name only starts the same is another
+        if not p:
+            return None, None
+        written = min(usage.get("cache_write") or 0, max(0, usage["input"] - usage["cached"]))
+        hour = min(usage.get("cache_write_1h") or 0, written)
+        fresh = max(0, usage["input"] - usage["cached"] - written)
+        write_rate = p.get("cache_write", p["input"])
+        return (fresh * p["input"] + usage["cached"] * p.get("cached", p["input"])
+                + (written - hour) * write_rate + hour * p.get("cache_write_1h", write_rate)
+                + usage["output"] * p["output"]) / 1e6, "estimate"
+
+    def _said(self, e: Exception) -> str:
+        """An exception as the agent and the record may see it: http.client
+        quotes a header value it refuses (a key with a stray CR, a BOM), so
+        the key itself is cut out of the text whatever else it says."""
+        text = f"{type(e).__name__}: {e}"
+        for k in exchange_store.secret_keys((self.key, self.key.strip())):
+            text = text.replace(k, "[REDACTED]")
+        return redact(text)[:200]
+
+    def _headers(self, caller, tag: str = "", facts: bool = False) -> Dict[str, str]:
+        """The headers sent on: the key as ``key_header`` says on the agent's own routes; a route pinned
+        to a model of the benchmark's (a judge, a simulator, embeddings) speaks chat, so a bearer header.
+        ``facts``: a pinned Chat Completions or Responses request to
+        OpenRouter, sent asking for its routing facts whatever the caller
+        said of them."""
+        out = forwarded(caller)
+        if facts:
+            out = {k: v for k, v in out.items() if k.lower() != "x-openrouter-metadata"}
+            out["X-OpenRouter-Metadata"] = "enabled"
+        has = {k.lower() for k in out}           # a name in any case is the same header: never send it twice
+        x_api_key = self.key_header == "x-api-key" and tag not in self.models and tag not in self.embedding_models
+        for name, value in (("Content-Type", "application/json"), ("Accept", "*/*")) + \
+                (("anthropic-version", ANTHROPIC_VERSION),) * x_api_key:
+            if name.lower() not in has:
+                out[name] = value
+        if x_api_key:
+            out["x-api-key"] = self.key
+        else:
+            out["Authorization"] = "Bearer " + self.key
+        return out
+
+    def _asked(self) -> bool:
+        return asked(self.dir) is not None
+
+    def _forward(self, h: BaseHTTPRequestHandler):
+        """One call of a caller, ``h``: sent on, passed back, recorded. A caller's own call
+        refused for its context window also leaves STOP beside the records; one made once
+        another asked by STOP is refused unsent and unrecorded."""
+        bits = h.path.split("/", 2)
+        if len(bits) < 3 or not _TAG.match(bits[1]):
+            h.send_error(404, "no route: /<tag>/v1/...")
+            return
+        tag, rest = bits[1], "/" + bits[2]
+        rest = rest[3:] if rest.startswith("/v1/") else rest
+        raw = h.rfile.read(int(h.headers.get("Content-Length") or 0))
+        try:
+            req = json.loads(raw) if raw else {}
+        except ValueError:
+            req = {}
+        number = None                            # a call of an agent's route kept whole: its number there, in its record and its line
+        if self.exchanges is not None and agent_route(tag) and h.command == "POST":
+            with self.lock:
+                number = self.numbered[tag] = self.numbered.get(tag, 0) + 1
+        asked = req.get("model") if isinstance(req, dict) else None
+        side = False
+        routing_asked, pinned = None, None
+        dumped = False                           # raw is json.dumps(req): what the store splits into parts
+        if isinstance(req, dict) and req:
+            if rest.split("?")[0] == "/embeddings" and self.embedding_models.get(tag):
+                req["model"] = self.embedding_models[tag]
+            elif self.models.get(tag):
+                req["model"] = self.models[tag]
+            elif self.model and asked != self.model and asked in self.side_models:
+                side = True
+                req["model"] = self.side_models[asked]
+            elif self.model:
+                req["model"] = self.model
+            if req.get("stream") and rest.split("?")[0].endswith("/chat/completions"):
+                req.setdefault("stream_options", {})["include_usage"] = True
+            pinned = self.serving.get(req["model"]) if isinstance(req.get("model"), str) else None
+            if pinned:
+                routing_asked = req.get("provider")
+                req["provider"] = routing(pinned)
+            raw, dumped = json.dumps(req).encode(), True
+        if not side and not self.models.get(tag) and self._asked():
+            h.send_error(400, "the unit was asked to stop")
+            return
+        if self.max_calls and agent_route(tag) and h.command == "POST" and isinstance(req, dict) and req.get("model") and not _free(rest):
+            with self.lock:
+                made = self.answered.get(tag, 0)
+            if made >= self.max_calls:
+                self._refuse(h, tag, rest, req, asked, f"the unit's cap of {self.max_calls} model calls was reached: "
+                             "no further call of its agent is sent", "calls", number=number)
+                return
+        booking = booked = None
+        # a call that names its model is booked, whatever its route, but a token count, which costs nothing and
+        # reports no usage; one that names none (a cancellation, a body that is no request) has no price to book
+        if self.ledger is not None and h.command == "POST":
+            if isinstance(req, dict) and req.get("model") and not _free(rest):
+                booking, booked, why, by = self._book(req, raw, rest, tag, h)
+            else:                                # nothing to price: sent as it is, but not once the run's cap is reached
+                try:
+                    why, by = (("the run's spending cap was reached: no further call of this run is sent", "cap")
+                               if self.ledger.state()["closed"] else (None, None))
+                except ledgers.Unavailable as e:     # as for a call it would book: not sent, and no cap reached
+                    why, by = str(e), "ledger"
+            if by == "gone":                     # its caller hung up while it waited: nothing was booked, nothing is sent
+                return
+            if why:
+                self._refuse(h, tag, rest, req, asked, why, by, number=number)
+                return
+        t0 = time.time()
+        conn, r, back, body = None, None, [], b""
+        cut = False                              # the reply was cut off: the call may have been billed
+        sent_headers: Dict[str, str] = {}
+        cut_off = None
+        try:
+            # a Responses reply names its provider in the routing facts alone; a Messages reply names it of itself
+            facts = bool(pinned) and self.facts and rest.split("?")[0].endswith(("/chat/completions", "/responses"))
+            sent_headers = self._headers(h.headers, tag, facts)
+            conn, r = self.pool.send(h.command, rest, raw if h.command == "POST" else None, sent_headers)
+            status, kind, back = r.status, r.getheader("Content-Type") or "application/json", returned(r.headers)
+        except Exception as e:
+            status, kind = 502, "application/json"
+            # the connection was never made (refused, unknown or unreachable address, a timeout or TLS failing as
+            # it opened): never sent. Anything else came after the request may have gone out: it may have been
+            # billed, so its booking is kept
+            cut = not getattr(e, "unsent", False)
+            body = json.dumps({"error": {"message": "the relay could not reach the endpoint: " + self._said(e)}}).encode()
+        streamed = r is not None and "text/event-stream" in kind
+        whole = False                            # the reply read to its end: its connection can be kept
+        if r is not None and not streamed:
+            try:
+                body, whole = r.read(), True
+            except Exception as e:               # cut off mid-reply
+                status, kind, back, cut = 502, "application/json", [], True
+                body = json.dumps({"error": {"message": "the endpoint's reply was cut off: " + self._said(e)}}).encode()
+        empty = _hollow(rest, body) if status == 200 and not streamed and h.command == "POST" \
+            and not (isinstance(req, dict) and req.get("stream")) else None
+        if empty:
+            (status, inside), kind = empty, "application/json"
+            back = [(n, v) for n, v in back if n.lower() in ("retry-after", "retry-after-ms")]
+            body = json.dumps({"error": {"message": f"the endpoint answered 200 with {inside}"}}).encode()
+
+        def record(body):
+            rec = {"t0": t0, "t1": time.time(), "path": rest, "model": req.get("model") if isinstance(req, dict) else None,
+                   "model_asked": asked, "status": status,
+                   "request": dict(_request_tail(req), sha256=_digest(req)) if isinstance(req, dict) else {},
+                   "headers": sorted(k.lower() for k in forwarded(h.headers))}        # the names sent on, never a value
+            if side:
+                rec["side"] = True
+            if isinstance(req, dict) and req.get("provider") is not None:
+                # the routing as sent, and the caller's own the pin replaced: recorded copies, cleaned
+                rec["request"]["routing"] = _clean(req["provider"], (self.key, self.key.strip()))
+                if pinned and routing_asked is not None:
+                    rec["request"]["routing_asked"] = _clean(routing_asked, (self.key, self.key.strip()))
+            if self.fields and isinstance(req, dict) and req:
+                rec["fields"] = request_fields(req)
+            cost = None
+            if status == 200 or cut_off:
+                if status == 200 and self.max_calls and agent_route(tag) and isinstance(req, dict) and req.get("model") and not _free(rest):
+                    with self.lock:
+                        self.answered[tag] = self.answered.get(tag, 0) + 1
+                rec["reply"] = read_reply(rest, body, streamed)
+                try:
+                    rec["reply"].update({k: v for k, v in _clean(reply_facts(rest, body, streamed), (self.key, self.key.strip())).items()
+                                         if k not in rec["reply"]})
+                except Exception:
+                    pass
+                cost, how = (0.0, "failed") if rec["reply"].get("end") == "failed" and not rec["reply"].get("usage") \
+                    else self._cost(rec["model"], rec["reply"].get("usage"))
+                if cost is not None:
+                    rec["cost_usd"], rec["cost_from"] = cost, how
+            if status != 200:
+                rec["error"] = cut_off or _said(status, body)
+                code, wait = _code(body), _retry_after(back)
+                if code:
+                    rec["error_code"] = code
+                if wait is not None:
+                    rec["retry_after"] = wait    # the provider's word on when to call again (pace)
+            sent = _images(req) if status in (400, 413, 422) else []
+            if sent:
+                rec["images"] = sent
+            if empty:
+                rec["answered"] = 200
+            if booking is not None:
+                rec["booked_usd"] = booked
+                try:
+                    if status == 200 or cut or empty:  # what it cost; unknown (no token count, cut off), the booking is kept whole
+                        whole = not (cut_off or rec.get("cost_from") == "failed")
+                        known = cost if whole or (cost is not None and cost > booked) else None
+                        self.ledger.settle(booking, known, rec["model"],
+                                           ((rec.get("reply") or {}).get("usage") or {}).get("output") if whole else None)
+                    else:                        # an error of the provider's, or never reached: not billed
+                        self.ledger.release(booking)
+                except ledgers.Unavailable:
+                    pass                         # the booking stays held, against the cap
+            if number is not None:
+                rec = {"n": number, **rec}
+            with self.lock:
+                with open(os.path.join(self.dir, tag + ".jsonl"), "a") as f:
+                    f.write(json.dumps(exchange_store._cut_key(rec, self.exchanges.keys) if self.exchanges else rec) + "\n")
+                if not side and not self.models.get(tag) and overflowed(rec):
+                    with open(os.path.join(self.dir, STOP), "a") as f:
+                        f.write(OVERFLOW + "\n")
+            if number is not None:               # the exchange whole, after its record: it never raises
+                self.exchanges.write(tag, number, t0, rest, req if dumped else None, raw,
+                                     {k: v for k, v in sent_headers.items() if not _CREDENTIAL.search(k)}, status, streamed, body)
+
+        h.send_response(status)
+        if not any(n.lower() == "content-type" for n, _ in back):
+            back = back + [("Content-Type", kind)]
+        for n, v in back:
+            h.send_header(n, v)
+        if streamed:
+            if not r.getheader("Cache-Control"):
+                h.send_header("Cache-Control", "no-cache")
+            h.end_headers()
+            parts = []
+            try:
+                while True:
+                    chunk = r.read1(65536)
+                    if not chunk:
+                        if r.length:
+                            raise http.client.IncompleteRead(b"", r.length)
+                        whole = True
+                        break
+                    parts.append(chunk)
+                    try:
+                        h.wfile.write(chunk)
+                        h.wfile.flush()
+                    except OSError:
+                        pass                     # the caller went away; the record still completes
+            except Exception as e:
+                status, cut, cut_off = 502, True, "the endpoint's reply was cut off: " + self._said(e)
+            record(b"".join(parts))              # before the connection closes: the caller's end of stream
+        else:
+            record(body)                         # before the caller has the reply, so a reader after it finds the call
+            if conn is not None:                 # read whole: back to the pool before the caller can make its next call
+                if whole:
+                    self.pool.give(conn, r)
+                else:
+                    conn.close()
+                conn = None
+            h.send_header("Content-Length", str(len(body)))
+            h.end_headers()
+            try:
+                h.wfile.write(body)
+            except OSError:
+                pass
+        if conn is not None:
+            if whole:
+                self.pool.give(conn, r)
+            else:
+                conn.close()
+
+    def _book(self, req: dict, raw: bytes, rest: str, tag: str = "", h: Optional[BaseHTTPRequestHandler] = None) -> tuple:
+        """(booking, its amount, None, None) for a call the cap lets out;
+        (None, its amount, why, by) for one it does not - ``by`` the run's
+        cap (``cap``), the cap of the unit ``tag`` routes for (``unit``),
+        ``price`` (a model with no price is not sent either, a capped run
+        sending no call it cannot price) or ``ledger`` (it could not be
+        read or written) - and those two are no cap reached. ``gone``: its
+        caller ``h`` hung up, or this relay stopped, while it waited."""
+        row = self.prices.get(req.get("model"))
+        if not row:
+            return None, None, f"no price for the model {req.get('model')!r}: a run with a spending cap sends no call it cannot price", "price"
+        try:
+            deadline = time.time() + ledgers.WAIT
+            least = ledgers.bound(req, raw, row, rest, output=False)
+            while True:
+                booking, seen = self.ledger.reserve(lambda usual: ledgers.bound(req, raw, row, rest, usual),
+                                                    ledgers.unit_of(tag) if self.unit_caps and tag else None, req.get("model"),
+                                                    wait=time.time() < deadline, least=least)
+                if booking or seen["by"] != "wait":
+                    break
+                if self.stopping.is_set() or _gone(h):
+                    return None, None, None, "gone"     # no one waits for it: not booked later, and the cap not closed in its name
+                time.sleep(0.2)
+        except ledgers.Unavailable as e:         # not a cap reached: the unit is not the cap's, and the run goes on if the ledger reads again
+            return None, None, str(e), "ledger"
+        amount = seen["amount"]
+        return (booking, amount, None, None) if booking else (None, amount, ledgers.refusal(seen, amount), seen["by"])
+
+    def _refuse(self, h: BaseHTTPRequestHandler, tag: str, rest: str, req, asked, why: str, by: str = "cap",
+                number: Optional[int] = None) -> None:
+        """A call a capped run did not let out - at the run's cap (``by`` is
+        ``cap``), at its unit's own (``unit``), or for want of a price
+        (``price``): answered here and recorded as the relay's own
+        (``refused``), nothing sent. ``number``: its ``n`` on a route whose
+        calls are kept whole; nothing sent, it has no line there."""
+        t = time.time()
+        rec = {"t0": t, "t1": t, "path": rest, "model": req.get("model") if isinstance(req, dict) else None, "model_asked": asked,
+               "status": 402, "refused": by, "error": why, "request": _request_tail(req) if isinstance(req, dict) else {},
+               "headers": sorted(k.lower() for k in forwarded(h.headers))}
+        if number is not None:
+            rec = {"n": number, **rec}
+        with self.lock:
+            with open(os.path.join(self.dir, tag + ".jsonl"), "a") as f:
+                f.write(json.dumps(exchange_store._cut_key(rec, self.exchanges.keys) if self.exchanges else rec) + "\n")
+        body = json.dumps({"type": "error", "error": {"type": "call_cap" if by == "calls" else "spending_cap",
+                                                      "code": {"unit": "unit_spending_cap", "price": "unpriced_model", "ledger": "ledger_unavailable",
+                                                               "calls": "unit_call_cap"}.get(by, "spending_cap"),
+                                                      "message": "nullius relay: " + why}}).encode()
+        h.send_response(402)
+        for n, v in (("Content-Type", "application/json"), ("X-Nullius-Refused", by), ("Content-Length", str(len(body)))):
+            h.send_header(n, v)
+        h.end_headers()
+        try:
+            h.wfile.write(body)
+        except OSError:
+            pass
+
+    # The address ``url`` hands out: the listening one unless the caller sets
+    # another - a sidecar listens on 0.0.0.0 and is reached as ``relay``.
+    public: Optional[str] = None
+
+    def start(self, host: str = "127.0.0.1", port: int = 0) -> "Relay":
+        relay = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                self.forward()
+
+            def do_POST(self):
+                self.forward()
+
+            def forward(self):
+                relay._forward(self)
+
+        self.server = ThreadingHTTPServer((host, port), Handler)
+        self.server.daemon_threads = True
+        # stop() waits for the serving loop's next look: at the default half-second that idled a worker
+        # slot up to 0.5 s at the end of every unit
+        threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
+        return self
+
+    def stop(self):
+        self.stopping.set()
+        if self.server:
+            self.server.shutdown()
+            self.server.server_close()
+        self.pool.close()
+
+
+def agent_route(tag: str) -> bool:
+    """Whether a route is a unit's agent's own (``u0042``, ``u0042r2``): its
+    judge's and its simulated user's carry a suffix (``-judge``, ``-simulator``)."""
+    return "-" not in tag
+
+
+def _free(rest: str) -> bool:
+    """A route that names a model and is not billed: a token count."""
+    return rest.split("?")[0].rstrip("/").endswith("/count_tokens")
+
+
+def _gone(h: Optional[BaseHTTPRequestHandler]) -> bool:
+    """Whether a caller hung up while its call waited: its end of the connection reads closed."""
+    if h is None:
+        return False
+    try:
+        return bool(select.select([h.connection], [], [], 0)[0]) and h.connection.recv(1, socket.MSG_PEEK) == b""
+    except (OSError, ValueError):
+        return True
+
+
+def asked(record_dir: str) -> Optional[str]:
+    """What a guard's STOP in ``record_dir`` says, or None: none there, or only the context window's."""
+    try:
+        with open(os.path.join(record_dir, STOP)) as f:
+            said = next((ln.strip() for ln in f.read().splitlines() or [""] if ln.strip() != OVERFLOW), None)
+    except OSError:
+        return None
+    return None if said is None else said or STOP
+
+
+# what a unit whose agent reached the run's cap on model calls carries (``max_calls``): an agent error, counted
+# against the agent (runs.classify)
+CALLS_ERROR = "UnitCallCapError"
+
+
+def failure(calls: List[dict], words: bool = True, agent: bool = False) -> Optional[tuple]:
+    """When a unit's model calls ended failing, the exception a trial carries
+    for it - named so ``nullius.runs.classify`` sorts it as the
+    infrastructure it was - and the endpoint's words. None when the last call
+    succeeded (a failure the agent recovered from is not the unit's).
+    ``words`` False: the status alone, never the provider's text, which can quote
+    a gated task. ``agent``: the agent's last call over the model's context
+    window is ``ContextWindowExceededError``, its own, whatever side call followed, and a side call's 200 does not
+    recover the agent's own. Calls are taken in the order they began. A call
+    the run's spending cap refused is the unit's wherever it falls: once one
+    is refused, every later one is."""
+    cut = next((c for c in calls if c.get("refused") == "cap"), None)
+    if cut:
+        return ledgers.ERROR, cut.get("error") or ""
+    over = next((c for c in calls if c.get("refused") == "unit"), None)
+    if over:                                     # its own cap: the unit's doing, and the run goes on
+        return ledgers.UNIT_ERROR, over.get("error") or ""
+    many = next((c for c in calls if c.get("refused") == "calls"), None)
+    if many:                                     # its agent made the calls it was allowed: the agent's doing
+        return CALLS_ERROR, many.get("error") or ""
+    calls = _begun(calls)
+    ok = [i for i, c in enumerate(calls) if c.get("status") == 200]
+    after, side = max((i for i in ok if not (agent and calls[i].get("side"))), default=-1), max(ok, default=-1)
+    calls = [c for i, c in enumerate(calls) if i > after and c.get("status") != 200 and not (c.get("side") and i < side)]
+    if not calls:
+        return None
+    own = next((c for c in reversed(calls) if not c.get("side")), None) if agent else None
+    if own is not None and overflowed(own):
+        said = (own.get("error") or "") if words else ("the endpoint answered 400 to the agent's call, longer than the model's "
+                                                       "context window (provider text not kept: gated benchmark)")
+        return CONTEXT_ERROR, said
+    last = calls[-1]
+    s = last.get("status")
+    said = (last.get("error") or "") if words else f"the endpoint answered {s} (provider text not kept: gated benchmark)"
+    if s == 429:
+        # OpenAI's spent credit comes as a 429 too: a usage limit, no pace mends it
+        return ("ApiUsageLimitError" if last.get("error_code") == "insufficient_quota" else "RateLimitError"), said
+    if s == 402 and not last.get("refused"):
+        return "ApiUsageLimitError", said        # the provider's credit spent
+    if s in (401, 403):
+        return "AgentAuthenticationError", said
+    if (s == 404 and "model" in (last.get("error") or "").lower()) or (s == 400 and _NO_MODEL.search(last.get("error") or "")):
+        return "ModelNotFoundError", said
+    if s == 502:
+        return "NetworkConnectionError", said
+    return "ApiError", said
+
+
+def _begun(calls: List[dict]) -> List[dict]:
+    timed = all(isinstance(c.get("t0"), (int, float)) for c in calls)
+    return sorted(calls, key=lambda c: c["t0"]) if timed else list(calls)
+
+
+def overflowed(call: dict) -> bool:
+    """A 400 for a request longer than the model's context window, by the provider's words."""
+    return call.get("status") == 400 and bool(_CONTEXT.search(call.get("error") or ""))
+
+
+# -- the relay as a process of its own: a container backend's sidecar ----------
+def serve(argv=None) -> int:
+    """``python3 -m nullius.standard.calls.relay serve --listen HOST:PORT --base URL
+    --record DIR --key-file PATH [--model M] [--route TAG=MODEL ...] [--side-model M ...] [--key-header NAME]
+    [--public URL] [--prices JSON] [--ledger FILE] [--served-by MODEL=SLUG[,SLUG...] ...]
+    [--exchanges whole|text|off] [--exchanges-max-mb N]``.
+
+    ``--base``: provider endpoint. ``--route``: send a tag as another model. ``--public``: address returned by ``url``.
+    The real key is read from ``--key-file`` and nowhere else: an argument or
+    an environment variable is visible to anyone who lists processes or
+    inspects a container. One JSON line, ``{"listening": "http://host:port"}``, says it
+    is ready; SIGTERM (or SIGINT) stops it."""
+    import argparse
+    import signal
+    ap = argparse.ArgumentParser(prog="nullius.standard.calls.relay serve")
+    ap.add_argument("--listen", default="127.0.0.1:0", help="HOST:PORT")
+    ap.add_argument("--base", required=True, help="the provider's endpoint")
+    ap.add_argument("--record", required=True, help="the folder each route's calls are recorded in")
+    ap.add_argument("--key-file", required=True, help="the file that holds the provider's key")
+    ap.add_argument("--model", help="every call sent as this model")
+    ap.add_argument("--route", action="append", default=[], help="TAG=MODEL")
+    ap.add_argument("--side-model", action="append", default=[], help="a model the agent may call as asked")
+    ap.add_argument("--key-header", default="authorization", choices=("authorization", "x-api-key"))
+    ap.add_argument("--public", help="the address url() hands out, when not the listening one")
+    ap.add_argument("--prices", help="a JSON object: model -> USD per million tokens, for a cost estimate")
+    ap.add_argument("--ledger", help="the file of the run's spending cap: a call is booked there before it is sent")
+    ap.add_argument("--max-calls", type=int, help="the most model calls a unit's agent route may make")
+    ap.add_argument("--served-by", action="append", default=[], metavar="MODEL=SLUG[,SLUG...]",
+                    help="the serving providers that may answer a request sent as MODEL, in order, and no other; "
+                         "MODEL one this relay sends (--model, a --route's, a --side-model's), and --base OpenRouter's "
+                         "or --routing given")
+    ap.add_argument("--routing", action="store_true",
+                    help="the endpoint at --base routes a model to several serving providers, as OpenRouter does")
+    ap.add_argument("--timeout", type=float, default=TIMEOUT, help="seconds one call may wait for the provider's reply")
+    ap.add_argument("--exchanges", default="off", choices=exchange_store.MODES,
+                    help="keep each call of an agent's route whole in the record's exchanges/ (whole), without "
+                         "the pictures' bytes (text), or not (off, the default)")
+    ap.add_argument("--exchanges-max-mb", type=int, default=exchange_store.MAX_MB, metavar="N",
+                    help=f"the most MB a unit's exchanges take: past it a call's line says cut (default {exchange_store.MAX_MB})")
+    a = ap.parse_args(argv)
+    if a.exchanges_max_mb < 1:
+        print(json.dumps({"error": f"--exchanges-max-mb {a.exchanges_max_mb}: a whole number of MB, at least 1"}), flush=True)
+        return 2
+    serving, bad = parse_served_by(a.served_by, "")
+    if serving and not bad:
+        host = (urllib.parse.urlsplit(a.base).hostname or "").lower()
+        if not (a.routing or host == "openrouter.ai" or host.endswith(".openrouter.ai")):
+            bad.append(f"{a.base} routes no model to several serving providers (OpenRouter's does; --routing says another does)")
+        sent = {a.model} | {r.partition("=")[2] for r in a.route} | {(s.partition("=")[2] or s) for s in a.side_model}
+        stray = [m for m in serving if a.model and m not in sent]
+        if stray:
+            bad.append(f"{', '.join(stray)}: a model this relay does not send (it sends {', '.join(sorted(x for x in sent if x))})")
+    if bad:
+        print(json.dumps({"error": "--served-by: " + "; ".join(bad)}), flush=True)
+        return 2
+    try:
+        with open(a.key_file) as f:
+            key = f.read().strip()
+    except OSError as e:
+        print(json.dumps({"error": f"cannot read --key-file: {e}"}), flush=True)
+        return 2
+    if not key:
+        print(json.dumps({"error": f"--key-file {a.key_file} contains no key"}), flush=True)
+        return 2
+    host, _, port = a.listen.rpartition(":")
+    r = Relay(a.base, key, a.record, prices=json.loads(a.prices) if a.prices else None, model=a.model,
+              side_models=a.side_model, key_header=a.key_header, ledger=a.ledger, serving=serving,
+              timeout=a.timeout, max_calls=a.max_calls, exchanges=a.exchanges, exchanges_max_mb=a.exchanges_max_mb)
+    for route in a.route:
+        tag, _, model = route.partition("=")
+        if not _TAG.match(tag) or not model:
+            print(json.dumps({"error": f"--route {route!r}: TAG=MODEL"}), flush=True)
+            return 2
+        r.models[tag] = model
+    r.public = a.public
+    stop = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *_: stop.set())
+    signal.signal(signal.SIGINT, lambda *_: stop.set())
+    r.start(host or "127.0.0.1", int(port or 0))
+    print(json.dumps({"listening": r._own()}), flush=True)
+    while not stop.wait(1):
+        pass
+    r.stop()
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    if sys.argv[1:2] != ["serve"]:
+        sys.exit("python3 -m nullius.standard.calls.relay serve --listen HOST:PORT --base URL --record DIR --key-file PATH [--model M]")
+    sys.exit(serve(sys.argv[2:]))

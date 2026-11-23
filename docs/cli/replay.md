@@ -68,7 +68,7 @@ A reading command receives the parsed answer (`status`, `text`, `reasoning`, `to
 ## From a program
 
 ```python
-from nullius.standard import replay
+from nullius.standard.runner import replay
 
 for call in replay.calls(job_dir, trial):            # n, bytes, whole, why
     ...
@@ -138,7 +138,7 @@ nullius standard recount studies/one-action --read 'python3 read_kind.py'
 ```
 
 ```python
-from nullius.standard import replay, study
+from nullius.standard.runner import replay, study
 
 targets = study.targets(job_dir, ["TRIAL-1", "TRIAL-2"], every=4)    # or study.read_targets("targets.txt")
 arms = [study.Arm("one-action", [replay.replace_text("</rules>", "</rules>\nAnswer in one action.")])]

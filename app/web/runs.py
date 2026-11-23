@@ -23,12 +23,11 @@ from nullius import importers as harnesses
 from nullius.redact import redact
 from nullius.runs import attempts, classify, feasibility, launches, live, parse
 from nullius import workspace
-from nullius.standard import definitions as standard_definitions
-from nullius.standard import sets as task_sets
+from nullius.standard.contract import definitions as standard_definitions
+from nullius.standard.runner import sets as task_sets
 
 from .core import app
 from . import shared
-from . import settings as settings_web
 
 
 
@@ -248,7 +247,7 @@ def _cut_short(r) -> str:
     return ""
 
 
-# A shard's job as a recipe names it (standard/recipe.py): ``<launch>-shard-<I>of<N>``.
+# A shard's job as a recipe names it (standard/pages/recipe.py): ``<launch>-shard-<I>of<N>``.
 _SHARD = re.compile(r"-shard-(\d+)of\d+$")
 # A participant's state is its shards' most telling: one still working, else the one that ended worst.
 _TELLING = ("running", "preparing", "stopping", "paused", "queued", "failed", "refused", "stopped", execution.NOT_RUN,
@@ -601,7 +600,7 @@ def waiting_of(j, running=()) -> list:
     fewer trials than it planned: [] for every other job."""
     if not j.standard or len(j.trials) >= j.n_planned:
         return []
-    from nullius.standard import rerun
+    from nullius.standard.runner import rerun
     waiting = {}
     for name, x in rerun.unfinished(j.dir).items():
         row = waiting.setdefault(x["unit"], dict(x, trial=name, trials=[], running=False,
@@ -656,7 +655,7 @@ def _identity_names(identity: dict) -> dict:
     key, version = identity.get("benchmark", ""), identity.get("benchmark_version", "")
     bench = standard_definitions.get("benchmark", f"{key}@{version}" if version else key) if key else None
     if bench is not None and not version:
-        from nullius.standard import rerun
+        from nullius.standard.runner import rerun
         bench = rerun._ran_before_versions(bench, None) or bench
     ref = identity.get("agent", "")
     other = next((d for d in (standard_definitions.get(kind, ref) for kind in ("agent", "capability")) if d), None) if ref else None
@@ -700,7 +699,7 @@ def _set_saving(j) -> bool:
 @app.route("/job/<job_id>/task-set", methods=["POST"])
 def job_task_set(job_id):
     """Keep the units of the trials the outcome filter shows (every trial without one) as a new task set: each by
-    the full unit id its trial records (standard/sets.py, ``from_job``); then the set's page."""
+    the full unit id its trial records (standard/runner/sets.py, ``from_job``); then the set's page."""
     shared._require_csrf()
     if not settings_web._local_client():
         abort(403, description="Task sets are saved from a browser on the application host only.")
@@ -901,7 +900,7 @@ def launch_add(key):
     """Add a launch's job roots to the workspace the form names, or, when it
     names none, to a new workspace called the form's ``label`` and opened."""
     shared._require_csrf()
-    if not settings_web._local_client():
+    if not shared._local_client():
         abort(403)
     g = next((g for g in _every()[1] if g.key == key), None)
     name = request.form.get("workspace", "")
@@ -926,7 +925,7 @@ def launch_delete(key):
     each shard's copy on its own host when ticked. A launch with a run still
     going, or with a job from elsewhere, is refused. ``back=launches`` returns to the Launches page."""
     shared._require_csrf()
-    if not settings_web._local_client():
+    if not shared._local_client():
         abort(403)
     every = request.form.get("back") == "launches"
     if shared.STATE["workspace"] is None and not every:
@@ -995,7 +994,7 @@ def _with_part(j, snap: dict) -> dict:
     run, not queued. The snapshot as it was otherwise."""
     if not j.standard or snap.get("state") not in ("starting", "running"):
         return snap
-    from nullius.standard import rerun
+    from nullius.standard.runner import rerun
     try:
         starts = [e.data for e in live.read_events(live.feed_path(j.dir)).events if e.event == "job.start"]
         with open(os.path.join(j.dir, "config.json"), encoding="utf-8") as f:

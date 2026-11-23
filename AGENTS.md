@@ -46,7 +46,8 @@ and its resources.
   Harbor job tree: `parse`, `classify`, `live`, `artifacts`,
   `feasibility`, `launches`, `verifier` - a verifier's report read by its
   benchmark's report block - `attempts`, a task's attempts in one job with
-  their pass count and pass@k, and the `cli`), `traces/` (`trace`, `trajectory`,
+  their pass count and pass@k, and the `cli`), `traces/` (`trace`, the reader, with its span tree `spans`,
+  `fold`, time accounting `breakdown` and layout `waterfall`; `trajectory`,
   `conversation`, `calls` (a trial's conversation by model call, from its relay's records), `charts`, `behavior`, `otel`), `compare/` (`comparison` and its `cli`),
   `catalogue/` (`catalog`, which loads one folder per benchmark
   under `catalogue/benchmarks/`, named by its key: its `benchmark.json` with its
@@ -59,9 +60,16 @@ and its resources.
   `harbor/` (`source`: the Harbor a recipe pins - built, kept, scanned for its agents;
   `feed`: the live feed any Harbor writes, from its own trial hooks),
   `importers/` (`atif` ATIF, `otel` OpenTelemetry, and the `cli`), `judge/` (`questions`, `state`, `client`, `store`, `batch`, `reconcile`, `lanes`),
-  `standard/` (the Nullius standard, `docs/standard.md`: `ports`, `names` (capability vocabulary and legacy aliases), `definitions` (with an agent's or capability's versions), `match`,
-  `jsonl`, `acp`, `cancellation` (interruptible protocol waits), `relay`, `exchanges` (each model exchange of a unit's agent kept whole by its relay, and a request rebuilt from it), `ledger` (a run's spending cap), `replay` (one recorded call of a trial sent again K times under a spending cap, as it was or changed, its answers counted), `study` (recorded calls of several trials sent again under named arms of changes, one cap, counted call by call with a sign test, resumed, counted again), `retries` (what an attempt is tried again after, and how many times), `pace` (how soon the next unit starts after a rate limit), `pins` (image digests checked against registry tags), `install`, `run`, `container` (the container backend), `boat` (the boat backend: each unit's agent in a boat.dev VM), `setup_container` (an Original setup's driver and its Linux dependencies in Docker), `forward` (a licence server's one door from it, or a benchmark's MCP server's), `web_services` (HTTP fixtures a driver's setup declares, each behind a unit-local Docker door), `mcp_machine` and `mcp_bridge` (a benchmark's MCP server run on the machine, in its driver's environment, and the agent's bridge to it), `computer_port` and `computer_pipe` (the computer port's MCP server, served by a desktop benchmark's runner over the benchmark's own loop, and the session's stdio pipe to it), `network_requirements` (an environment's declared public web access: the schema and the connectivity check), `hostreq` (what a benchmark's options need of the machine its driver runs on: the check and the install) and `egress` (an own image's check's proxy to public addresses), `job`, `conform`, `fidelity` (ACP against the agent's own CLI), `prove` (a benchmark's controls and proofs), `shard` and `merge` (one run over many machines), `rerun` (chosen tasks of an ended job run again in it, each earlier try kept, and the tasks it planned and has not run), `sets` (task sets: named lists of a benchmark's units in the user catalogue, frozen once made), `units` (a dataset's tasks listed, searched and counted by category, from the driver's `describe`), `recipe` (the builder's standard recipe), `howto` (the How to add steps) and the `cli`; its
-  `payload` snapshots the running backend and effective catalogue for a remote host;
+  `standard/` (the Nullius standard, `docs/standard.md`, one folder per purpose, importing one way: `test_layering.StandardFolders`;
+  `contract/`: `ports`, `names` (capability vocabulary and legacy aliases), `definitions` (with an agent's or capability's versions), `match`;
+  `requirements/`: `install`, `hostreq` (what a benchmark's options need of the machine its driver runs on: the check and the install), `network_requirements` (an environment's declared public web access: the connectivity check before any unit);
+  `protocols/`: `jsonl`, `acp`, `cancellation` (interruptible protocol waits), `computer_port` and `computer_pipe` (the computer port's MCP server, served by a desktop benchmark's runner over the benchmark's own loop, and the session's stdio pipe to it);
+  `calls/`: `relay`, `exchanges` (each model exchange of a unit's agent kept whole by its relay, and a request rebuilt from it), `ledger` (a run's spending cap);
+  `backends/`: `container` (the container backend), `boat` (the boat backend: each unit's agent in a boat.dev VM), `setup_container` (an Original setup's driver and its Linux dependencies in Docker), `forward` (a licence server's one door from it, or a benchmark's MCP server's), `web_services` (HTTP fixtures a driver's setup declares, each behind a unit-local Docker door), `mcp_machine` and `mcp_bridge` (a benchmark's MCP server run on the machine, in its driver's environment, and the agent's bridge to it), `egress` (an own image's check's proxy to public addresses);
+  `runner/`: `run`, `job`, `retries` (what an attempt is tried again after, and how many times), `pace` (how soon the next unit starts after a rate limit), `shard` and `merge` (one run over many machines), `payload` (a snapshot of the running backend and effective catalogue for a remote host), `boat_units` (a benchmark whose units boot a VM of their own, each unit whole in a Boat VM), `rerun` (chosen tasks of an ended job run again in it, each earlier try kept, and the tasks it planned and has not run), `sets` (task sets: named lists of a benchmark's units in the user catalogue, frozen once made), `units` (a dataset's tasks listed, searched and counted by category, from the driver's `describe`), `replay` (one recorded call of a trial sent again K times under a spending cap, as it was or changed, its answers counted), `study` (recorded calls of several trials sent again under named arms of changes, one cap, counted call by call with a sign test, resumed, counted again);
+  `proofs/`: `conform`, `fidelity` (ACP against the agent's own CLI), `prove` (a benchmark's controls and proofs), `pins` (image digests checked against registry tags);
+  `pages/`: `recipe` (the builder's standard recipe), `howto` (the How to add steps);
+  and the `cli` at its top;
   conformance kits under `standard/kits/`, each a benchmark: a `driver` and, for the
   tools kit, an MCP server `mcp_kit`) - the definitions it reads are in the catalogue:
   a benchmark's `standard.json` and `driver` in its folder (τ³-bench's also the MCP
@@ -71,10 +79,11 @@ and its resources.
   GitLab: made once on the run's machine with its token, its tasks' lock, the stack's command line), `proxy` (a
   tinyproxy of a unit's own for the tasks that ask for a proxy) and, in `startup/`,
   `sitecustomize`: its VMs' disk write limit in every process its driver starts), `catalogue/agents/<key>/`
-  (the reference `agent`; JiuwenSwarm's `agent` and mini-swe-agent's `run`, the wrappers that start them) and `catalogue/capabilities/<key>/` (the keyword-memory `capability`); `workspace` (and
+  (the reference `agent`; DigitalMate's `run` and `gateway` (product startup and task submission);
+  JiuwenSwarm's `agent` and mini-swe-agent's `run`, the wrappers that start them) and `catalogue/capabilities/<key>/` (the keyword-memory `capability`); `workspace` (and
   `workspace_cli`, its shell command),
   `cli` and `__main__` (the unified `nullius` and `python -m nullius` commands),
-  `paths` (user config, data and cache locations), `prices` (the user's model price list: fetched on request and before a capped run; what a cost is estimated from), `migrate` (explicit copying of legacy checkout storage), `settings`, `hosts`, `constraints` (what Nullius may use on each machine: one table, the container and systemd scope probes, the warnings), `execution`, `progress` (what a run is doing, one line per stage), `prerequisites` (what a recipe needs of each machine it runs on, asked before Run and again as it starts), `onboarding` (the Getting started checklist: what this machine
+  `paths` (user config, data and cache locations), `ondisk` (a file written whole then renamed into place, a lock, a digest), `prices` (the user's model price list: fetched on request and before a capped run; what a cost is estimated from), `migrate` (explicit copying of legacy checkout storage), `settings`, `hosts`, `constraints` (what Nullius may use on each machine: one table, the container and systemd scope probes, the warnings), `execution`, `progress` (what a run is doing, one line per stage), `prerequisites` (what a recipe needs of each machine it runs on, asked before Run and again as it starts), `onboarding` (the Getting started checklist: what this machine
   says is done, and where each step is done), `gitrefs` (a repository's branches and tags,
   by `git ls-remote`), `secrets` (a benchmark's licences, kept per benchmark outside the repository, and the Hugging Face token of Data providers), `sandbox` (the Docker Hub login Data providers uses), `charts` (categorical charts, bars, dots and a scatter, and their style registry: Compare's Chart view) and `redact` at the top.
 - `app/templates/`, `app/static/` — the interface, grouped by the same capability
@@ -82,6 +91,7 @@ and its resources.
   builder's JavaScript, which owns the generated recipes. `app/templates/_tables.html` and
   `app/static/tables.js` are the table toolkit: one column list builds a table's headers, cells and controls.
   `app/templates/_cards.html` lays the same field list out as cards, one slot per field.
+  `app/templates/_icons.svg` is the icon sprite, checked by `app/tests/test_icons.py`.
 - `app/tests/`, `app/ui_tests/` — the backend suite and the route suite.
   Beside the backend tests sit scripts run by hand:
   `app/tests/field_contract.py`, which refreshes the `field_contract.json` the
@@ -132,7 +142,7 @@ and migration, and `docs/settings/README.md` for paths and precedence.
 
 Three dependency rules. Each is load-bearing and each has a test.
 
-- **`app/nullius/` imports no Flask.** `test_charts.NoFlask` checks every module. If a test in `app/tests` needs Flask, the layering
+- **`app/nullius/` imports no Flask.** `test_layering.NoFlask` checks every module. If a test in `app/tests` needs Flask, the layering
   has broken, not the test.
 - **One name, one implementation per interpreter.**
   `app/tests/test_dependency_surface.py` counts *providers* of `nullius` and

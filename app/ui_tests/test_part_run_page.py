@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from nullius.harbor import feed
-from nullius.standard import sets
+from nullius.standard.runner import sets
 from ui_tests.test_capped_job import BENCH
 from ui_tests import test_rerun_page as rerun_page, test_task_set_pages as task_set_pages
 from ui_tests.test_rerun_page import text, trial_name
@@ -343,7 +343,7 @@ process.stdout.write(JSON.stringify(out));
 
     def test_a_later_part_contains_only_the_selected_attempt(self):
         from nullius.runs import live, parse
-        from nullius.standard import rerun, run
+        from nullius.standard.runner import rerun, run
         from tests import test_standard_rerun as fixtures
 
         fixture = fixtures.RerunRecords()

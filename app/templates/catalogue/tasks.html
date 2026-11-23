@@ -6,7 +6,7 @@
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='catalogue/catalogue.css') }}">{% endblock %}
 {% block body %}
 {#- One page for a dataset's tasks: the browser keeps the ids ticked, the server gives a page of 100 at a time
-    (standard/units.py). Opened from a set (?set=NAME), its tasks start ticked; a set does not change, and other
+    (standard/runner/units.py). Opened from a set (?set=NAME), its tasks start ticked; a set does not change, and other
     ticks are saved as a new set. -#}
 <article class="bench-page tasks-page" id="tasks-page"
   data-listing="{{ url_for('benchmark_tasks_listing', key=bench.key, dataset=ds.id) }}"

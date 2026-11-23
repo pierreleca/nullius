@@ -19,7 +19,7 @@ from unittest.mock import patch
 
 from nullius import execution, hosts, workspace
 from nullius.harbor import feed
-from nullius.standard import job
+from nullius.standard.runner import job
 from ui_tests.test_capped_job import AGENT, BENCH
 from .test_routes import web
 

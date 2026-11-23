@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from unittest import mock
 
 from nullius.runs import cli as runs_cli, parse
-from nullius.standard import exchanges, relay
+from nullius.standard.calls import exchanges, relay
 from nullius.traces import calls, trajectory
 
 T0 = 1_790_000_000.0

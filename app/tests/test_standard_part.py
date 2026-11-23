@@ -13,12 +13,14 @@ from contextlib import redirect_stdout
 from pathlib import Path
 
 from nullius.runs import classify, cli as runs_cli, live, parse
-from nullius.standard import cli as std_cli, definitions, rerun, run, sets
+from nullius.standard import cli as std_cli
+from nullius.standard.contract import definitions
+from nullius.standard.runner import rerun, run, sets
 from tests import test_standard_rerun as base
 
 ROOT = base.ROOT
 UNITS = [f"t{i}" for i in range(6)]
-SIX_DRIVER = '''from nullius.standard.jsonl import serve
+SIX_DRIVER = '''from nullius.standard.protocols.jsonl import serve
 serve({"units": lambda dataset: {"units": [f"t{i}" for i in range(6)]}, "setup": lambda unit, dir: {"prompt": "model hi"},
        "score": lambda unit, dir, transcript, answer: {"reward": 1.0, "passed": True, "detail": {}}})
 '''

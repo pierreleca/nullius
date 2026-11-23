@@ -79,7 +79,7 @@ def _rerun_mark(res: dict) -> dict:
 
 
 def _reruns(res: dict) -> list:
-    """A job's ``reruns`` (``standard/rerun.py``), each read leniently: what a page lists of each re-run."""
+    """A job's ``reruns`` (``standard/runner/rerun.py``), each read leniently: what a page lists of each re-run."""
     rows = res.get("reruns")
     num = lambda v: v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
     said = lambda v: {str(k): x for k, x in v.items() if isinstance(x, (str, int, float))} if isinstance(v, dict) else {}
@@ -472,7 +472,7 @@ class Job:
     # and ``units``, the part's number of units. {} for every other job: the plan is then the job's from the start.
     start_with: dict = field(default_factory=dict)
     # Each time chosen trials of a Nullius standard job were run again in it (``result.json`` ``reruns``,
-    # ``standard/rerun.py``): {at, reason, trials, replaced [{trial, unit, try, was, now}], begun [{trial, unit,
+    # ``standard/runner/rerun.py``): {at, reason, trials, replaced [{trial, unit, try, was, now}], begun [{trial, unit,
     # now}] and no_result [trial] when it had any, max_usd, spent_usd, stopped}, oldest first. [] for a job never
     # run again.
     reruns: list = field(default_factory=list)
@@ -1274,7 +1274,7 @@ def parse_job(job_dir: str, reuse=None, trials: bool = True) -> Job:
 def _own_agent_key(bench: str, upstream: str) -> str:
     """The key of the benchmark's own agent the upstream names ``upstream`` (its ``agents.json``,
     ``start.driver.agent``); empty for a benchmark without, or a name none has."""
-    from nullius.standard import definitions          # the catalogue, read only for a job from before
+    from nullius.standard.contract import definitions          # the catalogue, read only for a job from before
     folder = definitions.entry_dir("benchmark", bench) if re.fullmatch(r"[a-z][a-z0-9-]{0,39}", bench) else None
     path = os.path.join(folder, definitions.AGENTS_FILE) if folder else ""
     return _own_keys(path, os.path.getmtime(path)).get(upstream, "") if path and os.path.isfile(path) else ""

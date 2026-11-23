@@ -39,7 +39,10 @@ include-package-data = false
 packages = [
   "nullius", "nullius.catalogue", "nullius.compare", "nullius.harbor",
   "nullius.importers", "nullius.judge", "nullius.recipes", "nullius.runs",
-  "nullius.standard", "nullius.traces", "_nullius_app", "_nullius_app.web",
+  "nullius.standard", "nullius.standard.backends", "nullius.standard.calls",
+  "nullius.standard.contract", "nullius.standard.pages", "nullius.standard.proofs",
+  "nullius.standard.protocols", "nullius.standard.requirements", "nullius.standard.runner",
+  "nullius.traces", "_nullius_app", "_nullius_app.web",
 ]
 
 [tool.setuptools.package-dir]
@@ -53,4 +56,4 @@ dependencies = {file = ["app/requirements.txt"]}
 "nullius.catalogue" = ["agents/*/*.json", "agents/*/*.py", "agents/*/*.toml", "agents/*/*.yaml", "benchmarks/*/env/*", "benchmarks/*/*.json", "benchmarks/*/*.py", "benchmarks/*/*.yml", "benchmarks/*/startup/*.py", "capabilities/*/*.json", "capabilities/*/*.py"]
 "nullius.standard" = ["kits/*/*.json", "kits/*/*.py", "kits/*/*.Dockerfile", "kits/*/*.txt"]
 "nullius.judge" = ["floors.json"]
-_nullius_app = ["templates/**/*.html", "static/**/*.css", "static/**/*.js", "static/**/*.svg", "static/**/*.png", "static/**/*.json", "static/**/*.woff2", "static/**/*.ttf", "static/**/*.txt", "static/**/*.md", "requirements.txt", ".env.example"]
+_nullius_app = ["templates/**/*.html", "templates/*.svg", "static/**/*.css", "static/**/*.js", "static/**/*.svg", "static/**/*.png", "static/**/*.json", "static/**/*.woff2", "static/**/*.ttf", "static/**/*.txt", "static/**/*.md", "requirements.txt", ".env.example"]

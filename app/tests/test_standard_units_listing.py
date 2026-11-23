@@ -1,4 +1,4 @@
-"""The listing of a dataset's tasks (``standard/units.py``, ``nullius standard units``): a search by the words
+"""The listing of a dataset's tasks (``standard/runner/units.py``, ``nullius standard units``): a search by the words
 of an id, a title or a text; category values, either within a field and both across fields, each value
 counted; 100 tasks a page with the total on every page; a driver without ``describe`` listed and searched by
 its ids; the listing cached by its options; ``set create --search`` and ``--category`` storing the ids the
@@ -22,7 +22,9 @@ from pathlib import Path
 from unittest import mock
 
 from nullius import paths
-from nullius.standard import cli, definitions, sets, units
+from nullius.standard import cli
+from nullius.standard.contract import definitions
+from nullius.standard.runner import sets, units
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "standard", "catalogue")
 OSWORLD1 = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "nullius", "catalogue",
