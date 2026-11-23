@@ -413,13 +413,13 @@ class State(Scratch):
         data.write_text("{}")
         bench = dict(self.b, datasets=[{"id": "all", "path": "data.json", "sha256": "b" * 64, "units": 250}],
                      driver=dict(HEAVY, list_command=[sys.executable, "{here}/driver.py"]))
-        sha256 = units.install.sha256_of
+        sha256 = units.ondisk.sha256_of
 
         def digest(path):
             self.assertNotEqual(Path(path), data)
             return sha256(path)
 
-        with mock.patch.object(units.install, "sha256_of", side_effect=digest):
+        with mock.patch.object(units.ondisk, "sha256_of", side_effect=digest):
             self.assertEqual(self.asked(bench), {"state": "light", "fetch": [], "reason": ""})
 
     def test_full_and_the_environment_it_installs(self):

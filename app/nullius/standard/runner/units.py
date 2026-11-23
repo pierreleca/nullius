@@ -31,7 +31,7 @@ import shutil
 import tempfile
 from typing import Dict, List, Optional
 
-from nullius import paths
+from nullius import ondisk, paths
 from nullius.standard.contract import definitions
 from nullius.standard.protocols import jsonl
 from nullius.standard.requirements import install
@@ -103,7 +103,7 @@ def _digest(bench: dict, ds: dict, values: dict) -> str:
         # the files the driver is started with, beside its definition: a change to its code lists again
         path = str(word).replace("{here}", here or "") if str(word).startswith("{here}/") else None
         if path and os.path.isfile(path):
-            h.update(str(word).encode() + b"\0" + install.sha256_of(path).encode())
+            h.update(str(word).encode() + b"\0" + ondisk.sha256_of(path).encode())
     return h.hexdigest()
 
 

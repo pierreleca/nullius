@@ -1231,6 +1231,7 @@ class ThroughARun(unittest.TestCase):
         """The first unit of ``dataset`` run by Nullius, the launcher's row ``the_row``: the job's folder, its trial
         as the pages parse it and the stand-in's folder."""
         from nullius.runs import parse
+        from nullius import ondisk
         from nullius.standard.requirements import install
         tmp = tempfile.mkdtemp(dir=os.environ.get("TMPDIR"))
         self.addCleanup(shutil.rmtree, tmp, True)
@@ -1249,7 +1250,7 @@ class ThroughARun(unittest.TestCase):
         os.makedirs(spec)
         with open(os.path.join(spec, "task.json"), "w") as f:
             json.dump({"id": "CDB-G02", "timeout_s": 360, "max_turns": 45}, f)
-        bench = dict(DEFINITION, _here=entry, datasets=[dict(x, sha256=install.sha256_of(data)) for x in DEFINITION["datasets"]],
+        bench = dict(DEFINITION, _here=entry, datasets=[dict(x, sha256=ondisk.sha256_of(data)) for x in DEFINITION["datasets"]],
                      driver=dict(DEFINITION["driver"], command=[sys.executable, "{here}/driver.py", "{here}/desktop.py"]),
                      mcp_servers={"computer": dict(DEFINITION["mcp_servers"]["computer"], command=[sys.executable])})
         other = definitions.get("agent", "fake", os.path.join(FIXTURES, "catalogue"))
